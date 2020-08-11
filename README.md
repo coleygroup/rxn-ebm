@@ -1,2 +1,2 @@
 # rxn-ebm
-Private repo
+Private repo for energy-based modelling
