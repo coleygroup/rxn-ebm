@@ -5,6 +5,10 @@ from model.utils import (get_activation_function, initialize_weights)
 
 class FeedforwardEBM(nn.Module):
     '''
+    Currently supports feed-forward networks: 
+        FF_diff: takes as input a difference FP of fp_size & fp_radius
+        FF_sep: takes as input a concatenation of [reactants FP, product FP] 
+        
     trainargs: dictionary containing hyperparameters to be optimised, 
     hidden_sizes must be a list e.g. [1024, 512, 256]
     

@@ -76,12 +76,17 @@ def trainEBM():
         
         'num_neg_prod': 1,
         'num_neg_rct': 1,
+        # 'num_bits': 0, 
         
         'base_path': base_path, 
         'checkpoint_path': checkpoint_folder,
+
+        # 'cluster_path': cluster_path,
+        # 'sparseFP_vocab_path': sparseFP_vocab_path,
         'expt_name': expt_name,
         'device': torch.device("cuda" if torch.cuda.is_available() else "cpu")
     }
+    mode = 'random_sampling'
 
     model = FeedforwardEBM(trainargs)
     experiment = Experiment(model, trainargs, mode=mode)
@@ -89,19 +94,8 @@ def trainEBM():
     experiment.train()
     experiment.test()
 
-    key = 'test'
-    dataset = ReactionDataset(trainargs['base_path'], key, trainargs, mode=mode)
-    dataloader = DataLoader(dataset, 2 * trainargs['batch_size'], shuffle=False)
-    scores = experiment.get_topk_acc(dataloader, k=1, repeats=1, get_loss=True)
-    torch.save(scores, 'scores_{}_{}_{}.pkl'.format(mode, key, expt_name)) 
-    # fix this naming convention, used by analysis.py 
-
-    key = 'train'
-    dataset = ReactionDataset(trainargs['base_path'], key, trainargs, mode=mode)
-    dataloader = DataLoader(dataset, 2 * trainargs['batch_size'], shuffle=False)
-    scores = experiment.get_topk_acc(dataloader, k=1, repeats=1, get_loss=True)
-    torch.save(scores, 'scores_{}_{}_{}.pkl'.format(mode, key, expt_name))
-    # fix this naming convention, used by analysis.py 
+    scores = experiment.get_topk_acc(key='test', k=1, repeats=1, name_scores='scores_cosine_test_'+expt_name)
+    scores = experiment.get_topk_acc(key='train', k=1, repeats=1, name_scores='scores_cosine_train_'+expt_name)
 
 if __name__ == '__main__': 
     trainEBM()
