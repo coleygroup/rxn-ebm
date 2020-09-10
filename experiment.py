@@ -23,7 +23,7 @@ class Experiment():
         self.trainargs = trainargs 
         self.best_epoch = None # will be automatically assigned after 1 epoch
         self.mode = mode # for bit corruption vs cosine/random sampling
-        print('Initialising experiment ', self.trainargs['expt_name'], '\nwith mode: ', mode)
+        print('Initialising experiment: ', self.trainargs['expt_name'], '\nwith mode: ', mode)
         
         if load_checkpoint: 
             self._load_checkpoint(load_optimizer, load_stats, begin_epoch)
@@ -96,10 +96,9 @@ class Experiment():
 
     def train_one(self, batch, val=False):
         '''
-        Trains model for 1 epoch
+        Trains model for 1 iteration/batch
         TO DO: learning rate scheduler + logger 
         '''
-        # self.model.zero_grad()
         for p in self.model.parameters(): p.grad = None
         scores = self.model(batch) # size N x K 
 
@@ -111,7 +110,7 @@ class Experiment():
             loss.backward()
             self.optimizer.step()
         
-        pred_labels = torch.topk(scores, 1, dim=1)[1]
+        pred_labels = torch.topk(scores, 1, dim=1, largest=False)[1]
         pred_correct = torch.where(pred_labels == 0)[0].shape[0]  
         return loss.item(), pred_correct
     
@@ -167,7 +166,7 @@ class Experiment():
         '''
         start = time.time()        
         # epochs are 1-indexed
-        for epoch in np.arange(self.begin_epoch, self.trainargs['epochs']):
+        for epoch in np.arange(self.begin_epoch, self.trainargs['epochs'] + 1):
             self.model.train() # set model to training mode
             train_loss, train_pred_correct = [], []
             for batch in tqdm(self.train_loader): 
@@ -315,7 +314,7 @@ class Experiment():
             
             scores = torch.cat(scores, dim=0).squeeze(dim=-1)
             if print_loss:
-                loss = scores[:, 0] + torch.logsumexp(-1 * scores, dim=1).sum()
+                loss = (scores[:, 0] + torch.logsumexp(-1 * scores, dim=1)).sum()
                 if dataset_len is not None:
                     loss /= dataset_len
                 elif key == 'test':
@@ -324,7 +323,7 @@ class Experiment():
                     loss /= self.train_size
                 elif key == 'val':
                     loss /= self.val_size
-                print('Loss on ', key, loss)
+                print('Loss on' + key + ':', loss.tolist())
             
             # if save_neg:
             #     return scores, pos_neg_smis
@@ -367,7 +366,7 @@ class Experiment():
         
         name_scores = name_scores or 'scores_' + self.mode + '_' + key + '_' + self.trainargs['expt_name']
         if save_scores:
-            print('Saving scores as: ', path_scores + name_scores, '.pkl')
+            print('Saving scores as: ', path_scores + name_scores + '.pkl')
             torch.save(scores, path_scores + name_scores + '.pkl')
             
         if print_results:

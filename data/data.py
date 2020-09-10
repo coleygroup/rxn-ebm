@@ -60,8 +60,8 @@ def create_rxn_MorganFP_fromFP(raw_fp, num_rcts, fp_type='diff',
     elif fp_type == 'sep':
         return np.concatenate([rcts_fp, prod_fp])
     
-def xform_rctFP(rct_FP, raw_fp):
-    '''Helper function for cosine sampling, to swap reactant in original raw_FP w/ a new reactant
+def xform_rctFP(rct_FP, rct_idx, raw_fp):
+    '''Helper function for cosine sampling, to swap reactant in original raw_FP with a new reactant
     '''
     outputFP = raw_fp.copy()
     outputFP[rct_idx] = rct_FP
@@ -161,9 +161,9 @@ class ReactionDataset(Dataset):
         nn_rct_FPs = [self.sparseFP_vocab[idx].toarray() for idx in nn_rct_indices[1: self.num_neg_rct + 1]] # 1 x 4096 nparray
         
         if self.show_neg:
-            return [np.vstack((raw_fp[:-1], FP)) for FP in nn_prod_FPs] + [xform_rctFP(rctFP, raw_fp) for rctFP in nn_rct_FPs], nn_prod_indices, nn_rct_indices
+            return [np.vstack((raw_fp[:-1], FP)) for FP in nn_prod_FPs] + [xform_rctFP(rctFP, rct_idx, raw_fp) for rctFP in nn_rct_FPs], nn_prod_indices, nn_rct_indices
         else:
-            return [np.vstack((raw_fp[:-1], FP)) for FP in nn_prod_FPs] + [xform_rctFP(rctFP, raw_fp) for rctFP in nn_rct_FPs]  
+            return [np.vstack((raw_fp[:-1], FP)) for FP in nn_prod_FPs] + [xform_rctFP(rctFP, rct_idx, raw_fp) for rctFP in nn_rct_FPs]  
             
     def random_bit_corrupter(self, rxn_fp, num_bits=10):
         ''' Randomly selects <num_bits> bits in rxn_fp & randomly replaces them w/ -1, 0 or 1
