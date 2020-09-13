@@ -16,7 +16,7 @@ class Experiment():
     '''
     def __init__(self, model, trainargs, mode=None,
                  load_optimizer=None, load_checkpoint=False, 
-                 load_stats=None, begin_epoch=None):
+                 load_stats=None, stats_filename=None, begin_epoch=None):
         self.device = trainargs['device']
         model = model.to(self.device)
         self.model = model
@@ -26,7 +26,7 @@ class Experiment():
         print('Initialising experiment: ', self.trainargs['expt_name'], '\nwith mode: ', mode)
         
         if load_checkpoint: 
-            self._load_checkpoint(load_optimizer, load_stats, begin_epoch)
+            self._load_checkpoint(load_optimizer, load_stats, stats_filename, begin_epoch)
 
         else: # init fresh optimizer 
             self._init_opt_and_stats()
@@ -38,12 +38,16 @@ class Experiment():
     def __repr__(self):
         return 'Experiment object running on mode: ' + self.mode
     
-    def _load_checkpoint(self, load_optimizer, load_stats, begin_epoch):
+    def _load_checkpoint(self, load_optimizer, load_stats, stats_filename, 
+                        begin_epoch):
+        print('loading checkpoint...')
         assert load_optimizer is not None, 'load_checkpoint requires load_optimizer!'
         self.optimizer = load_optimizer # load optimizer w/ state dict from checkpoint
         
         assert load_stats is not None, 'load_checkpoint requires load_stats!'
+        assert stats_filename is not None, 'load_checkpoint requires stats_filename!'
         self.stats = load_stats
+        self.stats_filename = stats_filename
         self.mean_train_loss = self.stats['mean_train_loss']
         self.min_val_loss = self.stats['min_val_loss']
         self.mean_val_loss = self.stats['mean_val_loss']
@@ -57,6 +61,7 @@ class Experiment():
         self.begin_epoch = begin_epoch
     
     def _init_opt_and_stats(self):
+        print('initialising optimizer & stats...')
         self.optimizer = self.trainargs['optimizer'](self.model.parameters(), 
                                                     lr=self.trainargs['learning_rate'])
         # to store training statistics  
@@ -69,26 +74,30 @@ class Experiment():
         self.wait = 0 # counter for _check_earlystop()
         self.stats = {'trainargs': self.trainargs, 'train_time': 0} 
         self.stats_filename = self.trainargs['checkpoint_path'] + \
-                            '{}_{}_stats.pkl'.format(self.trainargs['model'],
+                            '{}_{}_{}_stats.pkl'.format(self.trainargs['model'], self.mode,
                                                     self.trainargs['expt_name'])
     
     def _init_dataloaders(self, mode):
+        print('initialising dataloaders...')
         self.pin_memory = True if torch.cuda.is_available() else False
         train_dataset = ReactionDataset(self.trainargs['base_path'], 'train', 
                                         trainargs=self.trainargs, mode=mode)
         self.train_loader = DataLoader(train_dataset, self.trainargs['batch_size'], 
+                                       num_workers=self.trainargs['num_workers'], 
                                         shuffle=True, pin_memory=self.pin_memory)
         self.train_size = len(train_dataset)
         
         val_dataset = ReactionDataset(self.trainargs['base_path'], 'valid', 
                                         trainargs=self.trainargs, mode=mode)
         self.val_loader = DataLoader(val_dataset, 2 * self.trainargs['batch_size'], 
+                                     num_workers=self.trainargs['num_workers'],
                                         shuffle=False, pin_memory=self.pin_memory)
         self.val_size = len(val_dataset)
         
         test_dataset = ReactionDataset(self.trainargs['base_path'], 'test', 
                                         trainargs=self.trainargs, mode=mode)
         self.test_loader = DataLoader(test_dataset, 2 * self.trainargs['batch_size'], 
+                                      num_workers=self.trainargs['num_workers'],
                                         shuffle=False, pin_memory=self.pin_memory)
         self.test_size = len(test_dataset)
         del train_dataset, val_dataset, test_dataset # save memory
@@ -154,8 +163,8 @@ class Experiment():
                                     'stats' : self.stats,
                                 }
         checkpoint_filename = self.trainargs['checkpoint_path'] + \
-                    '{}_{}_checkpoint_{:04d}.pth.tar'.format(
-                                                            self.trainargs['model'], 
+                    '{}_{}_{}_checkpoint_{:04d}.pth.tar'.format(
+                                                            self.trainargs['model'], self.mode,
                                                             self.trainargs['expt_name'], 
                                                             current_epoch)
         torch.save(checkpoint_dict, checkpoint_filename)
@@ -325,9 +334,9 @@ class Experiment():
                     loss /= self.val_size
                 print('Loss on' + key + ':', loss.tolist())
             
-            # if save_neg:
-            #     return scores, pos_neg_smis
-            # else:
+#             if save_neg:
+#                 return scores, pos_neg_smis
+#             else:
             return scores
                 # output shape N x K: 
                 # where N = # positive rxns in dataset;
@@ -375,3 +384,5 @@ class Experiment():
             print('Variance: ', accs.var())
 
         return scores # (accs, accs.mean(), accs.var())
+
+
