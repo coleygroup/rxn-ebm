@@ -5,6 +5,7 @@ from tqdm import tqdm
 import torch.nn as nn
 import time
 import random
+import nmslib
 
 from model.utils import (save_checkpoint, seed_everything)
 from data.data import ReactionDataset
@@ -47,10 +48,12 @@ class Experiment():
         assert load_stats is not None, 'load_checkpoint requires load_stats!'
         assert stats_filename is not None, 'load_checkpoint requires stats_filename!'
         self.stats = load_stats
-        self.stats_filename = stats_filename
+        self.stats_filename = self.trainargs['checkpoint_path'] + stats_filename
+        self.stats['trainargs'] = self.trainargs 
         self.mean_train_loss = self.stats['mean_train_loss']
         self.min_val_loss = self.stats['min_val_loss']
         self.mean_val_loss = self.stats['mean_val_loss']
+        self.wait = 0 # counter for _check_earlystop()
         try:
             self.mean_train_acc = self.stats['mean_train_acc']
             self.mean_val_acc = self.stats['mean_val_acc']
@@ -72,56 +75,46 @@ class Experiment():
         self.mean_val_acc = []
         self.begin_epoch = 1
         self.wait = 0 # counter for _check_earlystop()
-        self.stats = {'trainargs': self.trainargs, 'train_time': 0} 
+        self.stats = {'trainargs': self.trainargs, 'train_time': 0, 'mode': self.mode} 
         self.stats_filename = self.trainargs['checkpoint_path'] + \
                             '{}_{}_{}_stats.pkl'.format(self.trainargs['model'], self.mode,
                                                     self.trainargs['expt_name'])
     
     def _init_dataloaders(self, mode):
         print('initialising dataloaders...')
+
+        clusterindex = None
+        if mode == 'cosine_spaces': # does not support multi-processing!!! 
+            # print('entering cosine_spaces') 
+            clusterindex = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
+                                data_type=nmslib.DataType.SPARSE_VECTOR)
+            clusterindex.loadIndex(self.trainargs['cluster_path'], load_data=True)
+            if 'query_params' in self.trainargs.keys():
+                clusterindex.setQueryTimeParams(self.trainargs['query_params'])
+
         self.pin_memory = True if torch.cuda.is_available() else False
         train_dataset = ReactionDataset(self.trainargs['base_path'], 'train', 
-                                        trainargs=self.trainargs, mode=mode)
+                                        trainargs=self.trainargs, mode=mode, spaces_index=clusterindex)
         self.train_loader = DataLoader(train_dataset, self.trainargs['batch_size'], 
                                        num_workers=self.trainargs['num_workers'], 
                                         shuffle=True, pin_memory=self.pin_memory)
         self.train_size = len(train_dataset)
         
         val_dataset = ReactionDataset(self.trainargs['base_path'], 'valid', 
-                                        trainargs=self.trainargs, mode=mode)
+                                        trainargs=self.trainargs, mode=mode, spaces_index=clusterindex)
         self.val_loader = DataLoader(val_dataset, 2 * self.trainargs['batch_size'], 
                                      num_workers=self.trainargs['num_workers'],
                                         shuffle=False, pin_memory=self.pin_memory)
         self.val_size = len(val_dataset)
         
         test_dataset = ReactionDataset(self.trainargs['base_path'], 'test', 
-                                        trainargs=self.trainargs, mode=mode)
+                                        trainargs=self.trainargs, mode=mode, spaces_index=clusterindex)
         self.test_loader = DataLoader(test_dataset, 2 * self.trainargs['batch_size'], 
                                       num_workers=self.trainargs['num_workers'],
                                         shuffle=False, pin_memory=self.pin_memory)
         self.test_size = len(test_dataset)
         del train_dataset, val_dataset, test_dataset # save memory
-
-
-    def train_one(self, batch, val=False):
-        '''
-        Trains model for 1 iteration/batch
-        TO DO: learning rate scheduler + logger 
-        '''
-        for p in self.model.parameters(): p.grad = None
-        scores = self.model(batch) # size N x K 
-
-        # positives are the 0-th index of each sample 
-        loss = (scores[:, 0] + torch.logsumexp(-scores, dim=1)).sum() 
-
-        if not val:
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-        
-        pred_labels = torch.topk(scores, 1, dim=1, largest=False)[1]
-        pred_correct = torch.where(pred_labels == 0)[0].shape[0]  
-        return loss.item(), pred_correct
+        del clusterindex
     
     def _check_earlystop(self, current_epoch):
         self.to_break = 0
@@ -144,12 +137,13 @@ class Experiment():
             self.wait = 0
             self.min_val_loss = min(self.min_val_loss, self.mean_val_loss[-1])
         
-    def _save_stats(self):
-        self.stats['mean_train_loss'] = self.mean_train_loss
-        self.stats['mean_train_acc'] = self.mean_train_acc
-        self.stats['mean_val_loss'] = self.mean_val_loss
-        self.stats['mean_val_acc'] = self.mean_val_acc
-        self.stats['min_val_loss'] = self.min_val_loss
+    def _update_stats(self):
+        self.stats['train_time'] += (time.time() - self.start) / 60  # in minutes
+        self.stats['mean_train_loss'] = self.mean_train_loss # a list with one value for each epoch 
+        self.stats['mean_train_acc'] = self.mean_train_acc # a list with one value for each epoch 
+        self.stats['mean_val_loss'] = self.mean_val_loss # a list with one value for each epoch
+        self.stats['mean_val_acc'] = self.mean_val_acc # a list with one value for each epoch
+        self.stats['min_val_loss'] = self.min_val_loss 
         self.stats['best_epoch'] = self.best_epoch
 
         torch.save(self.stats, self.stats_filename)
@@ -161,6 +155,7 @@ class Experiment():
                                     'state_dict': self.model.state_dict(),
                                     'optimizer' : self.optimizer.state_dict(),
                                     'stats' : self.stats,
+                                    'mode' : self.mode
                                 }
         checkpoint_filename = self.trainargs['checkpoint_path'] + \
                     '{}_{}_{}_checkpoint_{:04d}.pth.tar'.format(
@@ -169,42 +164,68 @@ class Experiment():
                                                             current_epoch)
         torch.save(checkpoint_dict, checkpoint_filename)
 
+    def _one_batch(self, batch, backprop=True):
+        '''
+        Passes one batch of samples through model to get scores & loss 
+        Does backprop if training 
+
+        TO DO: learning rate scheduler + logger 
+        '''
+        for p in self.model.parameters(): p.grad = None
+        scores = self.model(batch) # size N x K 
+
+        # positives are the 0-th index of each sample 
+        loss = (scores[:, 0] + torch.logsumexp(-scores, dim=1)).sum() 
+
+        if backprop:
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+        
+        pred_labels = torch.topk(scores, 1, dim=1, largest=False)[1] # index with lowest energy is the most feasible rxn
+        pred_correct = torch.where(pred_labels == 0)[0].shape[0]   # 0-th index should have the lowest energy
+        return loss.item(), pred_correct
+    
+    def _one_epoch(self, mode='train'):
+        if mode == 'train':
+            self.model.train() # set model to training mode
+            dataloader = self.train_loader
+        elif mode == 'validate':  
+            self.model.eval()
+            dataloader = self.val_loader
+        else: # mode == 'test'
+            self.model.eval()
+            dataloader = self.test_loader 
+
+        batch_losses, batch_correct_preds = [], []
+        for batch in tqdm(dataloader): 
+            batch = batch.to(self.device)
+            curr_batch_loss, curr_batch_correct_preds = self._one_batch(batch, 
+                                                                        backprop=True if mode == 'train' else False)
+            batch_losses.append(curr_batch_loss)
+            batch_correct_preds.append(curr_batch_correct_preds)
+            del batch
+        return batch_losses, batch_correct_preds            
+
     def train(self):
         '''
         Trains model for epochs provided in trainargs
         '''
-        start = time.time()        
+        self.start = time.time()        
         # epochs are 1-indexed
         for epoch in np.arange(self.begin_epoch, self.trainargs['epochs'] + 1):
-            self.model.train() # set model to training mode
-            train_loss, train_pred_correct = [], []
-            for batch in tqdm(self.train_loader): 
-                batch = batch.to(self.device)
-                batch_train_loss, batch_pred_correct = self.train_one(batch, val=False)
-                train_loss.append(batch_train_loss)
-                train_pred_correct.append(batch_pred_correct)
-                del batch
+            train_losses, train_correct_preds = self._one_epoch(mode='train')
+            self.mean_train_acc.append(np.sum(train_correct_preds) / self.train_size)
+            self.mean_train_loss.append(np.sum(train_losses) / self.train_size) 
 
-            self.mean_train_acc.append(np.sum(train_pred_correct) / self.train_size)
-            self.mean_train_loss.append(np.sum(train_loss) / self.train_size) 
+            val_losses, val_correct_preds = self._one_epoch(mode='validate')
+            self.mean_val_acc.append(np.sum(val_correct_preds) / self.val_size)
+            self.mean_val_loss.append(np.sum(val_losses) / self.val_size)
 
-            self.model.eval() # validation mode
-            val_loss, val_pred_correct = [], []
-            with torch.no_grad():
-                for batch in tqdm(self.val_loader):
-                    batch = batch.to(self.device)
-                    batch_val_loss, batch_pred_correct = self.train_one(batch, val=True)
-                    val_loss.append(batch_val_loss)
-                    val_pred_correct.append(batch_pred_correct)
-                    del batch
-                
-            self.mean_val_acc.append(np.sum(val_pred_correct) / self.val_size)
-            self.mean_val_loss.append(np.sum(val_loss) / self.val_size)
-            # track best_epoch to facilitate loading of best checkpoint 
-            if self.mean_val_loss[-1] < self.min_val_loss:
+            if self.mean_val_loss[-1] < self.min_val_loss: # track best_epoch to facilitate loading of best checkpoint 
                 self.best_epoch = epoch 
-                
-            self._save_stats()
+ 
+            self._update_stats()
             if self.trainargs['checkpoint']:
                 self._checkpoint_model_and_opt(current_epoch=epoch) 
             if self.trainargs['early_stop']:
@@ -221,10 +242,7 @@ class Experiment():
                                              np.around(self.mean_val_acc[-1], decimals=4)
                                              ) )
             
-         # save final training stats
-        self.stats['train_time'] += (time.time() - start) / 60
         print('Total training time: {}'.format(self.stats['train_time']))
-        torch.save(self.stats, self.stats_filename)  
 
     def test(self, load_stats=None):
         '''
@@ -235,32 +253,17 @@ class Experiment():
             Test statistics will be stored inside this stats file 
             Used to load existing stats file when loading a trained model from checkpoint
         '''
-        test_losses_to_sum, mean_batch_test_losses, test_pred_correct = [], [], []
-        
-        self.model.eval()
-        with torch.no_grad():
-            for batch in tqdm(self.test_loader):
-                batch = batch.to(self.device)
-                batch_test_loss, batch_pred_correct = self.train_one(batch, val=True)
-                test_losses_to_sum.append(batch_test_loss)
-                mean_batch_test_losses.append(batch_test_loss / len(batch))
-                test_pred_correct.append(batch_pred_correct)
-                del batch
+        test_losses, test_correct_preds = self._one_epoch(mode='test')
         
         if load_stats: 
             self.stats = load_stats 
         assert len(self.stats.keys()) > 1, 'If loading checkpoint, you need to provide load_stats!'
-        
-        self.stats['test_loss'] = mean_batch_test_losses 
-        self.stats['mean_test_loss'] = np.sum(test_losses_to_sum) / self.test_size
-        self.stats['mean_test_acc'] = np.sum(test_pred_correct) / self.test_size
-
+        self.stats['mean_test_loss'] = np.sum(test_losses) / self.test_size
+        self.stats['mean_test_acc'] = np.sum(test_correct_preds) / self.test_size
         print('Mean test loss: {}'.format(self.stats['mean_test_loss']))
         print('Mean test top-1 accuracy: {}'.format(self.stats['mean_test_acc']))
-
         # overrides existing training stats w/ training + test stats
         torch.save(self.stats, self.stats_filename)
-
 
     def get_scores(self, key='test', 
                    dataloader=None, dataset_len=None, 
@@ -332,7 +335,7 @@ class Experiment():
                     loss /= self.train_size
                 elif key == 'val':
                     loss /= self.val_size
-                print('Loss on' + key + ':', loss.tolist())
+                print('Loss on ' + key + ':', loss.tolist())
             
 #             if save_neg:
 #                 return scores, pos_neg_smis
@@ -382,7 +385,4 @@ class Experiment():
             print('Top-1 accuracies: ', accs)
             print('Avg top-1 accuracy: ', accs.mean())
             print('Variance: ', accs.var())
-
         return scores # (accs, accs.mean(), accs.var())
-
-

@@ -4,8 +4,9 @@ import torch
 from model.FF import FeedforwardEBM
 
 def setup_paths(expt_name='expt1', mode='random_sampling', 
-                     load_trained=False, date_trained=None,
-                     LOCAL=True, cosine=True, multi=False):
+                     LOCAL=True, load_trained=False, date_trained=None):
+    ''' TO DO: engaging_cluster directories
+    '''
     if load_trained:
         assert date_trained is not None, 'Please provide date_trained as "DD_MM_YYYY"'
     else:
@@ -26,15 +27,17 @@ def setup_paths(expt_name='expt1', mode='random_sampling',
         else:
             base_path = 'USPTO_50k_data/clean_rxn_50k_sparse_FPs_numrcts'
 
-        if cosine:
+        if mode[:6] == 'cosine':
             if mode == 'cosine_spaces':
                 cluster_path = 'USPTO_50k_data/spaces_cosinesimil_index.bin'
-            elif multi:
+            elif mode == 'cosine_pysparnn_four':
+                cluster_path = 'USPTO_50k_data/50k_allmols_sparse_FP_FOURclusterIndex.bin'
+            elif mode == 'cosine_pysparnn_two':
                 cluster_path = 'USPTO_50k_data/50k_allmols_sparse_FP_clusterIndex.bin'
-            else:
+            elif mode == 'cosine_pysparnn_one':
                 cluster_path = 'USPTO_50k_data/50k_allmols_sparse_FP_MONOclusterIndex.bin'
             sparseFP_vocab_path = 'USPTO_50k_data/50k_all_mols_sparse_FPs.npz'
-    else: # colab 
+    else: # colab, and soon, engaging_cluster 
         checkpoint_folder = '/content/gdrive/My Drive/rxn_ebm/checkpoints/{}/'.format(date_trained) 
         try:
             os.makedirs(checkpoint_folder)
@@ -44,33 +47,39 @@ def setup_paths(expt_name='expt1', mode='random_sampling',
             base_path = 'content/clean_rxn_50k_sparse_rxnFPs'
         else:
             base_path = 'content/clean_rxn_50k_sparse_FPs_numrcts'
-        if cosine:
+        if mode[:6] == 'cosine':
             if mode == 'cosine_spaces':
                 cluster_path = 'content/spaces_cosinesimil_index.bin'
-            elif multi:
+            elif mode == 'cosine_pysparnn_four':
+                cluster_path = 'content/50k_allmols_sparse_FP_FOURclusterIndex.bin'
+            elif mode == 'cosine_pysparnn_two':
                 cluster_path = 'content/50k_allmols_sparse_FP_clusterIndex.bin'
-            else:
+            elif mode == 'cosine_pysparnn_one':
                 cluster_path = 'content/50k_allmols_sparse_FP_MONOclusterIndex.bin'
-            sparseFP_vocab_path = '/content/50k_all_mols_sparse_FPs.npz'
+            sparseFP_vocab_path = 'content/50k_all_mols_sparse_FPs.npz'
     return checkpoint_folder, base_path, cluster_path, sparseFP_vocab_path
 
 def load_model_opt_and_stats(stats_filename, base_path, cluster_path,
-                         sparseFP_vocab_path, checkpoint_folder,
-                         model='Feedforward', cosine=False, opt='Adam'):
+                         sparseFP_vocab_path, checkpoint_folder, mode,
+                         model='Feedforward', opt='Adam'):
     curr_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     stats = torch.load(checkpoint_folder + stats_filename, 
               map_location=torch.device('cpu'))
     stats['trainargs']['base_path'] = base_path
     stats['trainargs']['checkpoint_path'] = checkpoint_folder
 
-    if cosine:
+    if mode[:6] == 'cosine':
         stats['trainargs']['cluster_path'] = cluster_path
         stats['trainargs']['sparseFP_vocab_path'] = sparseFP_vocab_path
 
     if opt == 'Adam':
         stats['trainargs']['optimizer'] = torch.optim.Adam # fix bug in name of optimizer when saving checkpoint
 
-    stats['best_epoch'] = stats['mean_val_loss'].index(stats['min_val_loss']) + 1  # 1-index 
+    try:
+        if stats['best_epoch'] is None:
+            stats['best_epoch'] = stats['mean_val_loss'].index(stats['min_val_loss']) + 1  # 1-index 
+    except: # Key error 
+        stats['best_epoch'] = stats['mean_val_loss'].index(stats['min_val_loss']) + 1  # 1-index 
     stats['trainargs']['device'] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     try: 

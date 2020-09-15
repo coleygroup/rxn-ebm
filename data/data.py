@@ -78,6 +78,7 @@ class ReactionDataset(Dataset):
     TO DO: remove self.num_neg for random negative sampling (use num_neg_prod & num_neg_rct)
     '''
     def __init__(self, base_path, key, trainargs, mode,
+                 spaces_index=None,
                  show_neg=False, # for visualising nearest neighbors 
                  save_neg=False): # for rxn_smi (to fix later on)
         '''
@@ -107,10 +108,12 @@ class ReactionDataset(Dataset):
             assert self.num_bits > 0, 'num_bits must be positive!'
             
         else:
-#             print('cosine/random sampling')            
+            # print('cosine/random sampling')            
             self.fp_raw_num_rcts = sparse.load_npz(base_path + '_' + key + '.npz')            
             if 'cluster_path' in self.trainargs.keys(): # doing cosine similarity search
-                self._init_searchindex()
+                if self.trainargs['cluster_path'] is not None:
+                    print('_init_searchindex')
+                    self._init_searchindex(spaces_index)
    
             assert 'num_neg_prod' in self.trainargs.keys() and 'num_neg_rct' in self.trainargs.keys(), \
             'You are not doing bit_corruption, but did not provide num_neg_prod and num_neg_rct!'
@@ -126,15 +129,16 @@ class ReactionDataset(Dataset):
 #         self.save_neg = save_neg
 #         self.show_neg = show_neg
 
-    def _init_searchindex(self):
+    def _init_searchindex(self, spaces_index):
         self.sparseFP_vocab = sparse.load_npz(self.trainargs['sparseFP_vocab_path'])
-        if self.mode == 'cosine_spaces':
-            self.clusterindex = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
-                                data_type=nmslib.DataType.SPARSE_VECTOR)
-            self.clusterindex.loadIndex(self.trainargs['cluster_path'], load_data=True)
+        if self.mode == 'cosine_spaces':   
+            self.clusterindex = spaces_index
+            # nmslib.init(method='hnsw', space='cosinesimil_sparse', 
+            #                     data_type=nmslib.DataType.SPARSE_VECTOR)
+            # self.clusterindex.loadIndex(self.trainargs['cluster_path'], load_data=True)
             
-            if 'query_params' in self.trainargs.keys():
-                self.clusterindex.setQueryTimeParams(self.trainargs['query_params'])
+            # if 'query_params' in self.trainargs.keys():
+            #     self.clusterindex.setQueryTimeParams(self.trainargs['query_params'])
         else:
             with open(self.trainargs['cluster_path'], 'rb') as handle:
                 self.clusterindex = pickle.load(handle)
@@ -239,11 +243,12 @@ class ReactionDataset(Dataset):
             pos_rxn_fp = create_rxn_MorganFP_fromFP(pos_raw_fp.copy(), num_rcts, fp_type=self.fp_type, 
                                                     rctfp_size=self.rctfp_size, prodfp_size=self.prodfp_size)
             
-            if 'cluster_path' in self.trainargs.keys(): # cosine similarity search
+            if 'cluster_path' in self.trainargs.keys():
+                if self.trainargs['cluster_path'] is not None: # cosine similarity search
 #                 if self.show_neg:
 #                     neg_raw_fps, nn_prod_indices, nn_rct_indices = self.cosine_sample_negative(pos_raw_fp, num_rcts)
 #                 else:
-                neg_raw_fps = self.cosine_sample_negative(pos_raw_fp, num_rcts)
+                    neg_raw_fps = self.cosine_sample_negative(pos_raw_fp, num_rcts)
             else:
                 neg_raw_fps = [0] * (self.num_neg_prod + self.num_neg_rct)
                 for i in range(self.num_neg_prod):
