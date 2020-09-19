@@ -11,8 +11,7 @@ from rdkit.Chem import rdChemReactions
 from rdkit import DataStructs
 import numpy as np
 
-import nmslib
-
+# import nmslib
 
 def create_rxn_MorganFP_fromFP(raw_fp, num_rcts, fp_type='diff', 
                                rctfp_size=4096, prodfp_size=4096, dtype='int8'):
@@ -27,36 +26,36 @@ def create_rxn_MorganFP_fromFP(raw_fp, num_rcts, fp_type='diff',
     '''
     # initialise empty fp numpy arrays
     if fp_type == 'diff':
-        diff_fp = np.zeros(rctfp_size, dtype = dtype)
+        diff_fp = np.empty(rctfp_size, dtype = dtype)
     elif fp_type == 'sep':
         rcts_fp = np.zeros(rctfp_size, dtype = dtype)
-        prod_fp = np.zeros(prodfp_size, dtype = dtype)
+        prod_fp = np.empty(prodfp_size, dtype = dtype)
     else:
         print('ERROR: fp_type not recognised!')
         return
     
     # create product FP
-    try:
-        fp = raw_fp[-1]
-        if fp_type == 'diff':
-            diff_fp += fp
-        elif fp_type == 'sep':
-            prod_fp = fp
-    except Exception as e:
-        print("Cannot build product fp due to {}".format(e))
-        return
+    # try:
+    fp = raw_fp[-1]
+    if fp_type == 'diff':
+        diff_fp = fp
+    elif fp_type == 'sep':
+        prod_fp = fp
+    # except Exception as e:
+    #     print("Cannot build product fp due to {}".format(e))
+    #     return
                                   
     # create reactant FPs, subtracting each from product FP
     for i in range(num_rcts):
-        try:
-            fp = raw_fp[i]
-            if fp_type == 'diff':
-                diff_fp -= fp
-            elif fp_type == 'sep':
-                rcts_fp += fp
-        except Exception as e:
-            print("Cannot build reactant fp due to {}".format(e))
-            return
+        # try:
+        fp = raw_fp[i]
+        if fp_type == 'diff':
+            diff_fp -= fp
+        elif fp_type == 'sep':
+            rcts_fp += fp
+        # except Exception as e:
+        #     print("Cannot build reactant fp due to {}".format(e))
+        #     return
     
     if fp_type == 'diff':
         return diff_fp
@@ -70,7 +69,24 @@ def xform_rctFP(rct_FP, rct_idx, raw_fp):
     outputFP[rct_idx] = rct_FP
     return outputFP
 
-class ReactionDataset(Dataset):
+def faster_vstack(tuple_of_arrays, length_1, length_2, width):
+    array_1, array_2 = tuple_of_arrays
+    array_out = np.empty((length_1 + length_2, width))
+    array_out[:length_1] = array_1
+    array_out[length_2:] = array_2
+    return array_out
+
+# def faster_vstack(tuple_of_arrays, length_1, length_2, width):
+#     array_1, array_2 = tuple_of_arrays
+#     width = array_1.shape[1]
+#     length_1, length_2 = array_1.shape[0], array_2.shape[0]
+# #         assert array_1.shape[1] == array_2.shape[1]
+#     array_out = np.empty((length_1 + length_2, width))
+#     array_out[:length_1] = array_1
+#     array_out[length_1:] = array_2
+#     return array_out
+
+class ReactionDataset(Dataset):   # Dataset
     '''
     The Dataset class ReactionDataset prepares training samples of length K: 
     [pos_rxn, neg_rxn_1, ..., neg_rxn_K-1], ... where K-1 = num_neg 
@@ -99,39 +115,43 @@ class ReactionDataset(Dataset):
         ''' 
         self.trainargs = trainargs
         self.mode = mode
-        if self.mode == 'bit_corruption':
-#             print('bit_corruption')
-            self.rxn_fp = sparse.load_npz(base_path + '_' + key + '.npz')
-            self.num_neg = self.trainargs['num_neg']
-            assert self.num_neg > 0, 'num_neg must be positive!'
-            self.num_bits = self.trainargs['num_bits']
-            assert self.num_bits > 0, 'num_bits must be positive!'
-            
-        else:
-            # print('cosine/random sampling')            
-            self.fp_raw_num_rcts = sparse.load_npz(base_path + '_' + key + '.npz')            
-            if 'cluster_path' in self.trainargs.keys(): # doing cosine similarity search
-                if self.trainargs['cluster_path'] is not None:
-                    print('_init_searchindex')
-                    self._init_searchindex(spaces_index)
-   
-            assert 'num_neg_prod' in self.trainargs.keys() and 'num_neg_rct' in self.trainargs.keys(), \
-            'You are not doing bit_corruption, but did not provide num_neg_prod and num_neg_rct!'
-            self.num_neg_prod = self.trainargs['num_neg_prod']
-            self.num_neg_rct = self.trainargs['num_neg_rct']
-            assert self.num_neg_prod > 0 and self.num_neg_rct > 0, 'num_neg cannot be negative!' 
-        
         self.fp_type = self.trainargs['fp_type']
         self.rctfp_size = self.trainargs['rctfp_size']
         self.prodfp_size = self.trainargs['prodfp_size']
-        assert trainargs['rctfp_size'] == self.trainargs['prodfp_size'], \
-        'rctfp_size must be equal to prodfp_size!'
+        # assert trainargs['rctfp_size'] == self.trainargs['prodfp_size'], 'rctfp_size must be equal to prodfp_size!'
+
+        if self.mode == 'bit_corruption':
+#             print('bit_corruption')
+            self.rxn_fp = sparse.load_npz(base_path + '_' + key + '.npz')
+            self.rxn_fp_length = self.rxn_fp.shape[0]
+            self.num_neg = self.trainargs['num_neg']
+            # assert self.num_neg > 0, 'num_neg must be positive!'
+            self.num_bits = self.trainargs['num_bits']
+            # assert self.num_bits > 0, 'num_bits must be positive!'
+            
+        else:
+            # print('cosine/random sampling')            
+            self.fp_raw_num_rcts = sparse.load_npz(base_path + '_' + key + '.npz')
+            self.fp_raw_num_rcts_length = self.fp_raw_num_rcts.shape[0]           
+            self.max_num_rcts = self.fp_raw_num_rcts[0].toarray()[:, :-1].shape[1] // self.rctfp_size 
+            # to speed up faster_vstack & np.reshape
+            
+            if 'cluster_path' in self.trainargs.keys() and self.trainargs['cluster_path']:
+                    # print('_init_searchindex')
+                    self._init_searchindex(spaces_index)
+   
+            # assert 'num_neg_prod' in self.trainargs.keys() and 'num_neg_rct' in self.trainargs.keys(), \
+            # 'You are not doing bit_corruption, but did not provide num_neg_prod and num_neg_rct!'
+            self.num_neg_prod = self.trainargs['num_neg_prod']
+            self.num_neg_rct = self.trainargs['num_neg_rct']
+            # assert self.num_neg_prod > 0 and self.num_neg_rct > 0, 'num_neg cannot be negative!' 
+        
 #         self.save_neg = save_neg
 #         self.show_neg = show_neg
 
     def _init_searchindex(self, spaces_index):
         self.sparseFP_vocab = sparse.load_npz(self.trainargs['sparseFP_vocab_path'])
-        if self.mode == 'cosine_spaces':   
+        if self.mode == 'cosine_spaces': # and spaces_index   
             self.clusterindex = spaces_index
             # nmslib.init(method='hnsw', space='cosinesimil_sparse', 
             #                     data_type=nmslib.DataType.SPARSE_VECTOR)
@@ -149,26 +169,17 @@ class ReactionDataset(Dataset):
         Returns neg_rxn_fp (fingerprint)
         ''' 
         # make this chunk of 3-4 lines into a function 
-        rdm_rxn_idx = random.choice(np.arange(self.fp_raw_num_rcts.shape[0])) 
+        rdm_rxn_idx = random.randint(0, self.fp_raw_num_rcts_length - 1) # random.choice(np.arange(self.fp_raw_num_rcts_length)) 
         new_fp_raw_num_rcts = self.fp_raw_num_rcts[rdm_rxn_idx].toarray()
-        new_raw_fp, _ = np.split(new_fp_raw_num_rcts, [new_fp_raw_num_rcts.shape[-1]-1], axis=1)
-        new_raw_fp = new_raw_fp.reshape(-1, self.rctfp_size)  
+        # new_raw_fp, _ = np.split(new_fp_raw_num_rcts, [new_fp_raw_num_rcts.shape[-1]-1], axis=1)
+        new_raw_fp = new_fp_raw_num_rcts[:, :-1].reshape(self.max_num_rcts, self.rctfp_size)  
         
         if mode == 'rct':
-            rct_idx = random.choice(np.arange(num_rcts))
+            rct_idx = random.randint(0, num_rcts - 1) # random.choice(np.arange(num_rcts))
             raw_fp[rct_idx, :] = new_raw_fp[rct_idx, :]
         else:
             raw_fp[-1, :] = new_raw_fp[-1, :] 
         return raw_fp 
-    
-    def hopefully_faster_vstack(self, tuple_of_arrays):
-        array_1, array_2 = tuple_of_arrays
-        width = array_1.shape[1]
-        length_1, length_2 = array_1.shape[0], array_2.shape[0]
-#         assert array_1.shape[1] == array_2.shape[1]
-        array_out = np.empty((length_1 + length_2, width))
-        array_out[:length_1] = array_1
-        array_out[length_1:] = array_2
         
     def cosine_sample_negative(self, raw_fp, num_rcts):
         ''' 
@@ -182,7 +193,7 @@ class ReactionDataset(Dataset):
             
         TODO: might be faster to sample rct_idx's for entire batch (have to design custom collate_fn)
         '''
-        rct_idx = random.choice(np.arange(num_rcts)) 
+        rct_idx = random.randint(0, num_rcts - 1) # random.choice(np.arange(num_rcts)) 
         rct_prod_sparse = sparse.csr_matrix(raw_fp.copy()[[rct_idx, -1]], dtype='int8')
         
         if self.mode == 'cosine_spaces':
@@ -190,9 +201,9 @@ class ReactionDataset(Dataset):
                                                                                 k = max(self.num_neg_prod, self.num_neg_rct) + 1, 
                                                                                 num_threads = 4) # or self.trainargs['num_threads']
             nn_rct_idxs, nn_prod_idxs = nn_rct_idx_dist[0], nn_prod_idx_dist[0]
-        else:
+        else: #pysparnn
             nn_rct_idxs, nn_prod_idxs = self.clusterindex.search(rct_prod_sparse, k=max(self.num_neg_prod, self.num_neg_rct)+1, 
-                                                   return_distance=False)  #[0][1:]
+                                                   return_distance=False)  
             nn_rct_idxs, nn_prod_idxs = [int(idx) for idx in nn_rct_idxs], [int(idx) for idx in nn_prod_idxs]
         nn_prod_FPs = [self.sparseFP_vocab[idx].toarray() for idx in nn_prod_idxs[1: self.num_neg_prod + 1]]
         nn_rct_FPs = [self.sparseFP_vocab[idx].toarray() for idx in nn_rct_idxs[1: self.num_neg_rct + 1]] # 1 x 4096 nparray
@@ -200,7 +211,8 @@ class ReactionDataset(Dataset):
         # try pre-allocating output list in memory, to avoid list concatenation (which might be slow)
         out_FPs = [0] * (self.num_neg_prod + self.num_neg_rct)
         for i, prod_FP in enumerate(nn_prod_FPs):
-            out_FPs[i] = np.vstack((raw_fp[:-1], prod_FP))
+            out_FPs[i] = faster_vstack((raw_fp[:-1], prod_FP), self.max_num_rcts - 1, 1, self.rctfp_size)
+            # out_FPs[i] = np.vstack((raw_fp[:-1], prod_FP))
         for j, rct_FP in enumerate(nn_rct_FPs):
             out_FPs[self.num_neg_prod + j] = xform_rctFP(rct_FP, rct_idx, raw_fp)
         return out_FPs
@@ -217,7 +229,7 @@ class ReactionDataset(Dataset):
         Returns:
             corrupted fp of same shape and type as rxn_fp
         '''
-        rdm_idx = random.sample(range(rxn_fp.shape[-1]), k=num_bits)
+        rdm_idx = random.sample(range(self.rctfp_size), k=num_bits) # don't need rxn_fp.shape[-1]
         rxn_fp[0, rdm_idx] = [random.choice([-1, 0, 1]) for bit in rxn_fp[0, rdm_idx]]
         return rxn_fp
     
@@ -226,8 +238,8 @@ class ReactionDataset(Dataset):
         Returns 1 training sample in the form [pos_rxn_fp, neg_rxn_1_fp, ..., neg_rxn_K-1_fp]
         num_neg / num_neg_rct & num_neg_prod: a hyperparameter to be tuned
         '''
-        if torch.is_tensor(idx): 
-            idx = idx.tolist() 
+        # if torch.is_tensor(idx): 
+        #     idx = idx.tolist() 
         
         if self.mode == 'bit_corruption':
             pos_rxn_fp = self.rxn_fp[idx].toarray()
@@ -237,18 +249,19 @@ class ReactionDataset(Dataset):
         
         else:
             fp_raw_num_rcts = self.fp_raw_num_rcts[idx].toarray() 
-            pos_raw_fp, num_rcts = np.split(fp_raw_num_rcts, [fp_raw_num_rcts.shape[-1]-1], axis=1) 
-            pos_raw_fp = pos_raw_fp.reshape(-1, self.rctfp_size) 
-            num_rcts = num_rcts[0][0]
+            # pos_raw_fp, num_rcts = np.split(fp_raw_num_rcts, [fp_raw_num_rcts.shape[-1]-1], axis=1) 
+            # pos_raw_fp = pos_raw_fp.reshape(-1, self.rctfp_size) 
+            # num_rcts = num_rcts[0][0]
+            pos_raw_fp = fp_raw_num_rcts[:, :-1].reshape(self.max_num_rcts, self.rctfp_size) 
+            num_rcts = fp_raw_num_rcts[0, -1]
             pos_rxn_fp = create_rxn_MorganFP_fromFP(pos_raw_fp.copy(), num_rcts, fp_type=self.fp_type, 
                                                     rctfp_size=self.rctfp_size, prodfp_size=self.prodfp_size)
             
-            if 'cluster_path' in self.trainargs.keys():
-                if self.trainargs['cluster_path'] is not None: # cosine similarity search
+            if 'cluster_path' in self.trainargs.keys() and self.trainargs['cluster_path'] is not None: # cosine similarity search
 #                 if self.show_neg:
 #                     neg_raw_fps, nn_prod_indices, nn_rct_indices = self.cosine_sample_negative(pos_raw_fp, num_rcts)
 #                 else:
-                    neg_raw_fps = self.cosine_sample_negative(pos_raw_fp, num_rcts)
+                neg_raw_fps = self.cosine_sample_negative(pos_raw_fp, num_rcts)
             else:
                 neg_raw_fps = [0] * (self.num_neg_prod + self.num_neg_rct)
                 for i in range(self.num_neg_prod):
@@ -260,16 +273,17 @@ class ReactionDataset(Dataset):
 #                                self.random_sample_negative(pos_raw_fp.copy(), num_rcts, 'rct') 
 #                                for i in range(self.num_neg_rct)]
 
-            neg_rxn_fps = [create_rxn_MorganFP_fromFP(neg_raw_fp.copy(), num_rcts, fp_type=self.fp_type, 
+                neg_rxn_fps = [create_rxn_MorganFP_fromFP(neg_raw_fp.copy(), num_rcts, fp_type=self.fp_type, 
                                                       rctfp_size=self.rctfp_size, prodfp_size=self.prodfp_size)
                             for neg_raw_fp in neg_raw_fps]
 #             if self.show_neg:
 #                 return torch.Tensor([pos_rxn_fp, *neg_rxn_fps]), nn_prod_indices, nn_rct_indices
 #             else:
-            return torch.Tensor([pos_rxn_fp, *neg_rxn_fps])
+                # return [pos_rxn_fp, *neg_rxn_fps]
+                return torch.Tensor([pos_rxn_fp, *neg_rxn_fps])
 
     def __len__(self):
         if self.mode == 'bit_corruption':
-            return self.rxn_fp.shape[0]
+            return self.rxn_fp_length
         else:
-            return self.fp_raw_num_rcts.shape[0]
+            return self.fp_raw_num_rcts_length

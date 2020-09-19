@@ -7,7 +7,7 @@ import time
 import random
 import nmslib
 
-from model.utils import (save_checkpoint, seed_everything)
+from model.utils import (save_checkpoint, seed_everything, _worker_init_fn_)
 from data.data import ReactionDataset
 
 class Experiment():
@@ -51,14 +51,11 @@ class Experiment():
         self.stats_filename = self.trainargs['checkpoint_path'] + stats_filename
         self.stats['trainargs'] = self.trainargs 
         self.mean_train_loss = self.stats['mean_train_loss']
-        self.min_val_loss = self.stats['min_val_loss']
+        self.mean_train_acc = self.stats['mean_train_acc']
         self.mean_val_loss = self.stats['mean_val_loss']
+        self.mean_val_acc = self.stats['mean_val_acc']
+        self.min_val_loss = self.stats['min_val_loss']
         self.wait = 0 # counter for _check_earlystop()
-        try:
-            self.mean_train_acc = self.stats['mean_train_acc']
-            self.mean_val_acc = self.stats['mean_val_acc']
-        except Exception as e:
-            print(e)
         
         assert begin_epoch is not None, 'load_checkpoint requires begin_epoch!'
         self.begin_epoch = begin_epoch
@@ -97,6 +94,7 @@ class Experiment():
                                         trainargs=self.trainargs, mode=mode, spaces_index=clusterindex)
         self.train_loader = DataLoader(train_dataset, self.trainargs['batch_size'], 
                                        num_workers=self.trainargs['num_workers'], 
+                                       worker_init_fn=_worker_init_fn_,
                                         shuffle=True, pin_memory=self.pin_memory)
         self.train_size = len(train_dataset)
         
@@ -104,6 +102,7 @@ class Experiment():
                                         trainargs=self.trainargs, mode=mode, spaces_index=clusterindex)
         self.val_loader = DataLoader(val_dataset, 2 * self.trainargs['batch_size'], 
                                      num_workers=self.trainargs['num_workers'],
+                                     worker_init_fn=_worker_init_fn_,
                                         shuffle=False, pin_memory=self.pin_memory)
         self.val_size = len(val_dataset)
         
@@ -111,6 +110,7 @@ class Experiment():
                                         trainargs=self.trainargs, mode=mode, spaces_index=clusterindex)
         self.test_loader = DataLoader(test_dataset, 2 * self.trainargs['batch_size'], 
                                       num_workers=self.trainargs['num_workers'],
+                                      worker_init_fn=_worker_init_fn_,
                                         shuffle=False, pin_memory=self.pin_memory)
         self.test_size = len(test_dataset)
         del train_dataset, val_dataset, test_dataset # save memory
@@ -150,13 +150,13 @@ class Experiment():
 
     def _checkpoint_model_and_opt(self, current_epoch):
         checkpoint_dict = {
-                                    'epoch': current_epoch, # epochs are 1-indexed
-                                    'model': self.trainargs['model'],
-                                    'state_dict': self.model.state_dict(),
-                                    'optimizer' : self.optimizer.state_dict(),
-                                    'stats' : self.stats,
-                                    'mode' : self.mode
-                                }
+                            'epoch': current_epoch, # epochs are 1-indexed
+                            'model': self.trainargs['model'],
+                            'state_dict': self.model.state_dict(),
+                            'optimizer' : self.optimizer.state_dict(),
+                            'stats' : self.stats,
+                            'mode' : self.mode
+                        }
         checkpoint_filename = self.trainargs['checkpoint_path'] + \
                     '{}_{}_{}_checkpoint_{:04d}.pth.tar'.format(
                                                             self.trainargs['model'], self.mode,

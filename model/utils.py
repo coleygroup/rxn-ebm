@@ -56,3 +56,9 @@ def seed_everything(seed=0):
     np.random.seed(seed)
 
     print('Using seed: {}'.format(seed))
+
+def _worker_init_fn_():
+    torch_seed = torch.initial_seed()
+    np_seed = torch_seed // 2*32-1
+    random.seed(torch_seed)
+    np.random.seed(np_seed)

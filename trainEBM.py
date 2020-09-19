@@ -5,12 +5,14 @@ def trainEBM():
     from experiment.utils import setup_paths, load_model_opt_and_stats
     from model.FF import FeedforwardEBM
 
+    torch.backends.cudnn.benchmark = True 
+
     ################
 
     LOCAL = True # CHANGE THIS 
-    mode = 'cosine_pysparnn_four' # bit_corruption or random_sampling or cosine_pysparnn_<num_index> or cosine_spaces
+    mode = 'random_sampling' # bit_corruption or random_sampling or cosine_pysparnn_<num_index> or cosine_spaces
     model_name = 'Feedforward'
-    expt_name = 'expt1' # CHANGE THIS 
+    expt_name = 'profiling_expt4' # CHANGE THIS 
 
     checkpoint_folder, base_path, cluster_path, sparseFP_vocab_path = setup_paths(expt_name, mode, LOCAL)
 
@@ -24,7 +26,7 @@ def trainEBM():
     'activation': 'ReLU',  
     'optimizer': torch.optim.Adam,
     'learning_rate':  5e-3, # to try: lr_finder & lr_schedulers 
-    'epochs': 20,
+    'epochs': 1,
     'early_stop': True,
     'min_delta': 1e-5, # we just want to watch out for when val_loss increases
     'patience': 1,

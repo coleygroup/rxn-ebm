@@ -1,7 +1,4 @@
 def resumeEBM():
-    import os
-    import numpy as np
-    from datetime import date
     import torch
 
     from experiment.experiment import Experiment
@@ -9,27 +6,24 @@ def resumeEBM():
     from model.FF import FeedforwardEBM
 
     LOCAL = True # CHANGE THIS 
-    cosine = False # CHANGE THIS 
-    multi = False # monocluster or multicluster
     mode = 'bit_corruption' # CHANGE THIS - bit_corruption or random_sampling or cosine
-    model = 'Feedforward'
-    expt_name = 'expt3'
+    model_name = 'Feedforward'
+    expt_name = 'expt3' # RMBR TO CHANGE!
 
     load_pretrained = True
     date_trained = '13_09_2020'
     stats_filename = 'Feedforward_expt3_stats.pkl'  
     opt = 'Adam' 
 
-    checkpoint_folder, base_path, cluster_path, sparseFP_vocab_path = setup_paths(expt_name, mode,
-                                                                                   load_pretrained, date_trained, 
-                                                                                   LOCAL, cosine, multi)
+    checkpoint_folder, base_path, cluster_path, sparseFP_vocab_path = setup_paths(expt_name, mode, LOCAL,
+                                                                                  load_pretrained, date_trained)
 
     model, optimizer, stats = load_model_opt_and_stats(stats_filename, base_path, cluster_path,
-                                                  sparseFP_vocab_path, checkpoint_folder,
-                                                  model, cosine, opt)
+                                                sparseFP_vocab_path, checkpoint_folder, mode, 
+                                                  model_name, opt)
 
     trainargs = {
-    'model': model,
+    'model': model_name,
     'hidden_sizes': [1024, 256],  
     'output_size': 1,
     'dropout': 0.1,  
@@ -68,7 +62,8 @@ def resumeEBM():
     'device': torch.device("cuda" if torch.cuda.is_available() else "cpu")
     }   
 
-    experiment = Experiment(model, stats['trainargs'], mode=mode, 
+    # use stats['trainargs'] if you don't want to change the original trainargs 
+    experiment = Experiment(model, trainargs, mode=mode, 
                             load_optimizer=optimizer, load_checkpoint=True, load_stats=stats, 
                             stats_filename=stats_filename, begin_epoch=stats['best_epoch'] + 1)
 
