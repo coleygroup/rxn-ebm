@@ -5,9 +5,8 @@ from tqdm import tqdm
 import torch.nn as nn
 import time
 import random
-import nmslib
 
-from model.utils import (save_checkpoint, seed_everything, _worker_init_fn_)
+from model.utils import (save_checkpoint, seed_everything, _worker_init_fn_nmslib_, _worker_init_fn_default_)
 from data.data import ReactionDataset
 
 class Experiment():
@@ -80,41 +79,37 @@ class Experiment():
     def _init_dataloaders(self, mode):
         print('initialising dataloaders...')
 
-        clusterindex = None
-        if mode == 'cosine_spaces': # does not support multi-processing!!! 
-            # print('entering cosine_spaces') 
-            clusterindex = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
-                                data_type=nmslib.DataType.SPARSE_VECTOR)
-            clusterindex.loadIndex(self.trainargs['cluster_path'], load_data=True)
-            if 'query_params' in self.trainargs.keys():
-                clusterindex.setQueryTimeParams(self.trainargs['query_params'])
+        if self.trainargs['num_workers'] > 0:
+            if mode == 'cosine_spaces':  
+                worker_init_fn = _worker_init_fn_nmslib_
+            else:
+                worker_init_fn = _worker_init_fn_default_
 
         self.pin_memory = True if torch.cuda.is_available() else False
         train_dataset = ReactionDataset(self.trainargs['base_path'], 'train', 
-                                        trainargs=self.trainargs, mode=mode, spaces_index=clusterindex)
+                                        trainargs=self.trainargs, mode=mode)
         self.train_loader = DataLoader(train_dataset, self.trainargs['batch_size'], 
                                        num_workers=self.trainargs['num_workers'], 
-                                       worker_init_fn=_worker_init_fn_,
+                                       worker_init_fn=worker_init_fn,
                                         shuffle=True, pin_memory=self.pin_memory)
         self.train_size = len(train_dataset)
         
         val_dataset = ReactionDataset(self.trainargs['base_path'], 'valid', 
-                                        trainargs=self.trainargs, mode=mode, spaces_index=clusterindex)
+                                        trainargs=self.trainargs, mode=mode)
         self.val_loader = DataLoader(val_dataset, 2 * self.trainargs['batch_size'], 
                                      num_workers=self.trainargs['num_workers'],
-                                     worker_init_fn=_worker_init_fn_,
+                                     worker_init_fn=worker_init_fn,
                                         shuffle=False, pin_memory=self.pin_memory)
         self.val_size = len(val_dataset)
         
         test_dataset = ReactionDataset(self.trainargs['base_path'], 'test', 
-                                        trainargs=self.trainargs, mode=mode, spaces_index=clusterindex)
+                                        trainargs=self.trainargs, mode=mode)
         self.test_loader = DataLoader(test_dataset, 2 * self.trainargs['batch_size'], 
                                       num_workers=self.trainargs['num_workers'],
-                                      worker_init_fn=_worker_init_fn_,
+                                      worker_init_fn=worker_init_fn,
                                         shuffle=False, pin_memory=self.pin_memory)
         self.test_size = len(test_dataset)
         del train_dataset, val_dataset, test_dataset # save memory
-        del clusterindex
     
     def _check_earlystop(self, current_epoch):
         self.to_break = 0

@@ -1,18 +1,14 @@
 def trainEBM():
     import torch
-
     from experiment.experiment import Experiment
     from experiment.utils import setup_paths, load_model_opt_and_stats
     from model.FF import FeedforwardEBM
-
     torch.backends.cudnn.benchmark = True 
 
-    ################
-
     LOCAL = True # CHANGE THIS 
-    mode = 'random_sampling' # bit_corruption or random_sampling or cosine_pysparnn_<num_index> or cosine_spaces
+    mode = 'cosine_spaces' # bit_corruption or random_sampling or cosine_pysparnn_<num_index> or cosine_spaces
     model_name = 'Feedforward'
-    expt_name = 'profiling_expt4' # CHANGE THIS 
+    expt_name = 'testing_engaging' # CHANGE THIS 
 
     checkpoint_folder, base_path, cluster_path, sparseFP_vocab_path = setup_paths(expt_name, mode, LOCAL)
 
@@ -26,11 +22,11 @@ def trainEBM():
     'activation': 'ReLU',  
     'optimizer': torch.optim.Adam,
     'learning_rate':  5e-3, # to try: lr_finder & lr_schedulers 
-    'epochs': 1,
+    'epochs': 2,
     'early_stop': True,
     'min_delta': 1e-5, # we just want to watch out for when val_loss increases
     'patience': 1,
-    'num_workers': 4,
+    'num_workers': 4, # 0 or 4
 
     'checkpoint': True,
     'model_seed': 1337,
@@ -43,14 +39,15 @@ def trainEBM():
     
     'num_neg_prod': 5, 
     'num_neg_rct': 5,
-    # 'num_bits': 4, 
-    # 'num_neg': 5,
+    'num_bits': 4, 
+    'num_neg': 5,
     
     'base_path': base_path, # refer to top of notebook 
     'checkpoint_path': checkpoint_folder,
     'cluster_path': cluster_path,
     'sparseFP_vocab_path': sparseFP_vocab_path,
     'query_params': {'efSearch': 100}, # for cosine_spaces, good value to hit 96% recall
+    'num_threads': 1, 
  
     'expt_name': expt_name,
     'device': torch.device("cuda" if torch.cuda.is_available() else "cpu")

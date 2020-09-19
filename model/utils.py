@@ -4,6 +4,12 @@ import random
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.data import get_worker_info
+
+# import logging
+# logging.basicConfig(level=logging.DEBUG)
+# logging.getLogger('nmslib').setLevel(logging.WARNING) # Only log WARNING messages and above from nmslib
+import nmslib
 
 def get_activation_function(activation: str) -> nn.Module:
     """
@@ -57,8 +63,24 @@ def seed_everything(seed=0):
 
     print('Using seed: {}'.format(seed))
 
-def _worker_init_fn_():
+def _worker_init_fn_nmslib_(worker_id):
     torch_seed = torch.initial_seed()
-    np_seed = torch_seed // 2*32-1
+    np_seed = torch_seed % (2**31 - 1)
+    random.seed(torch_seed)
+    np.random.seed(np_seed)
+
+    worker_info = get_worker_info() 
+    dataset = worker_info.dataset 
+    # print(dataset, dataset.clusterindex)
+    if dataset.clusterindex is None:
+        dataset.clusterindex = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
+                            data_type=nmslib.DataType.SPARSE_VECTOR)
+        dataset.clusterindex.loadIndex(dataset.trainargs['cluster_path'], load_data=True)
+        if 'query_params' in dataset.trainargs.keys():
+            dataset.clusterindex.setQueryTimeParams(dataset.trainargs['query_params'])
+
+def _worker_init_fn_default_(worker_id):
+    torch_seed = torch.initial_seed()
+    np_seed = torch_seed % (2**31 - 1)
     random.seed(torch_seed)
     np.random.seed(np_seed)
