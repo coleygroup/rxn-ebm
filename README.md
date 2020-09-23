@@ -10,7 +10,7 @@ rxn-ebm
 ├── model
 │   ├── FF.py
 |   └── utils.py
-├── data
+└── data
     ├── data.py
     ├── analysis.py
     └── preprocess
