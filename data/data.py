@@ -4,55 +4,43 @@ import random
 import pickle
 from scipy import sparse 
 import numpy as np
-
-# import logging
-# logging.basicConfig(level=logging.DEBUG)
-# logging.getLogger('nmslib').setLevel(logging.WARNING) # Only log WARNING messages and above from nmslib
 import nmslib
 
-def create_rxn_MorganFP_fromFP(raw_fp, num_rcts, fp_type='diff', 
-                               rctfp_size=4096, prodfp_size=4096, dtype='int8'):
+def mol_fps_to_rxn_fp(raw_fp, num_rcts, fp_type='diff', 
+                      rctfp_size=4096, prodfp_size=4096, dtype='int8'):
     '''
-    fp_type: 'diff' or 'sep', 
-    'diff' (difference):
-    Creates reaction MorganFP following Schneider et al in J. Chem. Inf. Model. 2015, 55, 1, 39–53
-    reactionFP = productFP - sum(reactantFPs)
-    
-    'sep' (separate):
-    Creates separate reactantsFP and productFP following Gao et al in ACS Cent. Sci. 2018, 4, 11, 1465–1476
+    fp_type: str (Default = 'diff')
+        'diff' (difference):
+        Creates reaction MorganFP following Schneider et al in J. Chem. Inf. Model. 2015, 55, 1, 39–53
+        reactionFP = productFP - sum(reactantFPs)
+        
+        'sep' (separate):
+        Creates separate reactantsFP and productFP following Gao et al in ACS Cent. Sci. 2018, 4, 11, 1465–1476
     '''
     # initialise empty fp numpy arrays
     if fp_type == 'diff':
-        diff_fp = np.empty(rctfp_size, dtype = dtype)
+        diff_fp = np.zeros(rctfp_size, dtype = dtype)
     elif fp_type == 'sep':
         rcts_fp = np.zeros(rctfp_size, dtype = dtype)
-        prod_fp = np.empty(prodfp_size, dtype = dtype)
+        prod_fp = np.zeros(prodfp_size, dtype = dtype)
     else:
         print('ERROR: fp_type not recognised!')
         return
     
     # create product FP
-    # try:
     fp = raw_fp[-1]
     if fp_type == 'diff':
         diff_fp = fp
     elif fp_type == 'sep':
         prod_fp = fp
-    # except Exception as e:
-    #     print("Cannot build product fp due to {}".format(e))
-    #     return
                                   
     # create reactant FPs, subtracting each from product FP
     for i in range(num_rcts):
-        # try:
         fp = raw_fp[i]
         if fp_type == 'diff':
-            diff_fp -= fp
+            diff_fp = diff_fp - fp
         elif fp_type == 'sep':
-            rcts_fp += fp
-        # except Exception as e:
-        #     print("Cannot build reactant fp due to {}".format(e))
-        #     return
+            rcts_fp = rcts_fp + fp
     
     if fp_type == 'diff':
         return diff_fp
@@ -70,7 +58,7 @@ def xform_rctFP(rct_FP, rct_idx, raw_fp):
 
 def faster_vstack(tuple_of_arrays, length_1, length_2, width):
     array_1, array_2 = tuple_of_arrays
-    array_out = np.empty((length_1 + length_2, width))
+    array_out = np.empty((length_1 + length_2, width)) 
     array_out[:length_1] = array_1
     array_out[length_2:] = array_2
     return array_out
@@ -91,15 +79,14 @@ class ReactionDataset(Dataset):
     
     ---------------------------------------------------------------------------------
     For bit corruption:
-        base_path should have the form 'PATH/clean_rxn_50k_sparse_rxnFPs'
+        base_path should have the form 'USPTO_50k_data/clean_rxn_50k_sparse_rxnFPs'
 
         Needs in trainargs: 
             'num_neg': # negative samples to generate
             'num_bits': # bits to randomly corrupt in rxn fingerprint 
     '''
     def __init__(self, base_path, key, trainargs, mode,
-                 show_neg=False, # for visualising nearest neighbors 
-                 save_neg=False): # for rxn_smi (to fix later on)
+                 show_neg=False): # for visualising nearest neighbors (TODO)
         self.trainargs = trainargs
         self.mode = mode
         self.fp_type = self.trainargs['fp_type']
@@ -114,27 +101,21 @@ class ReactionDataset(Dataset):
             
         else: # cosine/random sampling         
             self.fp_raw_num_rcts = sparse.load_npz(base_path + '_' + key + '.npz')
-            self.fp_raw_num_rcts_length = self.fp_raw_num_rcts.shape[0]           
-            self.max_num_rcts = self.fp_raw_num_rcts[0].toarray()[:, :-1].shape[1] // self.rctfp_size 
-            # to speed up faster_vstack & np.reshape
+            self.fp_raw_num_rcts_length = self.fp_raw_num_rcts.shape[0]  # avoid calling .shape[0] every time, even though it's O(1)        
+            self.max_num_rcts = self.fp_raw_num_rcts[0].toarray()[:, :-1].shape[1] // self.rctfp_size - 1 # to speed up faster_vstack & np.reshape
 
             if 'cluster_path' in self.trainargs.keys() and self.trainargs['cluster_path']:
                     self._init_searchindex()
    
             self.num_neg_prod = self.trainargs['num_neg_prod']
             self.num_neg_rct = self.trainargs['num_neg_rct']
-#         self.save_neg = save_neg
 #         self.show_neg = show_neg
 
     def _init_searchindex(self):
         self.sparseFP_vocab = sparse.load_npz(self.trainargs['sparseFP_vocab_path'])
         self.clusterindex = None  # if multiprocessing, this will be initialised from worker_init_fn
-        if self.mode == 'cosine_spaces':
-            if self.trainargs['num_workers'] == 0:
-                self._load_nmslib()
-        else:
-            with open(self.trainargs['cluster_path'], 'rb') as handle:
-                self.clusterindex = pickle.load(handle)
+        if self.trainargs['num_workers'] == 0:
+            self._load_nmslib()
 
     def _load_nmslib(self): 
         self.clusterindex = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
@@ -148,13 +129,12 @@ class ReactionDataset(Dataset):
         Randomly generates 1 negative rxn given a positive rxn fingerprint
         Returns neg_rxn_fp (fingerprint)
         ''' 
-        rdm_rxn_idx = random.randint(0, self.fp_raw_num_rcts_length - 1) # random.choice(np.arange(self.fp_raw_num_rcts_length)) 
+        rdm_rxn_idx = random.randint(0, self.fp_raw_num_rcts_length - 1)  
         new_fp_raw_num_rcts = self.fp_raw_num_rcts[rdm_rxn_idx].toarray()
-        # new_raw_fp, _ = np.split(new_fp_raw_num_rcts, [new_fp_raw_num_rcts.shape[-1]-1], axis=1)
-        new_raw_fp = new_fp_raw_num_rcts[:, :-1].reshape(self.max_num_rcts, self.rctfp_size)  
+        new_raw_fp = new_fp_raw_num_rcts[:, :-1].reshape(self.max_num_rcts, self.rctfp_size)  # this step can be replaced with a different kind of indexing
         
         if mode == 'rct':
-            rct_idx = random.randint(0, num_rcts - 1) # random.choice(np.arange(num_rcts))
+            rct_idx = random.randint(0, num_rcts - 1)   
             raw_fp[rct_idx, :] = new_raw_fp[rct_idx, :]
         else:
             raw_fp[-1, :] = new_raw_fp[-1, :] 
@@ -175,33 +155,26 @@ class ReactionDataset(Dataset):
         if self.clusterindex is None:
             self._load_nmslib()
 
-        rct_idx = random.randint(0, num_rcts - 1) # random.choice(np.arange(num_rcts)) 
+        rct_idx = random.randint(0, num_rcts - 1) 
         rct_prod_sparse = sparse.csr_matrix(raw_fp.copy()[[rct_idx, -1]], dtype='int8')
-        
-        if self.mode == 'cosine_spaces':
-            nn_rct_idx_dist, nn_prod_idx_dist = self.clusterindex.knnQueryBatch(rct_prod_sparse, 
-                                                                                k = max(self.num_neg_prod, self.num_neg_rct) + 1, 
-                                                                                num_threads = self.trainargs['num_threads']) # or 
-            nn_rct_idxs, nn_prod_idxs = nn_rct_idx_dist[0], nn_prod_idx_dist[0]
-        else: #pysparnn
-            nn_rct_idxs, nn_prod_idxs = self.clusterindex.search(rct_prod_sparse, k=max(self.num_neg_prod, self.num_neg_rct)+1, 
-                                                   return_distance=False)  
-            nn_rct_idxs, nn_prod_idxs = [int(idx) for idx in nn_rct_idxs], [int(idx) for idx in nn_prod_idxs]
+
+        nn_rct_idx_dist, nn_prod_idx_dist = self.clusterindex.knnQueryBatch(rct_prod_sparse, 
+                                                                            k = max(self.num_neg_prod, self.num_neg_rct) + 1, 
+                                                                            num_threads = self.trainargs['num_threads'])   
+        nn_rct_idxs, nn_prod_idxs = nn_rct_idx_dist[0], nn_prod_idx_dist[0]
+
         nn_prod_FPs = [self.sparseFP_vocab[idx].toarray() for idx in nn_prod_idxs[1: self.num_neg_prod + 1]]
-        nn_rct_FPs = [self.sparseFP_vocab[idx].toarray() for idx in nn_rct_idxs[1: self.num_neg_rct + 1]] # 1 x 4096 nparray
+        nn_rct_FPs = [self.sparseFP_vocab[idx].toarray() for idx in nn_rct_idxs[1: self.num_neg_rct + 1]]  
         
         out_FPs = [0] * (self.num_neg_prod + self.num_neg_rct)
         for i, prod_FP in enumerate(nn_prod_FPs):
-            out_FPs[i] = faster_vstack((raw_fp[:-1], prod_FP), self.max_num_rcts - 1, 1, self.rctfp_size)
-            # out_FPs[i] = np.vstack((raw_fp[:-1], prod_FP))
+            out_FPs[i] = faster_vstack((raw_fp[:-1], prod_FP), self.max_num_rcts, 1, self.rctfp_size)
         for j, rct_FP in enumerate(nn_rct_FPs):
             out_FPs[self.num_neg_prod + j] = xform_rctFP(rct_FP, rct_idx, raw_fp)
+        # if self.show_neg:
+        #     return out_FPs, nn_prod_idxs, nn_rct_idxs
         return out_FPs
-#         if self.show_neg:
-#             return [np.vstack((raw_fp[:-1], FP)) for FP in nn_prod_FPs] + [xform_rctFP(rctFP, rct_idx, raw_fp) for rctFP in nn_rct_FPs], nn_prod_indices, nn_rct_indices
-#         else:
-#             return [np.vstack((raw_fp[:-1], FP)) for FP in nn_prod_FPs] + [xform_rctFP(rctFP, rct_idx, raw_fp) for rctFP in nn_rct_FPs]  
-            
+
     def random_bit_corrupter(self, rxn_fp, num_bits=10):
         ''' Randomly selects <num_bits> bits in rxn_fp & randomly replaces them w/ -1, 0 or 1
         Args: 
@@ -230,11 +203,11 @@ class ReactionDataset(Dataset):
         
         else:
             fp_raw_num_rcts = self.fp_raw_num_rcts[idx].toarray() 
-            pos_raw_fp = fp_raw_num_rcts[:, :-1].reshape(self.max_num_rcts, self.rctfp_size) 
+            pos_raw_fp = fp_raw_num_rcts[:, :-1].reshape(self.max_num_rcts + 1, self.rctfp_size) 
             num_rcts = fp_raw_num_rcts[0, -1]
             pos_rxn_fp = create_rxn_MorganFP_fromFP(pos_raw_fp.copy(), num_rcts, fp_type=self.fp_type, 
                                                     rctfp_size=self.rctfp_size, prodfp_size=self.prodfp_size)
-            if 'cluster_path' in self.trainargs.keys() and self.trainargs['cluster_path'] is not None: 
+            if self.mode == 'cosine': 
 #                 if self.show_neg:
 #                     neg_raw_fps, nn_prod_indices, nn_rct_indices = self.cosine_sample_negative(pos_raw_fp, num_rcts)
 #                 else:
@@ -251,10 +224,9 @@ class ReactionDataset(Dataset):
                             for neg_raw_fp in neg_raw_fps]
 #           if self.show_neg:
 #                 return torch.Tensor([pos_rxn_fp, *neg_rxn_fps]), nn_prod_indices, nn_rct_indices
-#           else:
-                # return [pos_rxn_fp, *neg_rxn_fps] # for profiling only (as torch is not compatible with cProfile)
             return torch.Tensor([pos_rxn_fp, *neg_rxn_fps])
-
+#           return [pos_rxn_fp, *neg_rxn_fps] # for profiling only (as torch is not compatible with cProfile)
+        
     def __len__(self):
         if self.mode == 'bit_corruption':
             return self.rxn_fp_length
