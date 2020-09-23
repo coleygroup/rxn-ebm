@@ -13,8 +13,9 @@ rxn-ebm
 └── data
     ├── data.py
     ├── analysis.py
-    └── preprocess
-            ├── clean_smiles.py    
-            ├── smi_to_mol_fp_sparse.py
-            └── original_data  
+    ├── preprocess
+    |        ├── clean_smiles.py    
+    |        ├── smi_to_mol_fp_sparse.py
+    ├── original_data  
+    └── cleaned_data
  ```
