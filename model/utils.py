@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import get_worker_info
 
+from typing import Optional
+
 # import logging
 # logging.basicConfig(level=logging.DEBUG)
 # logging.getLogger('nmslib').setLevel(logging.WARNING) # Only log WARNING messages and above from nmslib
@@ -50,12 +52,13 @@ def initialize_weights(model: nn.Module) -> None:
         else:
             nn.init.xavier_normal_(param)
             
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+def save_checkpoint(state, filename: str='checkpoint.pth.tar', 
+                    is_best: Optional[bool]=False) -> None:
     torch.save(state, filename)
     if is_best:
         shutil.copyfile(filename, 'model_best.pth.tar')
 
-def seed_everything(seed=0):
+def seed_everything(seed: Optional[int]=0) -> None:
     torch.manual_seed(seed)
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -63,24 +66,3 @@ def seed_everything(seed=0):
 
     print('Using seed: {}'.format(seed))
 
-def _worker_init_fn_nmslib_(worker_id):
-    torch_seed = torch.initial_seed()
-    np_seed = torch_seed % (2**31 - 1)
-    random.seed(torch_seed)
-    np.random.seed(np_seed)
-
-    worker_info = get_worker_info() 
-    dataset = worker_info.dataset 
-    # print(dataset, dataset.clusterindex)
-    if dataset.clusterindex is None:
-        dataset.clusterindex = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
-                            data_type=nmslib.DataType.SPARSE_VECTOR)
-        dataset.clusterindex.loadIndex(dataset.trainargs['cluster_path'], load_data=True)
-        if 'query_params' in dataset.trainargs.keys():
-            dataset.clusterindex.setQueryTimeParams(dataset.trainargs['query_params'])
-
-def _worker_init_fn_default_(worker_id):
-    torch_seed = torch.initial_seed()
-    np_seed = torch_seed % (2**31 - 1)
-    random.seed(torch_seed)
-    np.random.seed(np_seed)
