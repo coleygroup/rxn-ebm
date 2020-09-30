@@ -6,21 +6,38 @@ torch.backends.cudnn.benchmark = True
 from experiment.expt import Experiment
 from experiment.utils import setup_paths, load_model_opt_and_stats
 from model.FF import FeedforwardEBM
-
+from data.dataset import AugmentedData
 '''
 TODO: in setup_paths(), need to make the necessary folders if they don't exist
-i.e. root / 'data' / 'cleaned_data' & root / 'checkpoints' / checkpoint_folder
+e.g. root / 'data' / 'cleaned_data' 
+root / 'checkpoints' / checkpoint_folder
 '''
 
 def trainEBM():
     LOCAL = True # CHANGE THIS  
-    expt_name = 'test_precomputed' # CHANGE THIS 
-
-    checkpoint_folder, base_path, cluster_path, sparseFP_vocab_path = setup_paths(expt_name, None, LOCAL)
-    precomp_file_prefix = '50k_count_rdm_5' # add f'_{dataset}.npz'
-
+    expt_name = 'rdm_5_cos_25_bit_35_3' # CHANGE THIS 
+    precomp_file_prefix = '50k_' + expt_name # expt.py will add f'_{dataset}.npz'
+    
+    augmentations = {
+        'rdm': {'num_neg': 5}, 
+        'cos': {'num_neg': 25},
+        'bit': {'num_neg': 35, 'num_bits': 3}
+    }
+    ### PRECOMPUTE ### 
+    lookup_dict_filename = '50k_mol_smi_to_count_fp.pickle'
+    mol_fps_filename = '50k_count_mol_fps.npz'
+    search_index_filename = '50k_cosine_count.bin'
+    augmented_data = AugmentedData(augmentations, lookup_dict_filename, mol_fps_filename, search_index_filename)
+    
+    rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent' 
+    for dataset in ['train', 'valid', 'test']:
+        augmented_data.precompute(
+            output_filename=precomp_file_prefix+f'_{dataset}.npz', 
+            rxn_smis=rxn_smis_file_prefix+f'_{dataset}.pickle')
+    ####################  TODO: fix setup_paths
+    checkpoint_folder = setup_paths(LOCAL)
     model_args = {
-        'hidden_sizes': [512, 256],  
+        'hidden_sizes': [1024, 512, 64],  
         'output_size': 1,
         'dropout': 0.1,  
         'activation': 'ReLU'
@@ -35,27 +52,21 @@ def trainEBM():
     }
 
     train_args = {    
-        'batch_size': 64,
+        'batch_size': 2048,
         'learning_rate':  5e-3, # to try: lr_finder & lr_schedulers 
         'optimizer': torch.optim.Adam,
-        'epochs': 10,
+        'epochs': 30,
         'early_stop': True,
-        'min_delta': 1e-5, 
-        'patience': 1,
-        'num_workers': 0, # 0 or 4
+        'min_delta': 1e-6, 
+        'patience': 2,
+        'num_workers': 0, # 0 to 8
         'checkpoint': True,
-        'random_seed': 0, # affects random sampling & batching
+        'random_seed': 0, # affects RandomAugmentor's sampling & DataLoader's sampling
         
         'precomp_file_prefix': precomp_file_prefix,  
         'checkpoint_folder': checkpoint_folder,
         'expt_name': expt_name
     }   
-
-    augmentations = {
-        'rdm': {'num_neg': 2}, 
-        # 'cos': {'num_neg': 2},
-        # 'bit': {'num_neg': 2, 'num_bits': 3}
-    }
 
     model = FeedforwardEBM(**model_args, **fp_args)
 
@@ -67,13 +78,12 @@ def trainEBM():
     else:
         distributed = False
 
-    experiment = Experiment(model, augmentations= augmentations, **train_args, **fp_args, distributed=distributed)
+    experiment = Experiment(model, augmentations=augmentations, **train_args, **fp_args, distributed=distributed)
     experiment.train()
     experiment.test()
-    scores = experiment.get_topk_acc(key='test', k=1, repeats=1,  name_scores='scores_{}_{}'.format('test', expt_name))
-    scores = experiment.get_topk_acc(key='train', k=1, repeats=1, name_scores='scores_{}_{}'.format('train', expt_name))
+    scores = experiment.get_topk_acc(dataset_name='test', k=1, repeats=1)
+    scores = experiment.get_topk_acc(dataset_name='train', k=1, repeats=1)
  
-
 if __name__ == '__main__': 
     trainEBM()
     # TO DO: parse arguments from terminal

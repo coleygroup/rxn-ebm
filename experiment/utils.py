@@ -1,49 +1,35 @@
 from datetime import date
 import os
 import torch
+import random
+import numpy as np
+import nmslib
+from typing import Optional
+
 from model.FF import FeedforwardEBM
 
-def setup_paths(expt_name='expt1', mode='random_sampling', 
-                LOCAL=True, load_trained=False, date_trained=None):
-    ''' TO DO: engaging_cluster directories
+def setup_paths(LOCAL: Optional[bool]=True, 
+            load_trained: Optional[bool]=False, date_trained: Optional[bool]=None):
+    ''' TODO: engaging_cluster directories
     '''
     if load_trained:
         assert date_trained is not None, 'Please provide date_trained as "DD_MM_YYYY"'
     else:
         date_trained = date.today().strftime("%d_%m_%Y")
-        
-    cluster_path, sparseFP_vocab_path = None, None
-    
     if LOCAL: 
-        checkpoint_folder = 'checkpoints/{}/'.format(date_trained)
+        checkpoint_folder = f'checkpoints/{date_trained}/'
         try:
             os.makedirs(checkpoint_folder)
-            print('created checkpoint_folder: ', checkpoint_folder)
+            print(f'created checkpoint_folder: ', checkpoint_folder)
         except:
             print('checkpoint_folder already exists')
-
-        if mode == 'bit_corruption':
-            base_path = 'USPTO_50k_data/clean_rxn_50k_sparse_rxnFPs'
-        else:
-            base_path = 'USPTO_50k_data/clean_rxn_50k_sparse_FPs_numrcts'
-
-        if mode == 'cosine':
-            cluster_path = 'USPTO_50k_data/spaces_cosinesimil_index.bin'
-            sparseFP_vocab_path = 'USPTO_50k_data/50k_all_mols_sparse_FPs.npz'
     else: # colab, and soon, engaging_cluster 
-        checkpoint_folder = '/content/gdrive/My Drive/rxn_ebm/checkpoints/{}/'.format(date_trained) 
+        checkpoint_folder = f'/content/gdrive/My Drive/rxn_ebm/checkpoints/{date_trained}/' 
         try:
             os.makedirs(checkpoint_folder)
         except:
             print('checkpoint_folder already exists')
-        if mode == 'bit_corruption':
-            base_path = 'content/clean_rxn_50k_sparse_rxnFPs'
-        else:
-            base_path = 'content/clean_rxn_50k_sparse_FPs_numrcts'
-        if mode == 'cosine':
-            cluster_path = 'content/spaces_cosinesimil_index.bin'
-            sparseFP_vocab_path = 'content/50k_all_mols_sparse_FPs.npz'
-    return checkpoint_folder, base_path, cluster_path, sparseFP_vocab_path
+    return checkpoint_folder
 
 def load_model_opt_and_stats(stats_filename, base_path, cluster_path,
                          sparseFP_vocab_path, checkpoint_folder, mode,
@@ -54,21 +40,20 @@ def load_model_opt_and_stats(stats_filename, base_path, cluster_path,
     curr_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     stats = torch.load(checkpoint_folder + stats_filename, 
               map_location=torch.device(curr_device))
-    stats['trainargs']['base_path'] = base_path
-    stats['trainargs']['checkpoint_path'] = checkpoint_folder
+    stats['args']['checkpoint_folder'] = checkpoint_folder
 
-    if mode == 'cosine':
-        stats['trainargs']['cluster_path'] = cluster_path
-        stats['trainargs']['sparseFP_vocab_path'] = sparseFP_vocab_path
+    # if mode == 'cosine':
+    #     stats['trainargs']['cluster_path'] = cluster_path
+    #     stats['trainargs']['sparseFP_vocab_path'] = sparseFP_vocab_path
 
     if opt == 'Adam':
         stats['trainargs']['optimizer'] = torch.optim.Adam # override bug in name of optimizer when saving checkpoint
 
     try:
         if stats['best_epoch'] is None:
-            stats['best_epoch'] = stats['mean_val_loss'].index(stats['min_val_loss']) + 1  # 1-index 
-    except: # Key error 
-        stats['best_epoch'] = stats['mean_val_loss'].index(stats['min_val_loss']) + 1  # 1-index 
+            stats['best_epoch'] = stats['mean_val_loss'].index(stats['min_val_loss'])  
+    except: # KeyError 
+        stats['best_epoch'] = stats['mean_val_loss'].index(stats['min_val_loss'])  
     stats['trainargs']['device'] = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     try: 
@@ -96,7 +81,6 @@ def load_model_opt_and_stats(stats_filename, base_path, cluster_path,
     except Exception as e:
         print(e)
         print('best_epoch: {}'.format(stats['best_epoch']))
-        
     return model, optimizer, stats
 
 def _worker_init_fn_nmslib_(worker_id):
@@ -107,12 +91,16 @@ def _worker_init_fn_nmslib_(worker_id):
 
     worker_info = get_worker_info() 
     dataset = worker_info.dataset 
-    if dataset.clusterindex is None:
-        dataset.clusterindex = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
-                            data_type=nmslib.DataType.SPARSE_VECTOR)
-        dataset.clusterindex.loadIndex(dataset.trainargs['cluster_path'], load_data=True)
-        if 'query_params' in dataset.trainargs.keys():
-            dataset.clusterindex.setQueryTimeParams(dataset.trainargs['query_params'])
+    if dataset.onthefly:
+        bound_search_index = dataset.data.cosaugmentor.search_index
+        if bound_search_index is None:
+            bound_search_index = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
+                                data_type=nmslib.DataType.SPARSE_VECTOR)
+            bound_search_index.loadIndex(dataset.search_index_path, load_data=True)
+            if dataset.query_params:
+                bound_search_index.setQueryTimeParams(dataset.query_params)
+            else:
+                bound_search_index.setQueryTimeParams({'efSearch': 100})
 
 def _worker_init_fn_default_(worker_id):
     torch_seed = torch.initial_seed()

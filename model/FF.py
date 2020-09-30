@@ -29,7 +29,8 @@ class FeedforwardEBM(nn.Module):
             input_dim = rctfp_size + prodfp_size  
         elif rxn_type == 'diff':
             input_dim = rctfp_size
-            assert rctfp_size == prodfp_size, 'rctfp_size must equal prodfp_size for difference fingerprints!'
+            if rctfp_size != prodfp_size:
+                raise ValueError('rctfp_size must equal prodfp_size for difference fingerprints!')
 
         num_layers = len(hidden_sizes) + 1
         dropout = nn.Dropout(dropout)
