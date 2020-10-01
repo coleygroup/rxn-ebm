@@ -5,20 +5,24 @@ Energy-based modeling of chemical reactions
  rxn-ebm
     ├── trainEBM.py
     ├── experiment
-    │    ├── experiment.py
+    │    ├── expt.py
     |    └── utils.py
     ├── model
+    |    ├── base.py
     │    ├── FF.py
     |    └── utils.py
     ├── data
-    |    ├── data.py
+    |    ├── dataset.py
+    |    ├── augmentors.py
     |    ├── analyse_results.py
     |    ├── preprocess
     |    |        ├── clean_smiles.py    
-    |    |        ├── smi_to_sparse_fp.py
+    |    |        ├── smi_to_fp.py
     |    |        └── build_search_idx.py
     |    ├── original_data  
     |    └── cleaned_data
+    ├── checkpoints
+    ├── scores
     └── notebooks
          └── data_exploration.ipynb 
  ```
