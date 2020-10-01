@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from model.utils import get_activation_function, initialize_weights
 
-class FeedforwardEBM(nn.Module):
+class FeedforwardFingerprint(nn.Module):
     '''
     Currently supports 2 feedforward models: 
         diff: takes as input a difference FP of fp_size & fp_radius
@@ -24,7 +24,7 @@ class FeedforwardEBM(nn.Module):
                 output_size: Optional[int]=1,
                 rctfp_size: Optional[int]=4096, prodfp_size: Optional[int]=4096, 
                 rxn_type: Optional[str]='diff', **kwargs):
-        super(FeedforwardEBM, self).__init__()
+        super(FeedforwardFingerprint, self).__init__()
         if rxn_type == 'sep':
             input_dim = rctfp_size + prodfp_size  
         elif rxn_type == 'diff':

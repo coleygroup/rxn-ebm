@@ -196,13 +196,14 @@ class ReactionDataset(Dataset):
         whether to generate augmentations on the fly
         if pre-computed filename is given, loading that file takes priority
     '''
-    def __init__(self, input_dim: int, precomp_rxnfp_filename: Optional[str]=None, 
-                rxn_smis_filename: Optional[str]=None,
-                onthefly: bool=False, augmented_data: Optional[AugmentedData]=None,
+    def __init__(self, input_dim: int, precomp_rxnfp_filename: str=None, 
+                onthefly: bool=False, rxn_smis_filename: Optional[str]=None, 
+                augmented_data: Optional[AugmentedData]=None,
                 query_params: Optional[dict]=None, search_index_filename: Optional[str]=None,
                 root: Optional[str]=None, viz_neg: Optional[bool]=False):
         self.input_dim = input_dim
         self.onthefly = onthefly # needed by worker_init_fn
+        self.viz_neg = viz_neg # TODO 
         if root is None:
             root = Path(__file__).parents[1] / 'data' / 'cleaned_data'
         if (root / precomp_rxnfp_filename).exists():
