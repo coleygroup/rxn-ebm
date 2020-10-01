@@ -76,7 +76,7 @@ def build_and_save_index(mol_fps_filename: str, output_filename: str,
     if root is None:
         root = Path(__file__).parents[2] / 'data' / 'cleaned_data'    
     if Path(mol_fps_filename).suffix != '.npz':  
-        mol_fps_filename += '.pickle'
+        mol_fps_filename += '.npz'
     if Path(output_filename).suffix != '.bin': 
         output_filename += '.bin'
     if (root / output_filename).exists():

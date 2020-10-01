@@ -45,7 +45,8 @@ class Experiment():
         whether to load from a previous checkpoint. 
         if True: load_optimizer, load_stats & begin_epoch must be provided 
     '''
-    def __init__(self, model: nn.Module, batch_size: int, learning_rate: float, epochs: int,
+    def __init__(self, model: nn.Module, model_args: dict, 
+                batch_size: int, learning_rate: float, epochs: int,
                 early_stop: bool, min_delta: float, patience: int, num_workers: int, checkpoint: bool,
                 random_seed: int, precomp_file_prefix: str, checkpoint_folder: str, expt_name: str, 
                 rxn_type: str, fp_type: str, rctfp_size: int, prodfp_size: int,
@@ -53,8 +54,8 @@ class Experiment():
                 lookup_dict_filename: Optional[str]=None, mol_fps_filename: Optional[str]=None,
                 search_index_filename: Optional[str]=None, device: Optional[str]=None, distributed: Optional[bool]=False,
                 optimizer: Optional[torch.optim.Optimizer]=None, root: Optional[str]=None,
-                saved_optimizer: Optional[torch.optim.Optimizer]=None, load_checkpoint: Optional[bool]=False, 
-                saved_stats: Optional[dict]=None, saved_stats_filename: Optional[str]=None, begin_epoch: Optional[int]=None,
+                load_checkpoint: Optional[bool]=False, saved_optimizer: Optional[torch.optim.Optimizer]=None, 
+                saved_stats: Optional[dict]=None, begin_epoch: Optional[int]=None,
                 **kwargs):       
         self.batch_size = batch_size
         self.learning_rate = learning_rate
@@ -70,16 +71,17 @@ class Experiment():
         self.fp_type = fp_type
         self.rctfp_size = rctfp_size
         self.prodfp_size = prodfp_size
+        self.fp_radius = kwargs['fp_radius']
 
         if root:
-            self.root = root
+            self.root = Path(root)
         else:
             self.root = Path(__file__).parents[1] / 'data' / 'cleaned_data'
-        self.checkpoint_folder = checkpoint_folder
+        self.checkpoint_folder = Path(checkpoint_folder)
 
         self.expt_name = expt_name
         self.augmentations = augmentations
-        print('Initialising experiment: ', self.expt_name)
+        print('\nInitialising experiment: ', self.expt_name)
         print('Augmentations: ', self.augmentations)
         if device:
             self.device = device
@@ -89,23 +91,35 @@ class Experiment():
         self.model = model
         self.model_name = model.__repr__()
         self.distributed = distributed # TODO: affects how checkpoint is saved
-        self.best_epoch = None # will be automatically assigned after 1 epoch
+        self.best_epoch = 0 # will be automatically assigned after 1 epoch
 
-        self._collate_args(optimizer, saved_optimizer)
+        self._collate_args(model_args, optimizer, saved_optimizer)
 
         if load_checkpoint: 
-            self._load_checkpoint(saved_optimizer, saved_stats, saved_stats_filename, begin_epoch)
+            self._load_checkpoint(saved_optimizer, saved_stats, begin_epoch)
         else:  
             self._init_opt_and_stats(optimizer)
 
-        self._init_dataloaders(precomp_file_prefix, onthefly, lookup_dict_filename, mol_fps_filename, search_index_filename) 
+        # if onthefly is True, need lookup_dict_filename, mol_fps_filename, (if doing cosine: search_index_filename)
+        self._init_dataloaders(precomp_file_prefix, 
+                        onthefly, lookup_dict_filename, mol_fps_filename, search_index_filename) 
         seed_everything(random_seed)
 
     def __repr__(self):
         return 'Experiment with: ' + augmentations
 
-    def _collate_args(self, optimizer, saved_optimizer):
-        self.args = {
+    def _collate_args(self, model_args: dict, 
+                    optimizer: Optional[torch.optim.Optimizer]=None, 
+                    saved_optimizer: Optional[torch.optim.Optimizer]=None):
+        self.model_args = model_args
+        self.fp_args = {
+            'rxn_type' : self.rxn_type,
+            'fp_type' : self.fp_type,
+            'rctfp_size' : self.rctfp_size, 
+            'prodfp_size' : self.prodfp_size,
+            'fp_radius' : self.fp_radius
+         }
+        self.train_args = {
             'batch_size' : self.batch_size, 
             'learning_rate' : self.learning_rate,
             'epochs' : self.epochs,
@@ -117,30 +131,28 @@ class Experiment():
             'random_seed' : self.random_seed,
             'expt_name' : self.expt_name,
             'device' : self.device, 
-            'model_name' : self.model_name, 
-            'augmentations': self.augmentations,
+            'model_name' : self.model_name,  
             'distributed' : self.distributed, 
-            'rxn_type' : self.rxn_type,
-            'fp_type' : self.fp_type,
-            'rctfp_size' : self.rctfp_size, 
-            'prodfp_size' : self.prodfp_size,
-            'optimizer' : optimizer or saved_optimizer # only one of them will be not None
+            'optimizer' : optimizer or saved_optimizer, # prioritise optimizer over saved_optimizer
         }
-    
-    def _load_checkpoint(self, saved_optimizer: torch.optim.Optimizer, saved_stats: dict, 
-                        saved_stats_filename: str, begin_epoch: int):
+
+    def _load_checkpoint(self, saved_optimizer: torch.optim.Optimizer, saved_stats: dict, begin_epoch: int):
         print('Loading checkpoint...')
+
         if saved_optimizer is None:
             raise ValueError('load_checkpoint requires saved_optimizer!')
         self.optimizer = saved_optimizer # load optimizer w/ state dict from checkpoint
 
         if saved_stats is None:
             raise ValueError('load_checkpoint requires saved_stats!')
-        if saved_stats_filename is None:
-            raise ValueError('load_checkpoint requires saved_stats_filename!')
         self.stats = saved_stats
-        self.stats_filename = self.checkpoint_folder + saved_stats_filename
-        self.stats['args'] = self.args
+        self.stats_filename = self.checkpoint_folder / f'{self.model_name}_{self.expt_name}_stats.pkl' 
+
+        self.model_args = self.stats['model_args']  
+        self.fp_args = self.stats['fp_args'] 
+        self.train_args = self.stats['train_args']  
+        self.augmentations = self.stats['augmentations'] 
+        
         self.train_losses = self.stats['train_losses']
         self.train_accs = self.stats['train_accs']
         self.val_losses = self.stats['val_losses']
@@ -155,6 +167,7 @@ class Experiment():
     def _init_opt_and_stats(self, optimizer: torch.optim.Optimizer):
         print('Initialising optimizer & stats...') # to store training statistics  
         self.optimizer = optimizer(self.model.parameters(), lr=self.learning_rate)
+
         self.train_losses = []
         self.train_accs = []
         self.min_val_loss = float('+inf')
@@ -162,8 +175,15 @@ class Experiment():
         self.val_accs = []
         self.begin_epoch = 0
         self.wait = 0 # counter for _check_earlystop()
-        self.stats = {'args': self.args, 'train_time': 0} 
-        self.stats_filename = self.checkpoint_folder + f'{self.model_name}_{self.expt_name}_stats.pkl' 
+        
+        self.stats = {
+            'model_args' : self.model_args,
+            'fp_args' : self.fp_args,
+            'train_args' : self.train_args,
+            'augmentations' : self.augmentations,
+            'train_time': 0
+        } 
+        self.stats_filename = self.checkpoint_folder / f'{self.model_name}_{self.expt_name}_stats.pkl' 
     
     def _init_dataloaders(self, precomp_file_prefix: str, onthefly: bool, lookup_dict_filename: str, mol_fps_filename: str,
                         search_index_filename: str, rxn_smis_file_prefix: Optional[str]=None):
@@ -236,12 +256,14 @@ class Experiment():
             self.min_val_loss = min(self.min_val_loss, self.val_losses[-1])
         
     def _update_stats(self):
-        self.stats['train_time'] = self.stats['train_time'] + (time.time() - self.start) / 60  # in minutes
+        self.stats['train_time'] = self.stats['train_time'] + (time.time() - self.start) / 60 # in minutes
+        self.start = time.time()
+
         self.stats['train_losses'] = self.train_losses # a list with one value for each epoch 
         self.stats['train_accs'] = self.train_accs # a list with one value for each epoch 
         self.stats['val_losses'] = self.val_losses # a list with one value for each epoch
         self.stats['val_accs'] = self.val_accs # a list with one value for each epoch
-        self.stats['val_losses'] = self.min_val_loss 
+        self.stats['min_val_loss'] = self.min_val_loss 
         self.stats['best_epoch'] = self.best_epoch
         torch.save(self.stats, self.stats_filename)
 
@@ -257,20 +279,19 @@ class Experiment():
                             'optimizer' : self.optimizer.state_dict(),
                             'stats' : self.stats
                         }
-        checkpoint_filename = self.checkpoint_folder + f'{self.model_name}_{self.expt_name}_checkpoint_{current_epoch:04d}.pth.tar' 
+        checkpoint_filename = self.checkpoint_folder / f'{self.model_name}_{self.expt_name}_checkpoint_{current_epoch:04d}.pth.tar' 
         torch.save(checkpoint_dict, checkpoint_filename)
 
     def _one_batch(self, batch: tensor, backprop: bool=True):
         '''
         Passes one batch of samples through model to get scores & loss 
         Does backprop if training 
-
         TODO: learning rate scheduler
         '''
-        # for p in self.model.parameters(): p.grad = None # faster, but less readable
-        self.model.zero_grad()
+        for p in self.model.parameters(): 
+            p.grad = None # faster, equivalent to self.model.zero_grad()
         scores = self.model(batch) # size N x K 
-
+ 
         # positives are the 0-th index of each sample 
         loss = (scores[:, 0] + torch.logsumexp(-scores, dim=1)).sum() 
 
@@ -298,7 +319,7 @@ class Experiment():
 
             self.model.eval() 
             val_loss, val_correct_preds = 0, 0
-            for batch in tqdm(self.train_loader): 
+            for batch in tqdm(self.val_loader): 
                 batch = batch.to(self.device)
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(batch, backprop=False)
                 val_loss = val_loss + curr_batch_loss
@@ -333,7 +354,7 @@ class Experiment():
         ''' 
         self.model.eval() 
         test_loss, test_correct_preds = 0, 0
-        for batch in tqdm(self.train_loader): 
+        for batch in tqdm(self.test_loader): 
             batch = batch.to(self.device)
             curr_batch_loss, curr_batch_correct_preds = self._one_batch(batch, backprop=False)
             test_loss = test_loss + curr_batch_loss
@@ -349,7 +370,7 @@ class Experiment():
         print(f'Test top-1 accuracy: {self.stats["test_acc"]}')
         torch.save(self.stats, self.stats_filename) # overrides existing training stats w/ training + test stats
 
-    def get_scores(self, dataset_name: Optional[str]='test', 
+    def get_scores_and_loss(self, dataset_name: Optional[str]='test',
                    dataloader: Optional[torch.utils.data.DataLoader]=None, dataset_len: Optional[int]=None,  
                    show_neg: Optional[bool]=False) -> tensor:
         ''' 
@@ -358,21 +379,23 @@ class Experiment():
         
         Parameters
         ----------
-        dataset_name: str (Default = 'test')
+        dataset_name : str (Default = 'test')
             choose from 'train', 'test', or 'valid'
             whether to get scores from train/test/valid datasets
-        dataloader: Optional[Dataloader] (Default = None)
+        dataloader : Optional[Dataloader] (Default = None)
             custom dataloader that loops through dataset that is not the original train, test or val 
             (which are simply accessed by providing a key parameter)
-        dataset_len: Optional[int] (Default = None)
+        dataset_len : Optional[int] (Default = None)
             length of dataset used for dataloader 
 
         Returns
         -------
-        scores: tensor
+        scores : tensor
             scores of shape (# rxns, 1 + # neg rxns)
-            
-        TO DO: fix show_neg: index into SMILES molecule vocab to retrieve molecules --> 
+        loss : float 
+            the loss value on the provided dataset
+
+        TODO: fix show_neg: index into SMILES molecule vocab to retrieve molecules --> 
         save as groups [true product/rct SMILES, 1st NN SMILES, ... K-1'th NN SMILES])
         '''
         if dataloader is not None:
@@ -406,7 +429,7 @@ class Experiment():
                     batch = batch.to(self.device)
                     scores.append(self.model(batch).cpu())
             
-            scores = torch.cat(scores, dim=0).squeeze(dim=-1)
+            scores = torch.cat(scores, dim=0).squeeze(dim=-1) 
             loss = (scores[:, 0] + torch.logsumexp(-1 * scores, dim=1)).sum()
             if dataset_len is not None: # means using a custom dataset other than train/valid/test
                 loss /= dataset_len
@@ -420,11 +443,11 @@ class Experiment():
 #             if show_neg:
 #                 return scores, pos_neg_smis
 #             else:
-            return scores
+            return scores, loss
                 # output shape N x K: where N = # positive rxns in dataset;
                 # K = 1 + # negative rxns per positive rxn
 
-    def get_topk_acc(self, dataset_name: Optional[str]='test', 
+    def get_topk_acc(self, dataset_name: Optional[str]='test', save_train: Optional[bool]=True,
                     dataloader: Optional[torch.utils.data.DataLoader]=None, dataset_len: Optional[int]=None, 
                     k: Optional[int]=1, repeats: Optional[int]=1, 
                     save_scores: Optional[bool]=True, name_scores: Optional[Union[str, bytes, os.PathLike]]=None, 
@@ -435,6 +458,8 @@ class Experiment():
         
         Parameters
         ----------
+        save_train : Optional[bool] (Default = True)   
+            whether to save train acc & loss without dropout into stats dictionary 
         save_scores: bool (Default = True)
             whether to save the generated scores tensor
         name_scores: Union[str, bytes, os.PathLike] (Default = None)
@@ -446,23 +471,27 @@ class Experiment():
         scores: tensor
             scores of shape (# rxns, 1 + # neg rxns)
             
-        Also see: self.get_scores
+        Also see: self.get_scores_and_loss()
         '''
         accs = np.array([])
         for repeat in range(repeats):
             print('Running repeat: ', repeat)
-            scores = self.get_scores(dataset_name=dataset_name, dataloader=dataloader, dataset_len=dataset_len)
+            scores, loss = self.get_scores_and_loss(dataset_name=dataset_name, dataloader=dataloader, dataset_len=dataset_len)
             pred_labels = torch.topk(scores, k, dim=1, largest=False)[1]
             accs = np.append(accs, torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0])
         
         if path_scores is None:
             path_scores = Path(__file__).parents[1] / 'scores'
         if name_scores is None:
-            name_scores = 'scores_' + dataset_name + '_' + self.expt_name 
+            name_scores = f'scores_{dataset_name}_{self.expt_name}' 
         if save_scores:
             print('Saving scores at: ', Path(path_scores / name_scores))
             torch.save(scores, Path(path_scores / name_scores))
- 
+        if dataset_name == 'train' and save_train:
+            self.stats['train_loss_nodropout'] = loss
+            self.stats['train_acc_nodropout'] = accs
+            torch.save(self.stats, self.stats_filename)
+
         print('Top-1 accuracies: ', accs)
         print('Avg top-1 accuracy: ', accs.mean())
         print('Variance: ', accs.var())
