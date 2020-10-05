@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.tensor as tensor
 from typing import List, Optional
 from collections import ABC
 
 from model.utils import get_activation_function, initialize_weights
+
+Tensor = torch.Tensor
 
 class Feedforward(nn.Module):
     ''' Abstract base class for feedforward neural networks
@@ -37,6 +38,6 @@ class Feedforward(nn.Module):
         '''
         '''
         
-    def forward(self, batch: tensor) -> tensor:
+    def forward(self, batch: Tensor) -> Tensor:
         '''
         '''

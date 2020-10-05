@@ -5,7 +5,7 @@ during data augmentation and training.
 
 NOTE: nmslib does not support Forking multiprocessing - workarounds are described in data.py
 NOTE: nmslib (as of 2.0.6) does not support having multiple vectors of all 0's. We check for those cases,
-which happens in the count fingerprints of very small molecules (like H2O, NH3), and exclude these 
+which happens in RDKit CountFingerprints of very small molecules (like H2O, NH3), and exclude these 
 molecules from the search index. 
 NOTE: nmslib doesn't allow me to label the points with something else other than their original index 
 e.g. label each point in the search index with their SMILES string 
@@ -16,13 +16,14 @@ import os
 from tqdm import tqdm
 import time
 import scipy
-from scipy import sparse
-from sklearn.neighbors import NearestNeighbors
+from scipy import sparse 
 import nmslib
 from pathlib import Path
 
+from typing import Union, Optional
+
 def validate_sparse_matrix(sparse_matrix: scipy.sparse.csr_matrix) -> scipy.sparse.csr_matrix:
-    if sparse_matrix[-1].nonzero()[0].size == 0:
+    if sparse_matrix[-1].nonzero()[0].size == 0: # only needed for RDKit CountFingerprints (now no longer using!)
         print("Truncating last row of sparse_matrix, which is all 0's")
         return sparse_matrix[:-1]
     else:
@@ -68,8 +69,9 @@ def query_nmslib_index(spaces_index, query_matrix, space='cosinesimil_sparse',
           (end-start, float(end-start)/query_qty, num_threads*float(end-start)/query_qty))
     return nbrs
 
-def build_and_save_index(mol_fps_filename: str, output_filename: str, 
-                        root: Optional[str]=None):
+def build_and_save_index(mol_fps_filename: Union[str, bytes, os.PathLike]='50k_count_mol_fps.npz', 
+                        output_filename: Union[str, bytes, os.PathLike]='50k_cosine_count.bin', 
+                        root: Optional[Union[str, bytes, os.PathLike]]=None):
     '''
     Also see: validate_sparse_matrix, build_nmslib_index
     '''
@@ -89,10 +91,8 @@ def build_and_save_index(mol_fps_filename: str, output_filename: str,
     mol_fps_validated = validate_sparse_matrix(mol_fps)
     index = build_nmslib_index(method='hnsw', space='cosinesimil_sparse', data=mol_fps_validated, 
                                      M=30, efC=100)
-    index.saveIndex(str(root / mol_fps_filename), save_data=True)
+    index.saveIndex(str(root / output_filename), save_data=True)
     print('successfully built and saved index!')
 
-if __name__ == '__main__':
-    mol_fps_filename = '50k_count_mol_fps.npz'
-    output_filename = '50k_cosine_count.bin'
-    build_and_save_index(mol_fps_filename, output_filename) 
+if __name__ == '__main__': 
+    build_and_save_index() # defaults to countfps

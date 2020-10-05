@@ -7,14 +7,8 @@ from experiment.expt import Experiment
 from experiment.utils import setup_paths, load_model_opt_and_stats
 from model.FF import FeedforwardFingerprint
 from data.dataset import AugmentedData
-'''
-TODO: in setup_paths(), need to make the necessary folders if they don't exist
-e.g. root / 'data' / 'cleaned_data' 
-root / 'checkpoints' / checkpoint_folder
-'''
 
-def trainEBM():
-    LOCAL = True # CHANGE THIS  
+def trainEBM():  
     expt_name = 'rdm_1_cos_1_bit_1_5' # CHANGE THIS 
     precomp_file_prefix = '50k_' + expt_name # CHANGE THIS, expt.py will add f'_{dataset}.npz'
     
@@ -35,7 +29,7 @@ def trainEBM():
             output_filename=precomp_file_prefix+f'_{dataset}.npz', 
             rxn_smis=rxn_smis_file_prefix+f'_{dataset}.pickle') 
 
-    checkpoint_folder = setup_paths(LOCAL)
+    checkpoint_folder = setup_paths('LOCAL')
     model_args = {
         'hidden_sizes': [512],
         'output_size': 1,
@@ -84,8 +78,7 @@ def trainEBM():
     scores_test = experiment.get_topk_acc(dataset_name='test', k=1, repeats=1)
     scores_train = experiment.get_topk_acc(dataset_name='train', k=1, repeats=1)
 
-def resumeEBM(): 
-    LOCAL = True # CHANGE THIS  
+def resumeEBM():  
     expt_name = 'rdm_0_cos_0_bit_5_3' # CHANGE THIS 
     precomp_file_prefix = '50k_' + expt_name # CHANGE THIS, expt.py will add f'_{dataset}.npz'
 
@@ -112,7 +105,7 @@ def resumeEBM():
     date_trained = '01_10_2020'
     saved_stats_filename = 'FeedforwardEBM_rdm_1_cos_1_bit_1_5_stats.pkl' # f'{model_name}_{old_expt_name}_stats.pkl' 
 
-    checkpoint_folder = setup_paths(LOCAL, load_trained, date_trained)
+    checkpoint_folder = setup_paths('LOCAL', load_trained, date_trained)
     saved_model, saved_optimizer, saved_stats = load_model_opt_and_stats(
                     saved_stats_filename, checkpoint_folder, model_name, optimizer_name)
 
@@ -144,7 +137,7 @@ def resumeEBM():
     scores_train = experiment.get_topk_acc(dataset_name='train', k=1, repeats=1)
 
 if __name__ == '__main__': 
-    # trainEBM()
-    resumeEBM()
+    trainEBM()
+    # resumeEBM()
 
     # TODO: parse arguments from terminal

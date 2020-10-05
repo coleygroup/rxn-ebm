@@ -7,7 +7,7 @@ import rdkit
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit import DataStructs
-from rdkit.Chem.rdFingerprintGenerator import GetRDKitFPGenerator
+from rdkit.Chem.rdFingerprintGenerator import GetRDKitFPGenerator, GetMorganGenerator
 
 import scipy 
 from scipy import sparse
@@ -19,24 +19,17 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor as Pool
 import pickle
 from tqdm import tqdm
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
-def gen_lookup_dict_from_file(mol_smis_filename: str, output_filename: str, 
-                            bad_smis_filename: Optional[str]=None, root: Optional[str] = None) -> dict: 
-    ''' TODO: load bad_smis.pickle, and point all of them to the last index (-1) of the sparse_mol_fp,
-    which is an empty vector of all 0's, which will be done during gen_count_mol_fps_from_file
-    When building the search index w/ count_fps, just skip those bad_smis again (just exclude index -1)
-
-    This ensures that we won't have to keep checking for KeyError 
-    when we are converting the rxn_smis to mol_fps in Augmentor
-    --------------------------------------------------------------------------------------
+def gen_lookup_dict_from_file(mol_smis_filename: Union[str, bytes, os.PathLike]='50k_mol_smis.pickle', 
+                        output_filename: Union[str, bytes, os.PathLike]='50k_mol_smi_to_sparse_fp_idx.pickle', 
+                        bad_smis_filename: Optional[Union[str, bytes, os.PathLike]]=None, 
+                        root: Optional[Union[str, bytes, os.PathLike]] = None) -> dict: 
+    ''' 
     Generates a lookup dictionary mapping each molecular SMILES string in the given
     mol_smis .pickle file to its index. ENSURE that the order of elements in
     the mol_smis .pickle file (and ALL its derivatives, like mol_fp .npz file) are ALL identical.
-    Any shuffling will render this dictionary useless! NOTE: distributed processing will often shuffle this order.
-
-    mol_smis_filename = '50k_mol_smis.pickle'
-    output_filename = '50k_mol_smi_to_sparse_fp_idx.pickle' 
+    Any shuffling will render this dictionary useless!  
     '''
     if root is None: # if not provided, goes up 2 levels to get to 'rxn-ebm/'
         root = Path(__file__).parents[2] / 'data' / 'cleaned_data'   
@@ -70,40 +63,27 @@ def gen_lookup_dict_from_file(mol_smis_filename: str, output_filename: str,
 
 def mol_smi_to_count_fp(mol_smi: str, radius: int = 3, fp_size: int = 4096, 
                         dtype: str = 'int16') -> scipy.sparse.csr_matrix :
-    fp_gen = GetRDKitFPGenerator(minPath=1, maxPath=1+radius, fpSize=fp_size)
-    # max_val, min_val = float('-inf'), float('+inf')
-
+    fp_gen = GetMorganGenerator(radius=radius, useCountSimulation=True, includeChirality=True, fpSize=fp_size)
     mol = Chem.MolFromSmiles(mol_smi)
     uint_count_fp = fp_gen.GetCountFingerprint(mol)
     count_fp = np.empty((1, fp_size), dtype=dtype)
     DataStructs.ConvertToNumpyArray(uint_count_fp, count_fp)
-
-    # if max(count_fp) > max_val:
-    #     max_val = max(count_fp)
-    #     print(f'new max_val of {max_val} at index {i}')
-    # if min(count_fp) < min_val:
-    #     min_val = min(count_fp)
-    #     print(f'new min_val of {min_val} at index {i}')
     return count_fp
 
-def gen_count_mol_fps_from_file(mol_smis_filename: str, output_filename: str, 
-                                radius: int = 3, fp_size: int = 4096, dtype: str = 'int16',
-                                root: Optional[str] = None) -> Tuple[Path, Path]:
-    '''
-    output_filename = '50k_count_mol_fps.npz'
+# def mol_smi_to_count_fp(mol_smi: str, radius: int = 3, fp_size: int = 4096, 
+#                         dtype: str = 'int16') -> scipy.sparse.csr_matrix :
+#     fp_gen = GetRDKitFPGenerator(minPath=1, maxPath=1+radius, fpSize=fp_size)
+#     mol = Chem.MolFromSmiles(mol_smi)
+#     uint_count_fp = fp_gen.GetCountFingerprint(mol)
+#     count_fp = np.empty((1, fp_size), dtype=dtype)
+#     DataStructs.ConvertToNumpyArray(uint_count_fp, count_fp)
+#     return count_fp
 
-    Saves
-    -----
-    cleaned_mol_smis : List[str]
-        regardless of whether there were bad SMILES (too small molecules), this function
-        renames the original mol_smis_filename by appending '_count' to differentiate from
-        the bit vectors version
-
-    Returns
-    -------
-    Tuple[Path, Path] : 
-        a tuple of pathlib's Path object to cleaned_mol_smis_path & to bad_mol_smis_path
-        (cleaned_mol_smis_path, bad_mol_smis_path)
+def gen_count_mol_fps_from_file(mol_smis_filename: Union[str, bytes, os.PathLike] = '50k_mol_smis.pickle', 
+                            output_filename: Union[str, bytes, os.PathLike] = '50k_count_mol_fps.npz', 
+                            radius: int = 3, fp_size: int = 4096, dtype: str = 'int16',
+                            root: Optional[Union[str, bytes, os.PathLike]] = None) -> Tuple[Path, Path]:
+    ''' TODO: add docstring
     '''
     if root is None:  
         root = Path(__file__).parents[2] / 'data' / 'cleaned_data' 
@@ -113,8 +93,7 @@ def gen_count_mol_fps_from_file(mol_smis_filename: str, output_filename: str,
     bad_mol_smis_path = root / str(Path(mol_smis_filename).stem + '_bad.pickle') 
     if (root / output_filename).exists():
         print(f'At: {root / output_filename}')
-        print('The count_mol_fp file already exists!')
-        return cleaned_mol_smis_path, bad_mol_smis_path
+        print('The count_mol_fp file already exists!') 
     if Path(mol_smis_filename).suffix != '.pickle': 
         mol_smis_filename += '.pickle'
     with open(root / mol_smis_filename, 'rb') as handle:
@@ -125,7 +104,7 @@ def gen_count_mol_fps_from_file(mol_smis_filename: str, output_filename: str,
         cand_mol_fp = mol_smi_to_count_fp(mol_smi, radius, fp_size, dtype)
         if sum(cand_mol_fp) == 0: # candidate mol_fp is all 0's 
             bad_idx.append(i)
-            continue # don't add, and keep track of indsex (or replace with our favorite imputation, like adding +1 at 0'th index)
+            continue # don't add, and keep track of index (or replace with our favorite imputation, like adding +1 at 0'th index)
         else: # sparsify then append to list
             count_mol_fps.append(sparse.csr_matrix(cand_mol_fp, dtype=dtype))
 
@@ -140,19 +119,15 @@ def gen_count_mol_fps_from_file(mol_smis_filename: str, output_filename: str,
         print(f'The bad SMILES are {bad_smis}')
         print(f'Saving bad_mol_smis at {bad_mol_smis_path}')
         with open(bad_mol_smis_path, 'wb') as handle:
-            pickle.dump(bad_smis, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    else:
-        print('No bad SMILES detected!') # bad_smis = []
+            pickle.dump(bad_smis, handle, protocol=pickle.HIGHEST_PROTOCOL)    
+        print(f'Resaving mol_smis as {cleaned_mol_smis_path}')
+        with open(cleaned_mol_smis_path, 'wb') as handle:
+            pickle.dump(mol_smis, handle, protocol=pickle.HIGHEST_PROTOCOL) 
+    else: # bad_smis = []
+        print('No bad SMILES detected!') 
 
     count_mol_fps = sparse.vstack(count_mol_fps)
     sparse.save_npz(root / output_filename, count_mol_fps)
-
-    # regardless of whether there were bad_smis, rename mol_smis file by adding 'count' to its stem
-    # this is needed to differentiate it from the mol_smis for bit vectors, which don't suffer from this issue 
-    print(f'Resaving mol_smis as {cleaned_mol_smis_path}')
-    with open(cleaned_mol_smis_path, 'wb') as handle:
-        pickle.dump(mol_smis, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    return cleaned_mol_smis_path, bad_mol_smis_path
 
 def mol_smi_to_bit_fp(mol_smi: str, radius: int = 3, fp_size: int = 4096, 
                      dtype: str = 'int8') -> scipy.sparse.csr_matrix :
@@ -163,9 +138,10 @@ def mol_smi_to_bit_fp(mol_smi: str, radius: int = 3, fp_size: int = 4096,
     DataStructs.ConvertToNumpyArray(bitvect_fp, bit_fp)
     return bit_fp
 
-def gen_bit_mol_fps_from_file(mol_smis_filename: str, output_filename: str, 
-                                radius: int = 3, fp_size: int = 4096, dtype: str = 'int8',
-                                root: Optional[str] = None) -> Path:
+def gen_bit_mol_fps_from_file(mol_smis_filename: Union[str, bytes, os.PathLike], 
+                            output_filename: Union[str, bytes, os.PathLike], 
+                            radius: int = 3, fp_size: int = 4096, dtype: str = 'int8',
+                            root: Optional[Union[str, bytes, os.PathLike]] = None) -> Path:
     '''
     Returns
     -------
@@ -376,9 +352,11 @@ def list_rxn_smis_to_diff_fps(rxn_smis_dataset: List[str], lookup_dict: dict,
     diff_fps_matrix = sparse.vstack(list_sparse_diff_fps)
     return diff_fps_matrix
 
-def gen_diff_fps_from_file(rxn_smi_file_prefix: str, lookup_dict_filename: str, 
-                           sparse_mol_fps_filename: str, output_matrix_file_prefix: str, 
-                           root: Optional[str] = None, distributed: bool = False):
+def gen_diff_fps_from_file(rxn_smi_file_prefix: str='50k_clean_rxnsmi_noreagent', 
+                        lookup_dict_filename: Union[str, bytes, os.PathLike]='50k_mol_smi_to_sparse_fp_idx.pickle', 
+                        sparse_mol_fps_filename: Union[str, bytes, os.PathLike]='50k_count_mol_fps.npz', 
+                        output_matrix_file_prefix: str='50k_count_diff_fps', 
+                        root: Optional[Union[str, bytes, os.PathLike]] = None, distributed: bool = False):
     '''
     Generates difference fingerprints from reaction SMILES .pickle files for a whole dataset
     (train, valid and test) after also loading the corresponding lookup dict and sparse molecular fingerprint matrix
@@ -388,22 +366,22 @@ def gen_diff_fps_from_file(rxn_smi_file_prefix: str, lookup_dict_filename: str,
     rxn_smi_file_prefix : str
         Filename prefix to the reaction SMILES .pickle file
         Internally, we append f'_{train/valid/test}.pickle' to this prefix to get the rxn smi's filename
-    lookup_dict_filename : str
+    lookup_dict_filename : Union[str, bytes, os.PathLike]
         Filename of the lookup dict .pickle file; if '.pickle' is not included, automatically adds it
         There will only be one lookup dict file for one whole dataset 
         (e.g. USPTO_50k has one, USPTO_STEREO has one)
-    sparse_mol_fps_filename : str
+    sparse_mol_fps_filename : Union[str, bytes, os.PathLike]
         Filename of the pre-computed sparse molecular fingerprints .npz file; if '.npz' is not included, automatically adds it
         Just like the lookup dict, there will only be one sparse molecular fingerprint matrix for one whole dataset
         Accepts both count and bit morgan fingerprints
     output_matrix_file_prefix : str
         Filename prefix to save the output sparse matrix 
         Internally, we append f'_{train/valid/test}.pickle' to this prefix to get the output filename
-    root : Optional[str] (Default = None)
+    root : Optional[Union[str, bytes, os.PathLike]] (Default = None)
         The root directory from which to load and save files 
         This script, smi_to_fp.py should be located in rxn-ebm/data/preprocess/smi_to_fp.py;
         by default, we assign root to: Path(__file__).parents[2] / 'data' / 'cleaned_data' 
-    distributed : bool (Default = True)
+    distributed : bool (Default = False)
         whether to distribute the computation across all possible workers 
     
     Saves
@@ -451,25 +429,9 @@ def gen_diff_fps_from_file(rxn_smi_file_prefix: str, lookup_dict_filename: str,
         with Pool(max_workers=num_workers) as client:
             future = client.submit(list_rxn_smis_to_diff_fps, rxn_smis, lookup_dict, sparse_mol_fps)
             diff_fps_matrix = future.result()
-        # diff_fps_matrix = list_rxn_smis_to_diff_fps(rxn_smis, lookup_dict, sparse_mol_fps)
         sparse.save_npz(root / f'{output_matrix_file_prefix}_{dataset}.npz' , diff_fps_matrix)
 
-if __name__ == '__main__':
-    # TODO: double confirm if multiprocessing messes up the order or not
-    # TODO: if no filename is provided, set up default filenames & paths! 
-    mol_smis_filename = '50k_mol_smis.pickle' # user input
-    count_mol_fps_filename = '50k_count_mol_fps.npz' # user input
-    cleaned_mol_smis_path, bad_mol_smis_path = gen_count_mol_fps_from_file(mol_smis_filename, count_mol_fps_filename)
- 
-    dict_filename = '50k_mol_smi_to_count_fp.pickle' # need one for bit and count separately, 
-    # this is a bit troublesome, but don't really see a way around this
-    dict_path = Path(__file__).parents[2] / 'data' / 'cleaned_data' / dict_filename
-    # if root = Path(''), all filenames have to be ful l path objects themselves 
-    gen_lookup_dict_from_file(cleaned_mol_smis_path, dict_path, bad_mol_smis_path, root=Path(''))
-
-    rxn_smi_file_prefix = '50k_clean_rxnsmi_noreagent' # user input
-    lookup_dict_filename = dict_filename # user input
-    sparse_mol_fps_filename = '50k_count_mol_fps.npz' # user input
-    output_matrix_file_prefix = '50k_count_diff_fps' # user input
-    gen_diff_fps_from_file(rxn_smi_file_prefix, lookup_dict_filename, sparse_mol_fps_filename,
-                            output_matrix_file_prefix)
+if __name__ == '__main__':   
+    gen_count_mol_fps_from_file()
+    gen_lookup_dict_from_file()
+    gen_diff_fps_from_file()

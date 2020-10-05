@@ -17,7 +17,7 @@ import csv
 import re 
 import pickle
 from pathlib import Path   
-from typing import List, Optional
+from typing import List, Optional, Union
 
 def remove_mapping(rxn_smi: str, keep_reagents: bool = False) -> str :
     ''' 
@@ -214,8 +214,8 @@ def clean_rxn_smis_from_csv(path_to_rxn_smis: str, lines_to_skip: int = 1, datas
         print('raw rxn extracted: ', raw_num, '\n')
         return clean_list
 
-def clean_rxn_smis_all_datasets(raw_data_file_prefix: str, rxn_smi_file_prefix: str, 
-                             root: Optional[str] = None, lines_to_skip: int = 1, 
+def clean_rxn_smis_all_datasets(raw_data_file_prefix: str, rxn_smi_file_prefix: str='50k_clean_rxnsmi_noreagent', 
+                             root: Optional[Union[str, bytes, os.PathLike]] = None, lines_to_skip: int = 1, 
                              keep_reagents: bool = False, remove_rct_mapping: bool = True,
                              distributed: bool = True):
     '''
@@ -254,8 +254,9 @@ def clean_rxn_smis_all_datasets(raw_data_file_prefix: str, rxn_smi_file_prefix: 
         with open(root / 'data' / 'cleaned_data' / f'{rxn_smi_file_prefix}_{dataset}.pickle', 'wb') as handle:
             pickle.dump(cleaned_rxn_smis[dataset], handle, protocol=pickle.HIGHEST_PROTOCOL)
     
-def get_uniq_mol_smis_all_datasets(rxn_smi_file_prefix: str, mol_smis_filename: str, 
-                                   root: Optional[str] = None):
+def get_uniq_mol_smis_all_datasets(rxn_smi_file_prefix: str='50k_clean_rxnsmi_noreagent', 
+                                mol_smis_filename: Union[str, bytes, os.PathLike]='50k_mol_smis.pickle', 
+                                root: Optional[Union[str, bytes, os.PathLike]] = None):
     '''
     NOTE: does not collect reagents 
     '''
@@ -282,13 +283,6 @@ def get_uniq_mol_smis_all_datasets(rxn_smi_file_prefix: str, mol_smis_filename: 
         pickle.dump(list(uniq_mol_smis), handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__ == '__main__':
-    raw_data_file_prefix = 'schneider50k_raw'  # user input
-    rxn_smi_file_prefix = '50k_clean_rxnsmi_noreagent'  # user input
-
-    clean_rxn_smis_all_datasets(raw_data_file_prefix, rxn_smi_file_prefix, lines_to_skip = 1, 
-                             keep_reagents=False, remove_rct_mapping=True, distributed=True)
-    
-    mol_smis_filename = '50k_mol_smis.pickle' # user input
-    get_uniq_mol_smis_all_datasets(rxn_smi_file_prefix, mol_smis_filename)
-
-# textIO: the textIO object returned by 'open()' 
+    raw_data_file_prefix = 'schneider50k_raw'  # user input 
+    clean_rxn_smis_all_datasets(raw_data_file_prefix, lines_to_skip = 1)
+    get_uniq_mol_smis_all_datasets() 

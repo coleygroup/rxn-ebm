@@ -9,10 +9,10 @@ from typing import Optional, Union
 
 from model.FF import FeedforwardFingerprint
 
-def setup_paths(LOCAL: Optional[bool]=True, 
+def setup_paths(location: str='LOCAL', 
             load_trained: Optional[bool]=False, date_trained: Optional[str]=None,
             root: Optional[Union[str, bytes, os.PathLike]]=None):
-    ''' TODO: engaging_cluster directories
+    '''  
     Parameters
     ----------
     root : Union[str, bytes, os.PathLike] (Default = None)
@@ -24,24 +24,24 @@ def setup_paths(LOCAL: Optional[bool]=True,
             raise ValueError('Please provide date_trained as DD_MM_YYYY')
     else:
         date_trained = date.today().strftime("%d_%m_%Y")
-    if LOCAL: 
+    if location.upper() == 'LOCAL': 
         if root is None:
             root = Path(__file__).parents[1] / 'checkpoints'
         checkpoint_folder = Path(root) / date_trained
-        try:
-            os.makedirs(checkpoint_folder)
-            print(f'created checkpoint_folder: ', checkpoint_folder)
-        except:
-            print('checkpoint_folder already exists')
-    else: # colab, and soon, engaging_cluster 
+        os.makedirs(checkpoint_folder, exist_ok=True)
+        print(f'created checkpoint_folder: ', checkpoint_folder)
+    elif location.upper() == 'COLAB':  
         if root is None:
             root = Path('/content/gdrive/My Drive/rxn_ebm/checkpoints/')
         checkpoint_folder = Path(root) / date_trained 
-        try:
-            os.makedirs(checkpoint_folder)
-            print(f'created checkpoint_folder: ', checkpoint_folder)
-        except:
-            print('checkpoint_folder already exists')
+        os.makedirs(checkpoint_folder, exist_ok=True)
+        print(f'created checkpoint_folder: ', checkpoint_folder) 
+    elif location.upper() == 'ENGAGING':
+        if root is None:
+            root = Path(__file__).parents[1] / 'checkpoints'  ######## MAY CHANGE ########
+        checkpoint_folder = Path(root) / date_trained 
+        os.makedirs(checkpoint_folder, exist_ok=True)
+        print(f'created checkpoint_folder: ', checkpoint_folder) 
     return checkpoint_folder
 
 def load_model_opt_and_stats(saved_stats_filename: Union[str, bytes, os.PathLike], 

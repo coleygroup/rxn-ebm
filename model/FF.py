@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
-import torch.tensor as tensor
 from typing import List, Optional
 
 from model.utils import get_activation_function, initialize_weights
+
+Tensor = torch.Tensor
 
 class FeedforwardFingerprint(nn.Module):
     '''
@@ -46,12 +47,10 @@ class FeedforwardFingerprint(nn.Module):
                 output_size: int, num_layers: int):
         if num_layers == 1:
             ffn = [
-                # dropout,
                 nn.Linear(input_dim, output_size)
             ]
         else:
             ffn = [
-                # dropout,
                 nn.Linear(input_dim, hidden_sizes[0])
             ]
             
@@ -71,7 +70,7 @@ class FeedforwardFingerprint(nn.Module):
             ])
         self.ffn = nn.Sequential(*ffn)
         
-    def forward(self, batch: tensor) -> tensor:
+    def forward(self, batch: Tensor) -> Tensor:
         '''
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column, 

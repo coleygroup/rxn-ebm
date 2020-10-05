@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.tensor as tensor
 from torch.utils.data import DataLoader, Dataset
 
 import os
@@ -11,6 +10,8 @@ import random
 from typing import Optional, Union
 from pathlib import Path
 from collections import defaultdict
+
+Tensor = torch.Tensor
 
 ''' 
 NOTE: the way python's imports work, is that I cannot run scripts on their own from that directory
@@ -28,12 +29,8 @@ from data.dataset import ReactionDataset, AugmentedData
 
 class Experiment():
     '''
-    NOTE: currently assumes pre-computed file already exists --> trainEBM.py handles the pre-computation
-    TODO: finish onthefly augmentation support in self._init_dataloaders() 
-    TODO: assumes that pre-requisite SMILES files already exist, so user just has to supply the path
-    to those SMILES files, lookup_dict, count_mol_fps --> should have been handled in trainEBM.py or earlier 
-    TODO: wandb/tensorboard for hyperparameter tuning
-    TODO: fix batchloss --> just keep adding += , then divide by len(dataset) at the end of each epoch 
+    NOTE: currently assumes pre-computed file already exists --> trainEBM.py handles the pre-computation  
+    TODO: wandb/tensorboard for hyperparameter tuning 
 
     Parameters
     ----------
@@ -282,7 +279,7 @@ class Experiment():
         checkpoint_filename = self.checkpoint_folder / f'{self.model_name}_{self.expt_name}_checkpoint_{current_epoch:04d}.pth.tar' 
         torch.save(checkpoint_dict, checkpoint_filename)
 
-    def _one_batch(self, batch: tensor, backprop: bool=True):
+    def _one_batch(self, batch: Tensor, backprop: bool=True):
         '''
         Passes one batch of samples through model to get scores & loss 
         Does backprop if training 
@@ -312,8 +309,8 @@ class Experiment():
             for batch in tqdm(self.train_loader): 
                 batch = batch.to(self.device)
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(batch, backprop=True)
-                train_loss = train_loss + curr_batch_loss
-                train_correct_preds = train_correct_preds + curr_batch_correct_preds
+                train_loss += curr_batch_loss
+                train_correct_preds += curr_batch_correct_preds
             self.train_accs.append( train_correct_preds / self.train_size)
             self.train_losses.append( train_loss / self.train_size) 
 
@@ -322,8 +319,8 @@ class Experiment():
             for batch in tqdm(self.val_loader): 
                 batch = batch.to(self.device)
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(batch, backprop=False)
-                val_loss = val_loss + curr_batch_loss
-                val_correct_preds = val_correct_preds + curr_batch_correct_preds          
+                val_loss += curr_batch_loss
+                val_correct_preds += curr_batch_correct_preds          
             self.val_accs.append( val_correct_preds / self.val_size)
             self.val_losses.append( val_loss / self.val_size)
             if self.val_losses[-1] < self.min_val_loss: # track best_epoch to facilitate loading of best checkpoint 
@@ -357,8 +354,8 @@ class Experiment():
         for batch in tqdm(self.test_loader): 
             batch = batch.to(self.device)
             curr_batch_loss, curr_batch_correct_preds = self._one_batch(batch, backprop=False)
-            test_loss = test_loss + curr_batch_loss
-            test_correct_preds = test_correct_preds + curr_batch_correct_preds   
+            test_loss += curr_batch_loss
+            test_correct_preds += curr_batch_correct_preds   
         
         if saved_stats: self.stats = saved_stats 
         if len(self.stats.keys()) <= 2:
@@ -372,7 +369,7 @@ class Experiment():
 
     def get_scores_and_loss(self, dataset_name: Optional[str]='test',
                    dataloader: Optional[torch.utils.data.DataLoader]=None, dataset_len: Optional[int]=None,  
-                   show_neg: Optional[bool]=False) -> tensor:
+                   show_neg: Optional[bool]=False) -> Tensor:
         ''' 
         Gets raw energy values (scores) from a trained model on a given dataloader,
         with the option to save pos_neg_smis to analyse model performance
@@ -390,7 +387,7 @@ class Experiment():
 
         Returns
         -------
-        scores : tensor
+        scores : Tensor
             scores of shape (# rxns, 1 + # neg rxns)
         loss : float 
             the loss value on the provided dataset
@@ -451,7 +448,7 @@ class Experiment():
                     dataloader: Optional[torch.utils.data.DataLoader]=None, dataset_len: Optional[int]=None, 
                     k: Optional[int]=1, repeats: Optional[int]=1, 
                     save_scores: Optional[bool]=True, name_scores: Optional[Union[str, bytes, os.PathLike]]=None, 
-                    path_scores: Optional[Union[str, bytes, os.PathLike]]=None) -> tensor:
+                    path_scores: Optional[Union[str, bytes, os.PathLike]]=None) -> Tensor:
         '''
         Computes top-k accuracy of trained model in classifying feasible vs infeasible chemical rxns
         (i.e. minimum energy assigned to label 0 of each training sample) 
@@ -483,7 +480,7 @@ class Experiment():
         if path_scores is None:
             path_scores = Path(__file__).parents[1] / 'scores'
         if name_scores is None:
-            name_scores = f'scores_{dataset_name}_{self.expt_name}' 
+            name_scores = f'scores_{dataset_name}_{self.expt_name}.pkl' 
         if save_scores:
             print('Saving scores at: ', Path(path_scores / name_scores))
             torch.save(scores, Path(path_scores / name_scores))
