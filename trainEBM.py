@@ -13,21 +13,23 @@ def trainEBM():
     precomp_file_prefix = '50k_' + expt_name # CHANGE THIS, expt.py will add f'_{dataset}.npz'
     
     augmentations = {
-        'rdm': {'num_neg': 1}, 
-        'cos': {'num_neg': 1},
-        'bit': {'num_neg': 1, 'num_bits': 5}
+        'rdm': {'num_neg': 20}, 
+        'cos': {'num_neg': 20},
+        'bit': {'num_neg': 20, 'num_bits': 5}
     }
     ### PRECOMPUTE ### 
-    lookup_dict_filename = '50k_mol_smi_to_count_fp.pickle'
+    lookup_dict_filename = '50k_mol_smi_to_sparse_fp_idx.pickle'
     mol_fps_filename = '50k_count_mol_fps.npz'
     search_index_filename = '50k_cosine_count.bin'
-    augmented_data = AugmentedData(augmentations, lookup_dict_filename, mol_fps_filename, search_index_filename)
+    augmented_data = AugmentedData(augmentations, lookup_dict_filename, mol_fps_filename, 
+                                search_index_filename, num_workers=8)
     
     rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent' 
     for dataset in ['train', 'valid', 'test']:
         augmented_data.precompute(
             output_filename=precomp_file_prefix+f'_{dataset}.npz', 
-            rxn_smis=rxn_smis_file_prefix+f'_{dataset}.pickle') 
+            rxn_smis=rxn_smis_file_prefix+f'_{dataset}.pickle', 
+            distributed=True) 
 
     checkpoint_folder = setup_paths('LOCAL')
     model_args = {
@@ -88,7 +90,7 @@ def resumeEBM():
         'bit': {'num_neg': 5, 'num_bits': 3}
     }
     ### PRECOMPUTE ### 
-    lookup_dict_filename = '50k_mol_smi_to_count_fp.pickle'
+    lookup_dict_filename = '50k_mol_smi_to_sparse_fp_idx.pickle'
     mol_fps_filename = '50k_count_mol_fps.npz'
     search_index_filename = '50k_cosine_count.bin'
     augmented_data = AugmentedData(augmentations, lookup_dict_filename, mol_fps_filename, search_index_filename)

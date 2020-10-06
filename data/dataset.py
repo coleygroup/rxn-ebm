@@ -11,6 +11,7 @@ import numpy as np
 import nmslib
 from tqdm import tqdm
 from typing import Optional, Union 
+from concurrent.futures import ProcessPoolExecutor as Pool
 
 from data.augmentors import *
 
@@ -138,21 +139,48 @@ class AugmentedData:
         ''' Called by ReactionDataset.__getitem__(idx)
         '''
         return self.get_one_sample(self.rxn_smis[idx])
+    
+    def precompute_helper(self, query_params: Optional[dict]=None): 
+        if self.cosaugmentor.search_index is None:
+            self.cosaugmentor.search_index = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
+                                data_type=nmslib.DataType.SPARSE_VECTOR)
+            self.cosaugmentor.search_index.loadIndex(str(self.root / self.search_index_filename), load_data=True)
+            if query_params:
+                self.cosaugmentor.search_index.setQueryTimeParams(query_params)
+            else:
+                self.cosaugmentor.search_index.setQueryTimeParams({'efSearch': 100})    
+
+        out = []
+        for i in tqdm(range(len(self.rxn_smis))):
+            out.append(self[i])
+        return out 
 
     def precompute(self, output_filename: str, 
-                rxn_smis: Union[List[str], Union[str, bytes, os.PathLike]]):
+                rxn_smis: Union[List[str], Union[str, bytes, os.PathLike]],
+                distributed: Optional[bool]=True, query_params: Optional[dict]=None):
         self.load_smis(rxn_smis)
         if (self.root / output_filename).exists():
             print(self.root / output_filename, 'already exists!')
             return 
         else:
             print('Precomputing...')
+        
+        if distributed: 
+            try:
+                num_workers = len(os.sched_getaffinity(0))
+            except AttributeError:
+                num_workers = os.cpu_count()
+            print(f'Parallelizing over {num_workers} cores')
+        else:
+            print('Not parallelizing!')
+            num_workers = 1
 
-        out = []
-        for i in tqdm(range(len(self.rxn_smis))):
-            out.append(self[i])
-        out = sparse.vstack(out)
-        sparse.save_npz(self.root / output_filename, out)
+        with Pool(max_workers=num_workers) as client:
+            future = client.submit(self.precompute_helper, query_params)
+            diff_fps = future.result()
+        
+        diff_fps = sparse.vstack(diff_fps)
+        sparse.save_npz(self.root / output_filename, diff_fps)
         return 
 
     def load_smis(self, rxn_smis: Union[List[str], Union[str, bytes, os.PathLike]]):

@@ -45,12 +45,14 @@ class Experiment():
     def __init__(self, model: nn.Module, model_args: dict, 
                 batch_size: int, learning_rate: float, epochs: int,
                 early_stop: bool, min_delta: float, patience: int, num_workers: int, checkpoint: bool,
-                random_seed: int, precomp_file_prefix: str, checkpoint_folder: str, expt_name: str, 
+                random_seed: int, precomp_file_prefix: str, checkpoint_folder: Union[str, bytes, os.PathLike], expt_name: str, 
                 rxn_type: str, fp_type: str, rctfp_size: int, prodfp_size: int,
                 augmentations: dict, onthefly: Optional[bool]=False,  
-                lookup_dict_filename: Optional[str]=None, mol_fps_filename: Optional[str]=None,
-                search_index_filename: Optional[str]=None, device: Optional[str]=None, distributed: Optional[bool]=False,
-                optimizer: Optional[torch.optim.Optimizer]=None, root: Optional[str]=None,
+                lookup_dict_filename: Optional[Union[str, bytes, os.PathLike]]=None, 
+                mol_fps_filename: Optional[Union[str, bytes, os.PathLike]]=None,
+                search_index_filename: Optional[Union[str, bytes, os.PathLike]]=None, 
+                device: Optional[str]=None, distributed: Optional[bool]=False,
+                optimizer: Optional[torch.optim.Optimizer]=None, root: Optional[Union[str, bytes, os.PathLike]]=None,
                 load_checkpoint: Optional[bool]=False, saved_optimizer: Optional[torch.optim.Optimizer]=None, 
                 saved_stats: Optional[dict]=None, begin_epoch: Optional[int]=None,
                 **kwargs):       
@@ -103,7 +105,7 @@ class Experiment():
         seed_everything(random_seed)
 
     def __repr__(self):
-        return 'Experiment with: ' + augmentations
+        return 'Experiment with: ' + self.augmentations
 
     def _collate_args(self, model_args: dict, 
                     optimizer: Optional[torch.optim.Optimizer]=None, 

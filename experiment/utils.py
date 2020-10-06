@@ -1,6 +1,7 @@
 from datetime import date
 import os
 import torch
+from torch.utils.data import get_worker_info
 import random
 import numpy as np
 import nmslib
@@ -99,16 +100,15 @@ def _worker_init_fn_nmslib_(worker_id):
 
     worker_info = get_worker_info() 
     dataset = worker_info.dataset 
-    if dataset.onthefly:
-        bound_search_index = dataset.data.cosaugmentor.search_index
-        if bound_search_index is None:
-            bound_search_index = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
+    if dataset.onthefly: 
+        if dataset.data.cosaugmentor.search_index is None:
+            dataset.data.cosaugmentor.search_index = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
                                 data_type=nmslib.DataType.SPARSE_VECTOR)
-            bound_search_index.loadIndex(dataset.search_index_path, load_data=True)
+            dataset.data.cosaugmentor.search_index.loadIndex(dataset.search_index_path, load_data=True)
             if dataset.query_params:
-                bound_search_index.setQueryTimeParams(dataset.query_params)
+                dataset.data.cosaugmentor.search_index.setQueryTimeParams(dataset.query_params)
             else:
-                bound_search_index.setQueryTimeParams({'efSearch': 100})
+                dataset.data.cosaugmentor.search_index.setQueryTimeParams({'efSearch': 100})
 
 def _worker_init_fn_default_(worker_id):
     torch_seed = torch.initial_seed()
