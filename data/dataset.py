@@ -110,10 +110,10 @@ class AugmentedData:
             num_neg, self.lookup_dict, self.mol_fps, self.rxn_type, self.fp_type)
         self.augs.append(self.rdmaugmentor.get_one_sample)
         
-    def _init_bit(self, num_neg: int, num_bits: int, strategy: Optional[str]=None):
+    def _init_bit(self, num_neg: int, num_bits: int, strategy: Optional[str]=None, increment_bits: Optional[int]=1):
         print('Initialising BitAugmentor...')
         self.bitaugmentor = BitAugmentor(
-            num_neg, num_bits, strategy, self.lookup_dict, self.mol_fps, self.rxn_type, self.fp_type)
+            num_neg, num_bits, increment_bits, strategy, self.lookup_dict, self.mol_fps, self.rxn_type, self.fp_type)
         if self.fp_type == 'count':
             self.augs.append(self.bitaugmentor.get_one_sample_count)
         elif self.fp_type == 'bit':
@@ -157,7 +157,8 @@ class AugmentedData:
 
     def precompute(self, output_filename: str, 
                 rxn_smis: Union[List[str], Union[str, bytes, os.PathLike]],
-                distributed: Optional[bool]=True, query_params: Optional[dict]=None):
+                distributed: Optional[bool]=False, parallel: Optional[bool]=True,
+                query_params: Optional[dict]=None):
         self.load_smis(rxn_smis)
         if (self.root / output_filename).exists():
             print(self.root / output_filename, 'already exists!')
@@ -166,12 +167,22 @@ class AugmentedData:
             print('Precomputing...')
         
         if distributed: 
+            print('distributed computing is not supported now!')
+            return
+            # from mpi4py import MPI 
+            # from mpi4py.futures import MPIPoolExecutor as Pool 
+
+            # num_workers = MPI.COMM_WORLD.size
+            # print(f'Distributing over {num_workers} total workers')
+        elif parallel:
+            from concurrent.futures import ProcessPoolExecutor as Pool
             try:
                 num_workers = len(os.sched_getaffinity(0))
             except AttributeError:
                 num_workers = os.cpu_count()
             print(f'Parallelizing over {num_workers} cores')
         else:
+            from concurrent.futures import ProcessPoolExecutor as Pool
             print('Not parallelizing!')
             num_workers = 1
 

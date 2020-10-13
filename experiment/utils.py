@@ -30,19 +30,19 @@ def setup_paths(location: str='LOCAL',
             root = Path(__file__).parents[1] / 'checkpoints'
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
-        print(f'created checkpoint_folder: ', checkpoint_folder)
+        print(f'created checkpoint_folder: {checkpoint_folder}')
     elif location.upper() == 'COLAB':  
         if root is None:
             root = Path('/content/gdrive/My Drive/rxn_ebm/checkpoints/')
         checkpoint_folder = Path(root) / date_trained 
         os.makedirs(checkpoint_folder, exist_ok=True)
-        print(f'created checkpoint_folder: ', checkpoint_folder) 
+        print(f'created checkpoint_folder: {checkpoint_folder}') 
     elif location.upper() == 'ENGAGING':
         if root is None:
             root = Path(__file__).parents[1] / 'checkpoints'  ######## MAY CHANGE ########
         checkpoint_folder = Path(root) / date_trained 
         os.makedirs(checkpoint_folder, exist_ok=True)
-        print(f'created checkpoint_folder: ', checkpoint_folder) 
+        print(f'created checkpoint_folder: {checkpoint_folder}') 
     return checkpoint_folder
 
 def load_model_opt_and_stats(saved_stats_filename: Union[str, bytes, os.PathLike], 
@@ -101,14 +101,15 @@ def _worker_init_fn_nmslib_(worker_id):
     worker_info = get_worker_info() 
     dataset = worker_info.dataset 
     if dataset.onthefly: 
-        if dataset.data.cosaugmentor.search_index is None:
-            dataset.data.cosaugmentor.search_index = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
-                                data_type=nmslib.DataType.SPARSE_VECTOR)
-            dataset.data.cosaugmentor.search_index.loadIndex(dataset.search_index_path, load_data=True)
-            if dataset.query_params:
-                dataset.data.cosaugmentor.search_index.setQueryTimeParams(dataset.query_params)
-            else:
-                dataset.data.cosaugmentor.search_index.setQueryTimeParams({'efSearch': 100})
+        with dataset.data.cosaugmentor.search_index as index: 
+            if index is None:
+                index = nmslib.init(method='hnsw', space='cosinesimil_sparse', 
+                                    data_type=nmslib.DataType.SPARSE_VECTOR)
+                index.loadIndex(dataset.search_index_path, load_data=True)
+                if dataset.query_params:
+                    index.setQueryTimeParams(dataset.query_params)
+                else:
+                    index.setQueryTimeParams({'efSearch': 100})
 
 def _worker_init_fn_default_(worker_id):
     torch_seed = torch.initial_seed()

@@ -6,10 +6,14 @@ import pickle
 import scipy
 from scipy import sparse 
 import numpy as np
-import nmslib
 from typing import List, Optional, Tuple, Union
 from pathlib import Path
 from abc import ABC, abstractmethod
+
+from crem.crem import mutate_mol 
+import rdkit
+from rdkit import Chem
+import nmslib
 
 sparse_fp = scipy.sparse.csr_matrix 
 dense_fp = np.ndarray # try not to use, more memory intensive
@@ -67,12 +71,67 @@ class Augmentor(ABC):
     def get_one_sample(self, rxn_smi: str) -> List[sparse_fp]:
         '''
         '''
-    @abstractmethod
-    def get_idx(self, rxn_smi: str) -> int:
-        '''
-        '''
+        raise NotImplementedError
 
-class CosineAugmentor:
+    @abstractmethod
+    def get_idx(self, rxn_smi: Optional[str]=None) -> int:
+        '''
+        '''
+        raise NotImplementedError
+
+class MutateAugmentor(Augmentor):
+    ''' Uses CReM: https://github.com/DrrDom/crem to mutate product molecules into structurally-similar molecules
+
+    TODO: make frag_db from USPTO_50k? for now, use the one CReM already comes with 
+
+    Ideas:
+        1) divide num_neg into K splits, where each split comes from mutate_mols() set up with specific sets of hyperparams 
+        (see crem_example notebook from his github repo)
+        e.g. one split can be dedicated to min_inc & max_inc both -ve (shrink orig mol), another split with both +ve (expand orig mol) 
+        then use random.sample(mutated_mols, num_neg // K)
+        this way, we ensure a variety of mutated mols in each minibatch of negative examples
+    
+    Edge cases:
+        1) are we sure that we will always get sufficient neg examples from CReM? 
+        what happens if we ask for 20 negs, but CReM only gives us 10? fill the rest with 0's? or raise error and exit experiment? 
+    '''
+    def __init__(self, num_neg: int, max_size: int, lookup_dict: dict, 
+                mol_fps: sparse_fp, path_to_frag_db: Union[str, bytes. os.PathLike],
+                rxn_type: str='diff', fp_type: str='count'):
+        super(MutateAugmentor, self).__init__(num_neg, lookup_dict, mol_fps, rxn_type, fp_type)
+        self.path_to_frag_db = path_to_frag_db
+        self.max_size = max_size # recommended value = 2
+    
+    def get_one_sample(self, rxn_smi: str) -> List[sparse_fp]:
+        ''' 
+        Also see: rcts_prod_fps_from_rxn_smi, make_rxn_fp
+        '''
+        prod_mol = Chem.MolFromSmiles(rxn_smi.split('>>')[-1])
+        mut_prod_smis = list(mutate_mol(prod_mol, db_name=self.path_to_frag_db, 
+                                        max_size=self.max_size, return_mol=False))
+
+        mut_prod_fps = []
+        for prod_smi in random.sample(mut_prod_smis, self.num_neg):
+            # neg_rxn_smis.append(f'{rcts_smi}>>{prod_smi}') # don't think we need the full neg_rxn_smi 
+            prod_idx = self.lookup_dict[prod_smi]
+            prod_fp = self.mol_fps[prod_idx]
+            mut_prod_fps.append(prod_fp)
+
+        rcts_fp, prod_fp = rcts_prod_fps_from_rxn_smi(rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps) 
+
+        neg_rxn_fps = []
+        for mut_prod_fp in mut_prod_fps:
+            neg_rxn_fp = make_rxn_fp(rcts_fp, mut_prod_fp, self.rxn_type)
+            neg_rxn_fps.append(neg_rxn_fp) 
+        return neg_rxn_fps
+    
+    def get_idx(self) -> None:
+        ''' not applicable for CReM
+        '''
+        pass 
+
+
+class CosineAugmentor(Augmentor):
     '''
     Generates negative reaction fingerprints (on-the-fly) by fetching nearest neighbours 
     (by cosine similarity) of product molecules in a given, positive reaction SMILES
@@ -85,13 +144,9 @@ class CosineAugmentor:
     def __init__(self, num_neg: int, lookup_dict: dict, 
                 mol_fps: sparse_fp, search_index: nmslib.dist.FloatIndex, 
                 rxn_type: str='diff', fp_type: str='count', num_threads: int=4):
-        self.num_neg = num_neg
-        self.lookup_dict = lookup_dict
-        self.mol_fps = mol_fps
+        super(CosineAugmentor, self).__init__(num_neg, lookup_dict, mol_fps, rxn_type, fp_type)
         self.search_index = search_index # can be None, in which case it'll be initialised by _worker_init_fn_nmslib (see expt.utils)
         self.num_threads = num_threads
-        self.rxn_type = rxn_type
-        self.fp_type = fp_type
     
     def get_one_sample(self, rxn_smi: str) -> List[sparse_fp]:
         ''' 
@@ -107,7 +162,8 @@ class CosineAugmentor:
         return neg_rxn_fps
     
     def get_idx(self, prod_fp: sparse_fp=None, rxn_smi: Optional[str]=None) -> int:
-        ''' if rxn_smi string is provided, then prod_fp is not needed. otherwise, prod_fp is necessary
+        ''' if rxn_smi string is provided, then prod_fp is not needed. 
+        otherwise, prod_fp is necessary
         '''
         if rxn_smi:
             rcts_fp, prod_fp = rcts_prod_fps_from_rxn_smi(rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps)
@@ -115,7 +171,7 @@ class CosineAugmentor:
         nn_prod_idxs = nn_prod_idxs_with_dist[0][0] # list of only 1 item, so need one more [0] to access; first item of tuple is np.ndarray of indices 
         return nn_prod_idxs
 
-class RandomAugmentor:
+class RandomAugmentor(Augmentor):
     '''
     Generates negative reaction fingerprints by fetching random product molecules 
     to modify a given, positive reaction SMILES
@@ -126,13 +182,10 @@ class RandomAugmentor:
     '''
     def __init__(self, num_neg: int, lookup_dict: dict, 
                 mol_fps: sparse_fp, rxn_type: str='diff', fp_type: str='count'):
-        self.num_neg = num_neg
-        self.lookup_dict = lookup_dict
-        self.mol_fps = mol_fps
-        self.rxn_type = rxn_type
-        self.fp_type = fp_type
+        super(RandomAugmentor, self).__init__(num_neg, lookup_dict, mol_fps, rxn_type, fp_type)
         self.orig_idxs = range(self.mol_fps.shape[0])
-        # self.rdm_idxs = random.sample(self.orig_idxs, k=len(self.orig_idxs))
+        self.rdm_idxs = random.sample(self.orig_idxs, k=len(self.orig_idxs))
+        self.rdm_counter = -1
         # using this means that a product molecule (if it appears multiple times in different rxns)
         # will consistently map to a particular randomly selected molecule, which might not be a bad thing! 
         # we use the original prod_idx in lookup_dict to access self.rdm_idxs 
@@ -146,16 +199,18 @@ class RandomAugmentor:
 
         neg_rxn_fps = []
         for i in range(self.num_neg):
-            rdm_prod_idx = random.choice(self.orig_idxs)
+            rdm_prod_idx = self.get_idx() # random.choice(self.orig_idxs)
             rdm_prod_fp = self.mol_fps[rdm_prod_idx]
             neg_rxn_fp = make_rxn_fp(rcts_fp, rdm_prod_fp, self.rxn_type)
             neg_rxn_fps.append(neg_rxn_fp) 
         return neg_rxn_fps 
 
     def get_idx(self) -> int:
-        return random.choice(self.orig_idxs)
+        self.rdm_counter += 1
+        return self.rdm_idxs[self.rdm_counter]
+        # return random.choice(self.orig_idxs)
         
-class BitAugmentor:
+class BitAugmentor(Augmentor):
     '''
     Generates negative reaction fingerprints by randomly switching the values of bits
     in a given positive reaction fingerprint
@@ -163,23 +218,20 @@ class BitAugmentor:
     For count rxn fingerprints, this means randomly adding 1 to the original value at a randomly chosen position
 
     Future strategies include:
-        1) 'Attacks' the most sensitive bits by some analysis function 
+        1) 'Attacks' the most sensitive bits by some analysis function?? 
             i.e. the bit that the model is currently most sensitive to
         2) Replace with a section of bits from a different molecule 
             (mimics RICAP from computer vision)
         3) Similar to 2, but select the 'donor' molecule using some similarity (or dissimilarity) metric
     NOTE: only compatible with fingerprints
     '''
-    def __init__(self, num_neg: int, num_bits: int, strategy: str, 
+    def __init__(self, num_neg: int, num_bits: int, increment_bits: int, strategy: str, 
                 lookup_dict: dict, mol_fps: sparse_fp, 
                 rxn_type: str='diff', fp_type: str='count'):
-        self.num_neg = num_neg
+        super(BitAugmentor, self).__init__(num_neg, lookup_dict, mol_fps, rxn_type, fp_type)
         self.num_bits = num_bits
+        self.increment_bits = increment_bits or 1 # default is 1
         self.strategy = strategy
-        self.lookup_dict = lookup_dict
-        self.mol_fps = mol_fps
-        self.rxn_type = rxn_type
-        self.fp_type = fp_type
 
     def get_one_sample_count(self, rxn_smi: str) -> List[sparse_fp]:
         ''' For count fingerprints
@@ -193,7 +245,7 @@ class BitAugmentor:
             neg_rxn_fp = pos_rxn_fp.copy()
             rdm_bit_idxs = random.sample(range(pos_rxn_fp.shape[-1]), k=self.num_bits) 
             for bit_idx in rdm_bit_idxs:
-                neg_rxn_fp[0, bit_idx] = neg_rxn_fp[0, bit_idx] + 1 
+                neg_rxn_fp[0, bit_idx] = neg_rxn_fp[0, bit_idx] + self.increment_bits
             neg_rxn_fps.append(neg_rxn_fp) 
         return neg_rxn_fps  
     
@@ -212,8 +264,14 @@ class BitAugmentor:
                 neg_rxn_fp[0, bit_idx] = random.choice([-1, 0, 1])
             neg_rxn_fps.append(neg_rxn_fp) 
         return neg_rxn_fps 
+    
+    def get_one_sample(self, rxn_smi: str) -> List[sparse_fp]:
+        if self.fp_type == 'count':
+            return self.get_one_sample_count(rxn_smi)
+        else:
+            return self.get_one_sample_bit(rxn_smi)
 
-    def get_idx(self, rxn_smi: str) -> None:
+    def get_idx(self) -> None:
         pass
 
  

@@ -43,7 +43,7 @@ class FeedforwardFingerprint(nn.Module):
         return 'FeedforwardEBM' # needed by experiment.py for saving model details
     
     def build(self, dropout: nn.Dropout, activation: nn.Module, 
-                hidden_sizes: List, input_dim: int, 
+                hidden_sizes: List[int], input_dim: int, 
                 output_size: int, num_layers: int):
         if num_layers == 1:
             ffn = [

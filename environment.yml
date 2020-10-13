@@ -11,4 +11,3 @@ dependencies:
   - scipy
   - pylint
 prefix: C:\anaconda3\envs\rxnebm
-

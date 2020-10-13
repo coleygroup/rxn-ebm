@@ -9,13 +9,13 @@ from model.FF import FeedforwardFingerprint
 from data.dataset import AugmentedData
 
 def trainEBM():  
-    expt_name = 'rdm_1_cos_1_bit_1_5' # CHANGE THIS 
+    expt_name = 'rdm_0_cos_0_bit_10_1_2' # CHANGE THIS 
     precomp_file_prefix = '50k_' + expt_name # CHANGE THIS, expt.py will add f'_{dataset}.npz'
     
     augmentations = {
-        'rdm': {'num_neg': 20}, 
-        'cos': {'num_neg': 20},
-        'bit': {'num_neg': 20, 'num_bits': 5}
+        'rdm': {'num_neg': 0}, 
+        'cos': {'num_neg': 0},
+        'bit': {'num_neg': 10, 'num_bits': 1, 'increment_bits': 2}
     }
     ### PRECOMPUTE ### 
     lookup_dict_filename = '50k_mol_smi_to_sparse_fp_idx.pickle'
@@ -29,11 +29,11 @@ def trainEBM():
         augmented_data.precompute(
             output_filename=precomp_file_prefix+f'_{dataset}.npz', 
             rxn_smis=rxn_smis_file_prefix+f'_{dataset}.pickle', 
-            distributed=True) 
+            distributed=False, parallel=False) 
 
     checkpoint_folder = setup_paths('LOCAL')
     model_args = {
-        'hidden_sizes': [512],
+        'hidden_sizes': [1024, 128],
         'output_size': 1,
         'dropout': 0.1,  
         'activation': 'ReLU'
@@ -49,12 +49,12 @@ def trainEBM():
 
     train_args = {    
         'batch_size': 4096,
-        'learning_rate':  7e-3, # to try: lr_finder & lr_schedulers 
+        'learning_rate':  6e-3, # to try: lr_finder & lr_schedulers 
         'optimizer': torch.optim.Adam,
-        'epochs': 10,
+        'epochs': 30,
         'early_stop': True,
         'min_delta': 1e-4, 
-        'patience': 1,
+        'patience': 2,
         'num_workers': 0, # 0 to 8
         'checkpoint': True,
         'random_seed': 0, # affects RandomAugmentor's sampling & DataLoader's sampling
