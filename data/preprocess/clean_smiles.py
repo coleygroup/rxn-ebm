@@ -4,6 +4,7 @@ a function to generate a list of SMILES strings of all unique molecules in the g
 in rxn-ebm, a 'dataset' refers to the combination of 'train', 'valid', and 'test', (which are each called a 'split')
 e.g. USPTO_50k is a dataset.
 '''
+import argparse 
 import sys
 import os
 from concurrent.futures import ProcessPoolExecutor as Pool
@@ -21,6 +22,32 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 Mol = rdkit.Chem.rdchem.Mol
+
+def parse_args():
+    parser = argparse.ArgumentParser('clean_smiles')
+    # file paths
+    parser.add_argument('--raw_smi_pre', help='File prefix of original raw rxn_smi csv', type=str, default='schneider50k_raw')
+    parser.add_argument('--clean_smi_pre', help='File prefix of cleaned rxn_smi pickle', type=str, default='50k_clean_rxnsmi_noreagent')
+    parser.add_argument('--raw_smi_root', help='Full path to folder containing raw rxn_smi csv', type=str)
+    parser.add_argument('--clean_smi_root', help='Full path to folder that will contain cleaned rxn_smi pickle', type=str)
+
+    # args for clean_rxn_smis_all_splits
+    parser.add_argument('--dataset_name', help='Name of dataset: "50k", "STEREO" or "FULL"', type=str, default='50k')
+    parser.add_argument('--split_mode', help='Whether to keep rxn_smi with multiple products: "single" or "multi"', type=str, default='multi')
+    parser.add_argument('--lines_to_skip', help='Number of lines to skip', type=int, default=1)
+    parser.add_argument('--keep_reag', help='Whether to keep reagents in output SMILES string', type=bool, default=False)
+    parser.add_argument('--keep_all_rcts', help="Whether to keep all rcts even if they don't contribute atoms to product", type=bool, default=False)
+    parser.add_argument('--remove_dup_rxns', help="Whether to remove duplicate rxn_smi", type=bool, default=True)
+    parser.add_argument('--remove_rct_mapping', help="Whether to remove atom map if atom in rct is not in product", type=bool, default=True)
+    parser.add_argument('--remove_all_mapping', help="Whether to remove all atom map", type=bool, default=True)
+    parser.add_argument('--save_idxs', help="Whether to save all bad indices to a file in same dir as clean_smi", type=bool, default=True)
+    parser.add_argument('--parallelize', help="Whether to parallelize computation across all available cpus", type=bool, default=True)
+
+    # args for get_uniq_mol_smis_all_splits: rxn_smi_file_prefix is same as clean_smi_pre, root is same as clean_smi_root
+    parser.add_argument('--mol_smi_filename', help="Filename of output pickle file of all unique mol smis", type=str, default='50k_mol_smis')  
+    parser.add_argument('--save_reags', help="Whether to save unique reagent SMILES strings as separate file", type=bool, default=True) 
+    
+    return parser.parse_args()
 
 def remove_mapping(rxn_smi: str, keep_reagents: bool = False) -> str:
     '''
@@ -434,26 +461,34 @@ def clean_rxn_smis_all_splits(input_file_prefix: str = 'schneider50k_raw',
 
 def get_uniq_mol_smis_all_splits(rxn_smi_file_prefix: str = '50k_clean_rxnsmi_noreagent',
                                  output_filename: str = '50k_mol_smis',
-                                 root: Optional[Union[str, bytes, os.PathLike]] = None):
-    '''
+                                 root: Optional[Union[str, bytes, os.PathLike]] = None,
+                                 save_reagents: Optional[bool] = False):
+    ''' 
+    Gathers all unique product & reactant molecules (by their SMILES strings)
+    from cleaned reaction SMILES files and saves them as a single, new .pickle file on disk
+
     Parameters
     ----------
     rxn_smi_file_prefix : str (Default = '50k_clean_rxnsmi_noreagent')
         file prefix of the cleaned reaction SMILES pickle file
         set by output_file_prefix param in clean_rxn_smis_all_splits()
     output_filename : str (Default = '50k_mol_smis')
-        filename of the output pickle file to contain the unique molecular SMILES
+        filename of the output .pickle file to contain the unique molecular SMILES of reactants & products
     root : Optional[Union[str, bytes, os.PathLike]] (Default = None)
         full path to the folder containing the cleaned rxn_smi_file & will contain the output file
         if None, we assume the original directory structure of rxn-ebm package, and set this to:
             path/to/rxnebm/data/cleaned_data
+    save_reagents : bool (Default = False)
+        whether to also save reagent SMILES strings
+        if True, saves them to a separate .pickle file named f'{output_filename}_reagents.pickle' 
+        in the same folder as the output .pickle file
 
     NOTE: does not collect reagents
     '''
     if root is None:
         root = Path(__file__).parents[2] / 'data' / 'cleaned_data'
     if Path(output_filename).suffix != '.pickle':
-        output_filename += '.pickle'
+        output_filename = str(output_filename) + '.pickle'
 
     # load cleaned_rxn_smis into a dictionary to be looped through
     cleaned_rxn_smis = {'train': None, 'valid': None, 'test': None}
@@ -461,10 +496,11 @@ def get_uniq_mol_smis_all_splits(rxn_smi_file_prefix: str = '50k_clean_rxnsmi_no
         with open(root / f'{rxn_smi_file_prefix}_{split}.pickle', 'rb') as handle:
             cleaned_rxn_smis[split] = pickle.load(handle)
 
-    uniq_mol_smis = set()
+    uniq_mol_smis, uniq_reag_smis = set(), set()
     # loop through all 3 splits, and collect all unique reactants & products
     # (not reagents!)
     for split in cleaned_rxn_smis:
+        print('Processing reactants and product...')
         for rxn_smi in tqdm(cleaned_rxn_smis[split]):
             rcts = rxn_smi.split('>')[0]
             prod = rxn_smi.split('>')[-1]
@@ -472,14 +508,49 @@ def get_uniq_mol_smis_all_splits(rxn_smi_file_prefix: str = '50k_clean_rxnsmi_no
             for mol_smi in rcts_prod_smis.split('.'):
                 uniq_mol_smis.add(mol_smi)
 
+        if save_reagents:
+            print('Processing reagents...')
+            for rxn_smi in tqdm(cleaned_rxn_smis[split]):
+                reags = rxn_smi.split('>')[1]
+                for mol_smi in reags.split('.'):
+                    uniq_reag_smis.add(mol_smi)
+
     with open(root / output_filename, 'wb') as handle:
         pickle.dump(
             list(uniq_mol_smis),
             handle,
             protocol=pickle.HIGHEST_PROTOCOL)
+    
+    if save_reagents:
+        with open(root / f'{Path(output_filename).stem}_reagents.pickle', 'wb') as handle:
+            pickle.dump(
+                list(uniq_reag_smis),
+                handle,
+                protocol=pickle.HIGHEST_PROTOCOL)
 
 
 if __name__ == '__main__': 
+    args = parse_args()
+    if args.clean_smi_root:
+        print(f'Making dir {args.clean_smi_root}')
+        os.makedirs(args.clean_smi_root, exist_ok=True)
+
+    # to clean USPTO_50k (GLN)
+    clean_rxn_smis_all_splits(
+        args.raw_smi_pre,
+        args.clean_smi_pre, # '50k_clean_rxnsmi_keepreagents_mapped_keepallrcts',
+        dataset_name=args.dataset_name, # dataset_name='50k',
+        lines_to_skip=args.lines_to_skip, # lines_to_skip=1,
+        keep_all_rcts=args.keep_all_rcts, # keep_all_rcts=False,
+        remove_dup_rxns=args.remove_dup_rxns, # remove_dup_rxns=False,
+        remove_rct_mapping=args.remove_rct_mapping, # remove_rct_mapping=False,
+        remove_all_mapping=args.remove_all_mapping) # remove_all_mapping=False)
+    # get_uniq_mol_smis_all_splits(rxn_smi_file_prefix=args.clean_smi_pre,
+    #                              root=args.clean_smi_root,
+    #                              output_filename=args.mol_smi_filename,
+    #                              save_reagents=args.save_reags)
+
+    # to clean USPTO_FULL (GLN)
     # clean_rxn_smis_all_splits(
     #     'USPTO_FULL_GLN',
     #     'USPTO_FULL_GLN_clean_rxnsmi_noreagent',
@@ -487,22 +558,6 @@ if __name__ == '__main__':
     #     lines_to_skip=1)
     # get_uniq_mol_smis_all_splits(rxn_smi_file_prefix='USPTO_FULL_GLN_clean_rxnsmi_noreagent',
     #                              output_filename='USPTO_FULL_mol_smis')
-
-    # to clean USPTO_50k
-    clean_rxn_smis_all_splits(
-        'schneider50k_raw',
-        '50k_clean_rxnsmi_keepreagents_mapped_keepallrcts',
-        dataset_name='50k',
-        lines_to_skip=1,
-        keep_all_rcts=True,
-        remove_dup_rxns=False,
-        remove_rct_mapping=False,
-        remove_all_mapping=False)
-    # get_uniq_mol_smis_all_splits(rxn_smi_file_prefix='50k_clean_rxnsmi_noreagent',
-    #                              output_filename='50k_mol_smis')
-
-
-
 
 
 # code from clean_uspto.py of GLN for splitting USPTO_FULL <AFTER> cleaning into 80/10/10
