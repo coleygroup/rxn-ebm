@@ -22,7 +22,6 @@ from typing import List, Optional, Union
 
 Mol = rdkit.Chem.rdchem.Mol
 
-
 def remove_mapping(rxn_smi: str, keep_reagents: bool = False) -> str:
     '''
     Removes all atom mapping from the reaction SMILES string
@@ -65,6 +64,7 @@ def move_reagents(
         reactants: List[Mol],
         original_reagents: List[str],
         keep_reagents: bool = False,
+        keep_all_rcts: bool = False,
         remove_rct_mapping: bool = True) -> str:
     '''
     Adapted func from Hanjun Dai's GLN - gln/data_process/clean_uspto.py --> get_rxn_smiles()
@@ -78,11 +78,15 @@ def move_reagents(
     reactants : List[Mol]
         list of reactant molecules
     original_reagents : List[str]
-        list of reagents in the original reaction, each element of list = 1 reagent
+        list of reagents in the original reaction (from 'rcts>reagents>prods'), each element of list = 1 reagent
     keep_reagents : bool (Default = True)
         whether to keep reagents in the output SMILES string
+    keep_all_rcts : bool (Default = False) 
+        whether to keep all reactants, regardless of whether they contribute any atoms to the product
+        NOTE: GLN removes non-contributing reactants in their clean_uspto.py's main() 
     remove_rct_mapping : bool (Default = True)
         whether to remove atom mapping if atom in reactant is not in product (i.e. leaving groups)
+        NOTE: GLN removes these atom mapping in their clean_uspto.py's get_rxn_smiles() 
 
     Returns
     -------
@@ -113,7 +117,9 @@ def move_reagents(
                 elif remove_rct_mapping:  # removes atom mapping if atom in reactant is not in product
                     a.ClearProp('molAtomMapNumber')
 
-        if used:
+        if keep_all_rcts: # retain all reactants regardless of their contribution to product atoms
+            reactants_smi_list.append(Chem.MolToSmiles(mol, True))
+        elif used:
             reactants_smi_list.append(Chem.MolToSmiles(mol, True))
         else:
             reagent_smi_list.append(Chem.MolToSmiles(mol, True))
@@ -130,7 +136,6 @@ def move_reagents(
 
     return '{}>{}>{}'.format(reactants_smi, reagents_smi, prod_smi)
 
-
 def clean_rxn_smis_from_csv(path_to_rxn_smis: Union[str,
                                                     bytes,
                                                     os.PathLike],
@@ -138,6 +143,7 @@ def clean_rxn_smis_from_csv(path_to_rxn_smis: Union[str,
                             dataset_name: str = '50k',
                             split_mode: str = 'multi',
                             keep_reagents: bool = False,
+                            keep_all_rcts: bool = False,
                             remove_rct_mapping: bool = True,
                             remove_all_mapping: bool = True):
     '''
@@ -170,8 +176,12 @@ def clean_rxn_smis_from_csv(path_to_rxn_smis: Union[str,
         Choose between 'single' and 'multi'
     keep_reagents : bool (Default = False)
         whether to keep reagents in the output SMILES
+    keep_all_rcts : bool (Default = False) 
+        whether to keep all reactants, regardless of whether they contribute any atoms to the product
+        NOTE: GLN removes non-contributing reactants in their clean_uspto.py's main() 
     remove_rct_mapping : bool (Default = True)
         whether to remove atom mapping if atom in reactant is not in product (i.e. leaving groups)
+        NOTE: GLN removes these atom mapping in their clean_uspto.py's get_rxn_smiles() 
     remove_all_mapping : bool (Default = True)
         whether to remove all atom mapping from the reaction SMILES,
         if True, remove_rct_mapping will be automatically set to True 
@@ -220,7 +230,7 @@ def clean_rxn_smis_from_csv(path_to_rxn_smis: Union[str,
             # skipped)
             header = next(reader)
 
-        for i, row in enumerate(tqdm(reader, total=total_lines)):
+        for i, row in enumerate(tqdm(reader, total=total_lines, file=sys.stdout)):
             if dataset_name == '50k':
                 rxn_smi = row[0].split(',')[2]  # second column of the csv file
                 all_rcts_smi, all_reag_smi, prods_smi = rxn_smi.split('>')
@@ -256,8 +266,7 @@ def clean_rxn_smis_from_csv(path_to_rxn_smis: Union[str,
                     bad_prod_idxs.append(i)
                     continue
 
-                # check if all have atom mapping, but for rxn-ebm, this is not
-                # important
+                # check if all atoms in product have atom mapping, but for rxn-ebm, this is not important
                 if not all([a.HasProp('molAtomMapNumber')
                             for a in mol_prod.GetAtoms()]):
                     missing_map += 1
@@ -265,21 +274,23 @@ def clean_rxn_smis_from_csv(path_to_rxn_smis: Union[str,
 
                 rxn_smi = move_reagents(
                     mol_prod,
-                    all_rcts_mol,
+                    all_rcts_mol, 
                     all_reag_smi,
                     keep_reagents,
-                    remove_rct_mapping)
+                    keep_all_rcts,
+                    remove_rct_mapping
+                    )
 
                 temp_rxn_smi = remove_mapping(
-                    rxn_smi, keep_reagents=keep_reagents)
+                                    rxn_smi, keep_reagents=keep_reagents)
                 if len(temp_rxn_smi.split('>')[-1]) < 3:  # check length of product SMILES string
                     too_small += 1  # e.g. 'Br', 'O', 'I'
                     too_small_idxs.append(i)
                     continue
                 if remove_all_mapping:
                     rxn_smi = temp_rxn_smi
-                clean_list.append(rxn_smi)
 
+                clean_list.append(rxn_smi)
                 if rxn_smi not in set_clean_list:
                     set_clean_list.add(rxn_smi)
                 else:
@@ -308,6 +319,7 @@ def clean_rxn_smis_all_splits(input_file_prefix: str = 'schneider50k_raw',
                               dataset_name: str = '50k',
                               lines_to_skip: int = 1,
                               keep_reagents: bool = False,
+                              keep_all_rcts: bool = False,
                               remove_dup_rxns: bool = True,
                               remove_rct_mapping: bool = True,
                               remove_all_mapping: bool = True,
@@ -344,10 +356,14 @@ def clean_rxn_smis_all_splits(input_file_prefix: str = 'schneider50k_raw',
         Unfortunately, this cannot be reliably extracted from some automatic algorithm, as every CSV file can be differently formatted
     keep_reagents : bool (Default = False)
         whether to keep reagents in the output SMILES string
+    keep_all_rcts : bool (Default = False) 
+        whether to keep all reactants, regardless of whether they contribute any atoms to the product
+        NOTE: GLN removes non-contributing reactants in their clean_uspto.py's main() 
     remove_dup_rxns : bool (Default = True)
         whether to remove duplicate rxn_smi
     remove_rct_mapping : bool (Default = True)
         whether to remove atom mapping if atom in reactant is not in product (i.e. leaving groups)
+        NOTE: GLN removes these atom mapping in their clean_uspto.py's get_rxn_smiles() 
     remove_all_mapping : bool (Default = True)
         whether to remove all atom mapping from the reaction SMILES,
         if True, remove_rct_mapping will be automatically set to True
@@ -387,10 +403,10 @@ def clean_rxn_smis_all_splits(input_file_prefix: str = 'schneider50k_raw',
                 dataset_name=dataset_name,
                 lines_to_skip=lines_to_skip,
                 keep_reagents=keep_reagents,
+                keep_all_rcts=keep_all_rcts,
                 remove_rct_mapping=remove_rct_mapping,
                 remove_all_mapping=remove_all_mapping)
-            if remove_dup_rxns:
-                # [1] is set_clean_list
+            if remove_dup_rxns: # [1] is set_clean_list
                 cleaned_rxn_smis[split] = future.result()[1]
             else:
                 cleaned_rxn_smis[split] = future.result()[0]
@@ -464,22 +480,29 @@ def get_uniq_mol_smis_all_splits(rxn_smi_file_prefix: str = '50k_clean_rxnsmi_no
 
 
 if __name__ == '__main__': 
-    clean_rxn_smis_all_splits(
-        'USPTO_FULL_GLN',
-        'USPTO_FULL_GLN_clean_rxnsmi_noreagent',
-        dataset_name='FULL',
-        lines_to_skip=1)
-    get_uniq_mol_smis_all_splits(rxn_smi_file_prefix='USPTO_FULL_GLN_clean_rxnsmi_noreagent',
-                                 output_filename='USPTO_FULL_mol_smis')
+    # clean_rxn_smis_all_splits(
+    #     'USPTO_FULL_GLN',
+    #     'USPTO_FULL_GLN_clean_rxnsmi_noreagent',
+    #     dataset_name='FULL',
+    #     lines_to_skip=1)
+    # get_uniq_mol_smis_all_splits(rxn_smi_file_prefix='USPTO_FULL_GLN_clean_rxnsmi_noreagent',
+    #                              output_filename='USPTO_FULL_mol_smis')
 
     # to clean USPTO_50k
-    # clean_rxn_smis_all_splits(
-    #     'schneider50k_raw',
-    #     '50k_clean_rxnsmi_noreagent',
-    #     dataset_name='50k',
-    #     lines_to_skip=1)
+    clean_rxn_smis_all_splits(
+        'schneider50k_raw',
+        '50k_clean_rxnsmi_keepreagents_mapped_keepallrcts',
+        dataset_name='50k',
+        lines_to_skip=1,
+        keep_all_rcts=True,
+        remove_dup_rxns=False,
+        remove_rct_mapping=False,
+        remove_all_mapping=False)
     # get_uniq_mol_smis_all_splits(rxn_smi_file_prefix='50k_clean_rxnsmi_noreagent',
-                                #  output_filename='50k_mol_smis')
+    #                              output_filename='50k_mol_smis')
+
+
+
 
 
 # code from clean_uspto.py of GLN for splitting USPTO_FULL <AFTER> cleaning into 80/10/10
