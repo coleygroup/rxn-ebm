@@ -247,8 +247,8 @@ def gen_raw_fps_from_file():
     files (or makes them, if they don't yet exist, like the lookup_dict, the mol_fp files)
     and then the user can call whatever functions they want (like gen_raw_fps or gen_diff_fps)
     The user will have to provide some parameters, like the filenames/paths, root path, 
-    the fp_type (count or bit, for now), fp_size, radius, dtype, output filename, whether to do
-    distributed processing
+    the fp_type (count or bit, for now), fp_size, radius, dtype, output filename, whether to 
+    parallelize / do distributed processing
     '''
     return
 
