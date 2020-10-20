@@ -10,11 +10,7 @@ from typing import List, Optional, Tuple, Union
 from pathlib import Path
 from abc import ABC, abstractmethod
 import sqlite3
-
-# using installed crem (default)
-# from crem.crem import mutate_mol
-# using crem_updated, with sqlite3 in-memory modification
-from crem_updated import crem 
+ 
 import rdkit
 from rdkit import Chem
 import nmslib
@@ -113,7 +109,7 @@ class MutateAugmentor(Augmentor):
                  num_neg: int,
                  lookup_dict: dict,
                  mol_fps: sparse_fp,
-                 path_to_mut_smis: Union[str, bytes, os.PathLike],
+                 mut_smis_filename: Union[str, bytes, os.PathLike],
                  root: Optional[Union[str, bytes, os.PathLike]] = None,
                  rxn_type: str = 'diff',
                  fp_type: str = 'count'):
@@ -128,9 +124,9 @@ class MutateAugmentor(Augmentor):
 
         if root is None:
             root = Path(__file__).parents[1] / 'data' / 'cleaned_data'
-        if Path(path_to_mut_smis).suffix != '.pickle':
-            path_to_mut_smis = str(path_to_mut_smis) + '.pickle'
-        with open(root / path_to_mut_smis, 'rb') as handle:
+        if Path(mut_smis_filename).suffix != '.pickle':
+            mut_smis_filename = str(mut_smis_filename) + '.pickle'
+        with open(root / mut_smis_filename, 'rb') as handle:
             self.mut_smis = pickle.load(handle)
 
     def get_one_sample(self, rxn_smi: str) -> List[sparse_fp]:
