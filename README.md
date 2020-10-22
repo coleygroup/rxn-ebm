@@ -6,14 +6,15 @@ Energy-based modeling of chemical reactions
     ├── trainEBM.py
     ├── experiment
     │    ├── expt.py
-    |    └── utils.py
+    |    └── expt_utils.py
     ├── model
     |    ├── base.py
     │    ├── FF.py
-    |    └── utils.py
+    |    └── model_utils.py
     ├── data
     |    ├── dataset.py
     |    ├── augmentors.py
+    |    ├── crem_mutate.py
     |    ├── analyse_results.py
     |    ├── preprocess
     |    |        ├── clean_smiles.py    
