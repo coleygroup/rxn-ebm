@@ -197,9 +197,9 @@ class AugmentedData:
         ''' prepares one sample, which is 1 pos_rxn + K neg_rxns
         where K is the sum of all of the num_neg for each active augmentation
         '''
-        rcts_fp, prod_fp = rcts_prod_fps_from_rxn_smi(
+        rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(
             rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps)
-        pos_rxn_fp = make_rxn_fp(rcts_fp, prod_fp, self.rxn_type)
+        pos_rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, self.rxn_type)
 
         neg_rxn_fps = []
         for aug in self.augs:

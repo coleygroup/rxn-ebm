@@ -10,14 +10,15 @@ from model import FF
 torch.backends.cudnn.benchmark = True
 
 def trainEBM():
-    expt_name = 'rdm_5_cos_5_bit_5_5_expt2'  # USER INPUT
-    precomp_file_prefix = '50k_rdm_5_cos_5_bit_5_5' # USER INPUT, expt.py will append f'_{dataset_name}.npz' to the end 
+    expt_name = 'rdm_5_cos_5_bit_5_5_1_expt2'  # USER INPUT
+    precomp_file_prefix = '50k_rdm_5_cos_5_bit_5_5_1' # USER INPUT, expt.py will append f'_{dataset_name}.npz' to the end 
     random_seed = 0 
 
     augmentations = { # USER INPUT
         'rdm': {'num_neg': 5},
         'cos': {'num_neg': 5},
-        'bit': {'num_neg': 5, 'num_bits': 5},
+        'bit': {'num_neg': 5, 'num_bits': 5, 'increment_bits': 1},
+        # 'mut': {'num_neg': 5}, 
     }
     ### PRECOMPUTE ###
     lookup_dict_filename = '50k_mol_smi_to_sparse_fp_idx.pickle'
