@@ -2,10 +2,11 @@
 the distribution of its scores for a given test/train dataset. 
 Examples include calculating Expected Calibration Error (ECE)"""
 
+from typing import Iterable, List, Optional, Tuple
+
 import numpy as np
 import torch
 
-from typing import List, Tuple, Iterable, Optional
 Tensor = torch.Tensor
 
 def make_probs_from_scores(raw_scores: Tensor) -> Tensor:

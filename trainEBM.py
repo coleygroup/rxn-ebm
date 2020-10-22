@@ -1,41 +1,47 @@
-from data import dataset
-from model import FF  
-from experiment import utils  
-from experiment import expt 
 from typing import Optional
+
 import torch
 import torch.nn as nn
+
+from data import dataset
+from experiment import expt, expt_utils
+from model import FF
+
 torch.backends.cudnn.benchmark = True
 
 def trainEBM():
-    expt_name = 'rdm_0_cos_0_bit_10_1_2'  # CHANGE THIS
-    # CHANGE THIS, expt.py will add f'_{dataset}.npz'
-    precomp_file_prefix = '50k_' + expt_name
+    expt_name = 'rdm_5_cos_5_bit_5_5_expt2'  # USER INPUT
+    precomp_file_prefix = '50k_rdm_5_cos_5_bit_5_5' # USER INPUT, expt.py will append f'_{dataset_name}.npz' to the end 
+    random_seed = 0 
 
-    augmentations = {
-        'rdm': {'num_neg': 0},
-        'cos': {'num_neg': 0},
-        'bit': {'num_neg': 10, 'num_bits': 1, 'increment_bits': 2}
+    augmentations = { # USER INPUT
+        'rdm': {'num_neg': 5},
+        'cos': {'num_neg': 5},
+        'bit': {'num_neg': 5, 'num_bits': 5},
     }
     ### PRECOMPUTE ###
     lookup_dict_filename = '50k_mol_smi_to_sparse_fp_idx.pickle'
     mol_fps_filename = '50k_count_mol_fps.npz'
     search_index_filename = '50k_cosine_count.bin'
+    # mut_smis_filename = '50k_neg150_rad2_maxsize3_mutprodsmis.pickle'
     augmented_data = dataset.AugmentedData(
         augmentations,
         lookup_dict_filename,
         mol_fps_filename,
         search_index_filename,
-        num_workers=8)
+        # mut_smis_filename, 
+        num_workers=8,
+        seed=random_seed)
 
     rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'
-    for dataset in ['train', 'valid', 'test']:
+    for dataset_name in ['train', 'valid', 'test']:
         augmented_data.precompute(
-            output_filename=precomp_file_prefix + f'_{dataset}.npz',
-            rxn_smis=rxn_smis_file_prefix + f'_{dataset}.pickle',
-            distributed=False, parallel=False)
+            output_filename=precomp_file_prefix + f'_{dataset_name}.npz',
+            rxn_smis=rxn_smis_file_prefix + f'_{dataset_name}.pickle',
+            distributed=False, 
+            parallel=False)
 
-    checkpoint_folder = utils.setup_paths('LOCAL')
+    checkpoint_folder = expt_utils.setup_paths('LOCAL')
     model_args = {
         'hidden_sizes': [1024, 128],
         'output_size': 1,
@@ -61,7 +67,7 @@ def trainEBM():
         'patience': 2,
         'num_workers': 0,  # 0 to 8
         'checkpoint': True,
-        'random_seed': 0,  # affects RandomAugmentor's sampling & DataLoader's sampling
+        'random_seed': random_seed,  # affects RandomAugmentor's sampling (if onthefly) & DataLoader's sampling
 
         'precomp_file_prefix': precomp_file_prefix,
         'checkpoint_folder': checkpoint_folder,
@@ -86,13 +92,13 @@ def trainEBM():
         distributed=False)
     experiment.train()
     experiment.test()
-    scores_test = experiment.get_topk_acc(dataset_name='test', k=1, repeats=1)
-    scores_train = experiment.get_topk_acc(dataset_name='train', k=1, repeats=1)
+    scores_test = experiment.get_topk_acc(dataset_name='test', k=1)
+    scores_train = experiment.get_topk_acc(dataset_name='train', k=1)
 
 
 def resumeEBM():
     expt_name = 'rdm_0_cos_0_bit_5_3'  # CHANGE THIS
-    # CHANGE THIS, expt.py will add f'_{dataset}.npz'
+    # CHANGE THIS, expt.py will add f'_{dataset_name}.npz'
     precomp_file_prefix = '50k_' + expt_name
 
     augmentations = {
@@ -104,17 +110,19 @@ def resumeEBM():
     lookup_dict_filename = '50k_mol_smi_to_sparse_fp_idx.pickle'
     mol_fps_filename = '50k_count_mol_fps.npz'
     search_index_filename = '50k_cosine_count.bin'
+    mut_smis_filename = '50k_neg150_rad2_maxsize3_mutprodsmis.pickle'
     augmented_data = dataset.AugmentedData(
         augmentations,
         lookup_dict_filename,
         mol_fps_filename,
-        search_index_filename)
+        search_index_filename, 
+        mut_smis_filename)
 
     rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'
-    for dataset in ['train', 'valid', 'test']:
+    for dataset_name in ['train', 'valid', 'test']:
         augmented_data.precompute(
-            output_filename=precomp_file_prefix + f'_{dataset}.npz',
-            rxn_smis=rxn_smis_file_prefix + f'_{dataset}.pickle')
+            output_filename=precomp_file_prefix + f'_{dataset_name}.npz',
+            rxn_smis=rxn_smis_file_prefix + f'_{dataset_name}.pickle')
 
     load_trained = True
     optimizer_name = 'Adam'
@@ -123,8 +131,8 @@ def resumeEBM():
     # f'{model_name}_{old_expt_name}_stats.pkl'
     saved_stats_filename = 'FeedforwardEBM_rdm_1_cos_1_bit_1_5_stats.pkl'
 
-    checkpoint_folder = utils.setup_paths('LOCAL', load_trained, date_trained)
-    saved_model, saved_optimizer, saved_stats = utils.load_model_opt_and_stats(
+    checkpoint_folder = expt_utils.setup_paths('LOCAL', load_trained, date_trained)
+    saved_model, saved_optimizer, saved_stats = expt_utils.load_model_opt_and_stats(
                                                     saved_stats_filename, 
                                                     checkpoint_folder, 
                                                     model_name, 
@@ -170,4 +178,4 @@ if __name__ == '__main__':
     trainEBM()
     # resumeEBM()
 
-    # TODO: parse arguments from terminal
+    # TODO: parse arguments from command-line

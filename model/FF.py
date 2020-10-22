@@ -1,11 +1,11 @@
-import torch
-import torch.nn as nn
 from typing import List, Optional
 
-from model.utils import get_activation_function, initialize_weights
+import torch
+import torch.nn as nn
+
+from model import model_utils
 
 Tensor = torch.Tensor
-
 
 class FeedforwardFingerprint(nn.Module):
     '''
@@ -43,7 +43,7 @@ class FeedforwardFingerprint(nn.Module):
 
         num_layers = len(hidden_sizes) + 1
         dropout = nn.Dropout(dropout)
-        activation = get_activation_function(activation)
+        activation = model_utils.get_activation_function(activation)
         self.build(
             dropout,
             activation,
@@ -51,7 +51,7 @@ class FeedforwardFingerprint(nn.Module):
             input_dim,
             output_size,
             num_layers)
-        initialize_weights(self)
+        model_utils.initialize_weights(self)
 
     def __repr__(self):
         return 'FeedforwardEBM'  # needed by experiment.py for saving model details

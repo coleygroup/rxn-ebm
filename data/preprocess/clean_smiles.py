@@ -4,22 +4,21 @@ a function to generate a list of SMILES strings of all unique molecules in the g
 in rxn-ebm, a 'dataset' refers to the combination of 'train', 'valid', and 'test', (which are each called a 'split')
 e.g. USPTO_50k is a dataset.
 '''
-import argparse 
-import sys
+import argparse
+import csv
 import os
+import pickle
+import re
+import sys
 from concurrent.futures import ProcessPoolExecutor as Pool
+from pathlib import Path
+from typing import List, Optional, Union
 
+import numpy as np
 import rdkit
 from rdkit import Chem
 from rdkit.Chem import rdChemReactions
-
-import numpy as np
 from tqdm import tqdm
-import csv
-import re
-import pickle
-from pathlib import Path
-from typing import List, Optional, Union
 
 Mol = rdkit.Chem.rdchem.Mol
 
@@ -535,7 +534,7 @@ if __name__ == '__main__':
         print(f'Making dir {args.clean_smi_root}')
         os.makedirs(args.clean_smi_root, exist_ok=True)
 
-    # to clean USPTO_50k (GLN)
+    # TODO: add all arguments 
     clean_rxn_smis_all_splits(
         args.raw_smi_pre,
         args.clean_smi_pre, # '50k_clean_rxnsmi_keepreagents_mapped_keepallrcts',

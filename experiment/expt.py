@@ -1,24 +1,25 @@
-from data.dataset import ReactionDataset, AugmentedData
-from experiment.utils import _worker_init_fn_nmslib_, _worker_init_fn_default_
-from model.utils import save_checkpoint, seed_everything
+import os
+import random
+import time
+from collections import defaultdict
+from pathlib import Path
+from typing import Optional, Union
+
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-
-import os
-import numpy as np
 from tqdm import tqdm
-import time
-import random
-from typing import Optional, Union
-from pathlib import Path
-from collections import defaultdict
+
+from data import dataset
+from experiment import expt_utils
+from model import model_utils
 
 Tensor = torch.Tensor
 
 '''
 NOTE: the way python's imports work, is that I cannot run scripts on their own from that directory
-(e.g. I cannot do python FF.py because FF.py imports functions from model.utils, and at the time of
+(e.g. I cannot do python FF.py because FF.py imports functions from model.model_utils, and at the time of
 executing FF.py, python has no knowledge of this package level information (i.e. __package__ is None))
 therefore, I have to run/import all these files/functions from a script in the main directory,
 i.e. same folder as trainEBM.py by doing: from model.FF import *; from experiment.expt import * etc
@@ -138,7 +139,7 @@ class Experiment():
             lookup_dict_filename,
             mol_fps_filename,
             search_index_filename)
-        seed_everything(random_seed)
+        model_utils.seed_everything(random_seed)
 
     def __repr__(self):
         return 'Experiment with: ' + self.augmentations
@@ -241,34 +242,32 @@ class Experiment():
         print('Initialising dataloaders...')
         if self.num_workers > 0:
             if 'cos' in self.augmentations.keys() or 'cosine' in self.augmentations.keys():
-                worker_init_fn = _worker_init_fn_nmslib_
+                worker_init_fn = expt_utils._worker_init_fn_nmslib_
             else:
-                worker_init_fn = _worker_init_fn_default_
+                worker_init_fn = expt_utils._worker_init_fn_default_
         else:  # i.e. num_workers == 0
             worker_init_fn = None
 
         rxn_smis_filenames = defaultdict(str)
         precomp_filenames = defaultdict(str)
         if onthefly:
-            augmented_data = AugmentedData(
+            augmented_data = dataset.AugmentedData(
                 self.augmentations,
                 lookup_dict_filename,
                 mol_fps_filename,
                 search_index_filename)
-            for dataset in [
+            for dataset_name in [
                 'train',
                 'valid',
-                    'test']:  # rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'
-                rxn_smis_filenames[dataset] = rxn_smis_file_prefix + \
-                    f'_{dataset}.pickle'
+                'test']:  # rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'
+                rxn_smis_filenames[dataset_name] = rxn_smis_file_prefix + f'_{dataset_name}.pickle'
         else:
             augmented_data = None
-            for dataset in [
+            for dataset_name in [
                 'train',
                 'valid',
-                    'test']:  # precomp_file_prefix = '50k_count_rdm_5'
-                precomp_filenames[dataset] = precomp_file_prefix + \
-                    f'_{dataset}.npz'
+                'test']:  # precomp_file_prefix = '50k_count_rdm_5'
+                precomp_filenames[dataset_name] = precomp_file_prefix + f'_{dataset_name}.npz'
 
         if self.rxn_type == 'sep':
             input_dim = self.rctfp_size + self.prodfp_size
@@ -276,7 +275,7 @@ class Experiment():
             input_dim = self.rctfp_size
 
         pin_memory = True if torch.cuda.is_available() else False
-        train_dataset = ReactionDataset(
+        train_dataset = dataset.ReactionDataset(
             input_dim,
             precomp_filenames['train'],
             rxn_smis_filenames['train'],
@@ -288,7 +287,7 @@ class Experiment():
             shuffle=True, pin_memory=pin_memory)
         self.train_size = len(train_dataset)
 
-        val_dataset = ReactionDataset(
+        val_dataset = dataset.ReactionDataset(
             input_dim,
             precomp_filenames['valid'],
             rxn_smis_filenames['valid'],
@@ -300,7 +299,7 @@ class Experiment():
             shuffle=False, pin_memory=pin_memory)
         self.val_size = len(val_dataset)
 
-        test_dataset = ReactionDataset(
+        test_dataset = dataset.ReactionDataset(
             input_dim,
             precomp_filenames['test'],
             rxn_smis_filenames['test'],
@@ -373,6 +372,8 @@ class Experiment():
         for p in self.model.parameters():
             p.grad = None  # faster, equivalent to self.model.zero_grad()
         scores = self.model(batch)  # size N x K
+
+        scores[torch.isnan(scores)] = float('inf') # to account for NaN values due to NaN input from CReM's insufficient num_neg 
 
         # positives are the 0-th index of each sample
         loss = (scores[:, 0] + torch.logsumexp(-scores, dim=1)).sum()
@@ -464,8 +465,7 @@ class Experiment():
     def get_scores_and_loss(self,
                             dataset_name: Optional[str] = 'test',
                             dataloader: Optional[torch.utils.data.DataLoader] = None,
-                            dataset_len: Optional[int] = None,
-                            show_neg: Optional[bool] = False) -> Tensor:
+                            dataset_len: Optional[int] = None) -> Tensor:
         '''
         Gets raw energy values (scores) from a trained model on a given dataloader,
         with the option to save pos_neg_smis to analyse model performance
@@ -506,24 +506,12 @@ class Experiment():
         self.model.eval()
         scores = []
         with torch.no_grad():
-            if show_neg:  # save neg rxn_smis to analyse model performance
-                print('Showing negative examples is not functional now! Sorry!')
-                return
-#                 pos_neg_smis = []
-#                 for pos_neg_smi, batch in tqdm(dataloader):
-#                     batch = batch.to(self.device)
-#                     scores.append(self.model(batch).cpu()) # scores: size N x K
-#                     pos_neg_smis.append(pos_neg_smi)
-#                     del batch
-
-#                 torch.save(pos_neg_smis, self.trainargs['checkpoint_path']+'{}_{}_posnegsmi.pkl'.format(
-# self.trainargs['model'], self.trainargs['expt_name']))
-            else:
-                for batch in tqdm(dataloader):
-                    batch = batch.to(self.device)
-                    scores.append(self.model(batch).cpu())
+            for batch in tqdm(dataloader):
+                batch = batch.to(self.device)
+                scores.append(self.model(batch).cpu())
 
             scores = torch.cat(scores, dim=0).squeeze(dim=-1)
+            scores[torch.isnan(scores)] = float('inf') # to account for NaN values due to NaN input from CReM's insufficient num_neg 
             loss = (scores[:, 0] + torch.logsumexp(-1 * scores, dim=1)).sum()
             if dataset_len is not None:  # means using a custom dataset other than train/valid/test
                 loss /= dataset_len
@@ -534,16 +522,10 @@ class Experiment():
             elif dataset_name == 'val':
                 loss /= self.val_size
             print(f'Loss on {dataset_name} : {loss.item():.6f}')
-#             if show_neg:
-#                 return scores, pos_neg_smis
-#             else:
             return scores, loss
-            # output shape N x K: where N = # positive rxns in dataset;
-            # K = 1 + # negative rxns per positive rxn
 
     def get_topk_acc(self,
                      dataset_name: Optional[str] = 'test',
-                     save_train: Optional[bool] = True,
                      dataloader: Optional[torch.utils.data.DataLoader] = None,
                      dataset_len: Optional[int] = None,
                      k: Optional[int] = 1,
@@ -561,8 +543,6 @@ class Experiment():
 
         Parameters
         ----------
-        save_train : Optional[bool] (Default = True)
-            whether to save train acc & loss without dropout into stats dictionary
         save_scores: bool (Default = True)
             whether to save the generated scores tensor
         name_scores: Union[str, bytes, os.PathLike] (Default = None)
@@ -577,8 +557,7 @@ class Experiment():
         Also see: self.get_scores_and_loss()
         '''
         accs = np.array([])
-        for repeat in range(repeats):
-            print('Running repeat: ', repeat)
+        for repeat in range(repeats): 
             scores, loss = self.get_scores_and_loss(
                 dataset_name=dataset_name, dataloader=dataloader, dataset_len=dataset_len)
             pred_labels = torch.topk(scores, k, dim=1, largest=False)[1]
@@ -592,7 +571,8 @@ class Experiment():
         if save_scores:
             print('Saving scores at: ', Path(path_scores / name_scores))
             torch.save(scores, Path(path_scores / name_scores))
-        if dataset_name == 'train' and save_train:
+
+        if dataset_name == 'train':
             self.stats['train_loss_nodropout'] = loss
             self.stats['train_acc_nodropout'] = accs
             torch.save(self.stats, self.stats_filename)

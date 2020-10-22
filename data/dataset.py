@@ -1,20 +1,22 @@
+import os
+import pickle
+from concurrent.futures import ProcessPoolExecutor as Pool
+from pathlib import Path
+from typing import List, Optional, Union
+
+import nmslib
+import numpy as np
+import scipy
 import torch
 import torch.tensor as tensor
-from torch.utils.data import Dataset
-
-import os
-from pathlib import Path
-import pickle
-import scipy
 from scipy import sparse
-import numpy as np
-import nmslib
+from torch.utils.data import Dataset
 from tqdm import tqdm
-from typing import Optional, Union
-from concurrent.futures import ProcessPoolExecutor as Pool
 
-from data.augmentors import *
+from data import augmentors
+from model import model_utils
 
+sparse_fp = scipy.sparse.csr_matrix
 
 class AugmentedData:
     '''
@@ -55,11 +57,15 @@ class AugmentedData:
         the type of the fingerprints being supplied
         currently supports 'count' & 'bit' fingerprints
     root : str (Default = None)
-        full path to the folder containing all the necessary files, which includes
-        lookup_dict, sparse mol_fps, search_index.
+        full path to the folder containing all the cleaned, input data files, which includes
+        lookup_dict, sparse mol_fps, search_index, mut_prod_smis 
         If not provided, aka None, it defaults to full/path/to/rxn-ebm/data/cleaned_data/
     num_workers : int (Default = 0)
         how many workers to parallelize the PyTorch dataloader over
+        has implications on whether search_index is loaded immediately or loaded from _worker_init_fn_nmslib_ 
+    seed : int (Default = 0)
+        random seed to use. affects augmentations which do random selection e.g. Random sampling, Bit corruption, 
+        and CReM (in sampling the required number of mutated product SMILES from the pool of all available mutated SMILES)
     '''
 
     def __init__(
@@ -67,16 +73,24 @@ class AugmentedData:
             augmentations: dict,
             lookup_dict_filename: str,
             mol_fps_filename: str,
-            search_index_filename: str,
+            search_index_filename: Optional[str] = None,
+            mut_smis_filename: Optional[str] = None,
             rxn_type: Optional[str] = 'diff',
             fp_type: Optional[str] = 'count',
+            fp_size: Optional[int] = 4096, 
+            radius: Optional[int] = 3, 
+            dtype: Optional[str] = 'int16',
             root: Optional[str] = None,
             num_workers: Optional[int] = 0,
+            seed: Optional[int] = 0,
             **kwargs):
+        model_utils.seed_everything(seed)
+
         self.lookup_dict_filename = lookup_dict_filename
         self.mol_fps_filename = mol_fps_filename
         self.search_index_filename = search_index_filename
-        if root is None:  # set root = rxn-ebm/
+        self.mut_smis_filename = mut_smis_filename
+        if root is None:  # set root = path/to/rxn-ebm/
             root = Path(__file__).parents[1] / 'data' / 'cleaned_data'
         self.root = root
         with open(self.root / self.lookup_dict_filename, 'rb') as handle:
@@ -86,20 +100,27 @@ class AugmentedData:
         self.rxn_smis = None
         self.fp_type = fp_type
         self.rxn_type = rxn_type
+        self.fp_size = fp_size
+        self.dtype = dtype
+        self.radius = radius
         self.num_workers = num_workers
 
         self.augs = []  # list of callables: Augmentor.get_one_sample
         for key, value in augmentations.items():
-            if key == 'cosine' or key == 'cos':
+            if value['num_neg'] == 0:
+                continue 
+            elif key == 'cosine' or key == 'cos' or key == 'neighbor':
                 self._init_cosine(**value)
             elif key == 'random' or key == 'rdm':
                 self._init_random(**value)
-            elif key == 'bit' or key == 'bits':
+            elif key == 'bit' or key == 'bits' or key == 'fingerprint':
                 self._init_bit(**value)
+            elif key == 'mutate' or key == 'mut' or key == 'crem':
+                self._init_mutate(**value)
 
     def _init_cosine(self, num_neg: int, query_params: Optional[dict] = None):
         # NOTE: nmslib only accepts str for its filename, not Path objects
-        print('Initialising CosineAugmentor...')
+        print('Initialising Cosine Augmentor...')
         search_index = None
         if self.num_workers == 0:  # else, load it from _init_worker_fn_nmslib_
             search_index = nmslib.init(
@@ -112,7 +133,8 @@ class AugmentedData:
                 search_index.setQueryTimeParams(query_params)
             else:  # default efSearch = 100
                 search_index.setQueryTimeParams({'efSearch': 100})
-        self.cosaugmentor = CosineAugmentor(
+
+        self.cosaugmentor = augmentors.Cosine(
             num_neg,
             self.lookup_dict,
             self.mol_fps,
@@ -122,8 +144,8 @@ class AugmentedData:
         self.augs.append(self.cosaugmentor.get_one_sample)
 
     def _init_random(self, num_neg: int):
-        print('Initialising RandomAugmentor...')
-        self.rdmaugmentor = RandomAugmentor(
+        print('Initialising Random Augmentor...')
+        self.rdmaugmentor = augmentors.Random(
             num_neg,
             self.lookup_dict,
             self.mol_fps,
@@ -137,8 +159,8 @@ class AugmentedData:
             num_bits: int,
             strategy: Optional[str] = None,
             increment_bits: Optional[int] = 1):
-        print('Initialising BitAugmentor...')
-        self.bitaugmentor = BitAugmentor(
+        print('Initialising Bit Augmentor...')
+        self.bitaugmentor = augmentors.Bit(
             num_neg,
             num_bits,
             increment_bits,
@@ -151,6 +173,25 @@ class AugmentedData:
             self.augs.append(self.bitaugmentor.get_one_sample_count)
         elif self.fp_type == 'bit':
             self.augs.append(self.bitaugmentor.get_one_sample_bit)
+    
+    def _init_mutate(self, num_neg: int):
+        print('Initialising Mutate Augmentor...')
+        if Path(self.mut_smis_filename).suffix != '.pickle':
+            self.mut_smis_filename = str(self.mut_smis_filename) + '.pickle'
+        with open(self.root / self.mut_smis_filename, 'rb') as handle:
+            mut_smis = pickle.load(handle)
+
+        self.mutaugmentor = augmentors.Mutate(
+            num_neg, 
+            self.lookup_dict,
+            self.mol_fps,
+            mut_smis,  
+            self.rxn_type,
+            self.fp_type,
+            self.radius,
+            self.fp_size,
+            self.dtype)
+        self.augs.append(self.mutaugmentor.get_one_sample)
 
     def get_one_sample(self, rxn_smi: str) -> sparse_fp:
         ''' prepares one sample, which is 1 pos_rxn + K neg_rxns
@@ -174,18 +215,18 @@ class AugmentedData:
         return self.get_one_sample(self.rxn_smis[idx])
 
     def precompute_helper(self, query_params: Optional[dict] = None):
-        if self.cosaugmentor.search_index is None:
-            self.cosaugmentor.search_index = nmslib.init(
-                method='hnsw',
-                space='cosinesimil_sparse',
-                data_type=nmslib.DataType.SPARSE_VECTOR)
-            self.cosaugmentor.search_index.loadIndex(
-                str(self.root / self.search_index_filename), load_data=True)
-            if query_params:
-                self.cosaugmentor.search_index.setQueryTimeParams(query_params)
-            else:
-                self.cosaugmentor.search_index.setQueryTimeParams(
-                    {'efSearch': 100})
+        if hasattr(self, 'cosaugmentor'):
+            if self.cosaugmentor.search_index is None:
+                self.cosaugmentor.search_index = nmslib.init(
+                    method='hnsw',
+                    space='cosinesimil_sparse',
+                    data_type=nmslib.DataType.SPARSE_VECTOR)
+                self.cosaugmentor.search_index.loadIndex(
+                    str(self.root / self.search_index_filename), load_data=True)
+                if query_params:
+                    self.cosaugmentor.search_index.setQueryTimeParams(query_params)
+                else:
+                    self.cosaugmentor.search_index.setQueryTimeParams({'efSearch': 100})
 
         out = []
         for i in tqdm(range(len(self.rxn_smis))):
@@ -232,7 +273,8 @@ class AugmentedData:
             future = client.submit(self.precompute_helper, query_params)
             diff_fps = future.result()
 
-        diff_fps = sparse.vstack(diff_fps)
+        diff_fps = sparse.vstack(diff_fps) # COO format
+        diff_fps = diff_fps.tocsr() 
         sparse.save_npz(self.root / output_filename, diff_fps)
         return
 
@@ -299,8 +341,8 @@ class ReactionDataset(Dataset):
             root = Path(__file__).parents[1] / 'data' / 'cleaned_data'
         if (root / precomp_rxnfp_filename).exists():
             print('Loading pre-computed reaction fingerprints...')
-            self.data = sparse.load_npz(root / precomp_rxnfp_filename)
-            self.data = self.data.tocsr()
+            self.data = sparse.load_npz(root / precomp_rxnfp_filename) 
+            self.data = self.data.tocsr() 
         elif self.onthefly:
             print('Generating augmentations on the fly...')
             self.data = augmented_data
@@ -327,7 +369,8 @@ if __name__ == '__main__':
     augmentations = {
         'rdm': {'num_neg': 2},
         'cos': {'num_neg': 2},
-        'bit': {'num_neg': 2, 'num_bits': 3}
+        'bit': {'num_neg': 2, 'num_bits': 3},
+        'mut': {'num_neg': 10},
     }
     lookup_dict_filename = '50k_mol_smi_to_count_fp.pickle'
     mol_fps_filename = '50k_count_mol_fps.npz'

@@ -1,9 +1,10 @@
+from collections import ABC
+from typing import List, Optional
+
 import torch
 import torch.nn as nn
-from typing import List, Optional
-from collections import ABC
 
-from model.utils import get_activation_function, initialize_weights
+from model import model_utils
 
 Tensor = torch.Tensor
 
@@ -33,7 +34,7 @@ class Feedforward(nn.Module):
 
         num_layers = len(hidden_sizes) + 1
         dropout = nn.Dropout(dropout)
-        activation = get_activation_function(activation)
+        activation = model_utils.get_activation_function(activation)
         self.build(
             dropout,
             activation,
@@ -41,7 +42,7 @@ class Feedforward(nn.Module):
             input_dim,
             output_size,
             num_layers)
-        initialize_weights(self)
+        model_utils.initialize_weights(self)
 
     def __repr__(self):
         return 'NN'  # needed by experiment.py for saving model details

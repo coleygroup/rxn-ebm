@@ -3,23 +3,24 @@ into molecular fingerprints and reaction fingerprints, which are then used as in
 energy-based models, as well as to prepare negative reaction examples
 '''
 
-import rdkit
-from rdkit import Chem
-from rdkit.Chem import AllChem
-from rdkit import DataStructs
-from rdkit.Chem.rdFingerprintGenerator import GetRDKitFPGenerator, GetMorganGenerator
-
-import scipy 
-from scipy import sparse
-import numpy as np
-
 import os
-import time
-from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor as Pool
 import pickle
-from tqdm import tqdm
+import time
+from concurrent.futures import ProcessPoolExecutor as Pool
+from pathlib import Path
 from typing import List, Optional, Tuple, Union
+
+import numpy as np
+import rdkit
+import scipy
+from rdkit import Chem, DataStructs
+from rdkit.Chem import AllChem
+from rdkit.Chem.rdFingerprintGenerator import (GetMorganGenerator,
+                                               GetRDKitFPGenerator)
+from scipy import sparse
+from tqdm import tqdm
+
+sparse_fp = scipy.sparse.csr_matrix
 
 def gen_lookup_dict_from_file(mol_smis_filename: Union[str, bytes, os.PathLike]='50k_mol_smis.pickle', 
                         output_filename: Union[str, bytes, os.PathLike]='50k_mol_smi_to_sparse_fp_idx.pickle', 
@@ -68,7 +69,7 @@ def mol_smi_to_count_fp(mol_smi: str, radius: int = 3, fp_size: int = 4096,
     uint_count_fp = fp_gen.GetCountFingerprint(mol)
     count_fp = np.empty((1, fp_size), dtype=dtype)
     DataStructs.ConvertToNumpyArray(uint_count_fp, count_fp)
-    return count_fp
+    return sparse.csr_matrix(count_fp, dtype=dtype)
 
 # def mol_smi_to_count_fp(mol_smi: str, radius: int = 3, fp_size: int = 4096, 
 #                         dtype: str = 'int16') -> scipy.sparse.csr_matrix :
@@ -82,7 +83,9 @@ def mol_smi_to_count_fp(mol_smi: str, radius: int = 3, fp_size: int = 4096,
 def gen_count_mol_fps_from_file(mol_smis_filename: Union[str, bytes, os.PathLike] = '50k_mol_smis.pickle', 
                             output_filename: Union[str, bytes, os.PathLike] = '50k_count_mol_fps.npz', 
                             radius: int = 3, fp_size: int = 4096, dtype: str = 'int16',
-                            root: Optional[Union[str, bytes, os.PathLike]] = None) -> Tuple[Path, Path]:
+                            root: Optional[Union[str, bytes, os.PathLike]] = None
+                            ) -> Tuple[Union[str, bytes, os.PathLike], 
+                                       Union[str, bytes, os.PathLike]]:
     ''' TODO: add docstring
     '''
     if root is None:  
@@ -95,22 +98,22 @@ def gen_count_mol_fps_from_file(mol_smis_filename: Union[str, bytes, os.PathLike
         print(f'At: {root / output_filename}')
         print('The count_mol_fp file already exists!') 
     if Path(mol_smis_filename).suffix != '.pickle': 
-        mol_smis_filename += '.pickle'
+        mol_smis_filename = str(mol_smis_filename) + '.pickle'
     with open(root / mol_smis_filename, 'rb') as handle:
         mol_smis = pickle.load(handle)
 
     count_mol_fps, bad_idx = [], []
     for i, mol_smi in enumerate(tqdm(mol_smis, total=len(mol_smis))):
         cand_mol_fp = mol_smi_to_count_fp(mol_smi, radius, fp_size, dtype)
-        if sum(cand_mol_fp) == 0: # candidate mol_fp is all 0's 
+        if cand_mol_fp.nnz == 0:  
             bad_idx.append(i)
-            continue # don't add, and keep track of index (or replace with our favorite imputation, like adding +1 at 0'th index)
+            continue # don't add, and keep track of index (or impute, like adding +1 at 0'th index)
         else: # sparsify then append to list
-            count_mol_fps.append(sparse.csr_matrix(cand_mol_fp, dtype=dtype))
+            count_mol_fps.append(cand_mol_fp)
 
     bad_smis = []
     if bad_idx: # to catch small molecules like 'O', 'Cl', 'N' that give count vector of all 0 values
-        count_mol_fps.append(sparse.csr_matrix((1, fp_size), dtype=dtype))
+        count_mol_fps.append(sparse.csr_matrix((1, fp_size), dtype=dtype)) # add empty sparse vector at the end as dummy vector
         idx_offset = 0 # offset is needed as the indices will dynamically change after popping each bad_smi
         for idx in bad_idx:
             bad_smis.append(mol_smis[idx - idx_offset])
@@ -130,18 +133,19 @@ def gen_count_mol_fps_from_file(mol_smis_filename: Union[str, bytes, os.PathLike
     sparse.save_npz(root / output_filename, count_mol_fps)
 
 def mol_smi_to_bit_fp(mol_smi: str, radius: int = 3, fp_size: int = 4096, 
-                     dtype: str = 'int8') -> scipy.sparse.csr_matrix :
+                     dtype: str = 'int8') -> sparse_fp:
     mol = Chem.MolFromSmiles(mol_smi)
     bitvect_fp = AllChem.GetMorganFingerprintAsBitVect( 
                         mol=mol, radius=radius, nBits=fp_size, useChirality=True)
     bit_fp = np.empty((1, fp_size), dtype=dtype)
     DataStructs.ConvertToNumpyArray(bitvect_fp, bit_fp)
-    return bit_fp
+    return sparse.csr_matrix(bit_fp, dtype=dtype)
 
 def gen_bit_mol_fps_from_file(mol_smis_filename: Union[str, bytes, os.PathLike], 
                             output_filename: Union[str, bytes, os.PathLike], 
                             radius: int = 3, fp_size: int = 4096, dtype: str = 'int8',
-                            root: Optional[Union[str, bytes, os.PathLike]] = None) -> Path:
+                            root: Optional[Union[str, bytes, os.PathLike]] = None
+                            ) -> Union[str, bytes, os.PathLike]:
     '''
     Returns
     -------
@@ -165,7 +169,7 @@ def gen_bit_mol_fps_from_file(mol_smis_filename: Union[str, bytes, os.PathLike],
     bit_mol_fps = [] 
     for mol_smi in tqdm(mol_smis, total=len(mol_smis)):
         bit_fp = mol_smi_to_bit_fp(mol_smi, radius, fp_size, dtype)
-        bit_mol_fps.append(sparse.csr_matrix(bit_fp, dtype=dtype))
+        bit_mol_fps.append(bit_fp)
     bit_mol_fps = sparse.vstack(bit_mol_fps)
     sparse.save_npz(root / output_filename, bit_mol_fps)
     return root / output_filename
@@ -223,7 +227,7 @@ def rxn_smi_to_raw_fp(rxn_smi: str, lookup_dict, dict,
     return raw_fp, len(rcts_smi)
 
 def list_rxn_smis_to_raw_fps(rxn_smis_dataset: List[str], lookup_dict: dict,
-                             sparse_mol_fps: scipy.sparse.csr_matrix, max_rcts: int) -> scipy.sparse.csr_matrix:
+                             sparse_mol_fps: scipy.sparse.csr_matrix, max_rcts: int) -> scipy.sparse.csr_matrix :
     '''
     Iterates through a list of reaction SMILES strings and uses rxn_smi_to_raw_fp to 
     convert them into a tuple: (sparse matrix of raw molecular fingerprints, list of the number of reactants in each reaction)
@@ -253,7 +257,7 @@ def gen_raw_fps_from_file():
     return
 
 def rxn_smi_to_diff_fp(rxn_smi: str, lookup_dict: dict, 
-                      sparse_mol_fps: scipy.sparse.csr_matrix, fp_type: str = 'count') -> scipy.sparse.csr_matrix:
+                      sparse_mol_fps: scipy.sparse.csr_matrix, fp_type: str = 'count') -> sparse_fp:
     '''
     Given a reaction SMILES string, splits it into reactants and product, and then
     uses the lookup dict to access the correct row of the sparse molecular fp matrix, 
@@ -320,7 +324,7 @@ def rxn_smi_to_diff_fp(rxn_smi: str, lookup_dict: dict,
     return diff_fp
 
 def list_rxn_smis_to_diff_fps(rxn_smis_dataset: List[str], lookup_dict: dict,
-                             sparse_mol_fps: scipy.sparse.csr_matrix) -> scipy.sparse.csr_matrix:
+                             sparse_mol_fps: scipy.sparse.csr_matrix) -> scipy.sparse.csr_matrix :
     ''' 
     Iterates through given list of reaction SMILES strings and uses rxn_smi_to_diff_fp to 
     generate difference fingerprints, given the lookup dict to access the corresponding sparse molecular fingerprints
@@ -356,7 +360,7 @@ def gen_diff_fps_from_file(rxn_smi_file_prefix: str='50k_clean_rxnsmi_noreagent'
                         lookup_dict_filename: Union[str, bytes, os.PathLike]='50k_mol_smi_to_sparse_fp_idx.pickle', 
                         sparse_mol_fps_filename: Union[str, bytes, os.PathLike]='50k_count_mol_fps.npz', 
                         output_matrix_file_prefix: str='50k_count_diff_fps', 
-                        root: Optional[Union[str, bytes, os.PathLike]] = None, distributed: bool = False):
+                        root: Optional[Union[str, bytes, os.PathLike]] = None, distributed: bool = False) -> None:
     '''
     Generates difference fingerprints from reaction SMILES .pickle files for a whole dataset
     (train, valid and test) after also loading the corresponding lookup dict and sparse molecular fingerprint matrix

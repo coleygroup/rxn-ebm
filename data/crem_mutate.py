@@ -2,17 +2,19 @@ try:
     from crem_updated import crem
 except ImportError:
     from crem import crem
-    
+
+import os
+import pickle
+import sqlite3
+from pathlib import Path
+from typing import List, Optional, Union
+
 from rdkit import Chem
 from rdkit.Chem.rdmolfiles import SmilesWriter
-from typing import Union, Optional, List
 from tqdm import tqdm
-import os
-import sqlite3
-import pickle
-from pathlib import Path
 
-def mol_smi_from_pickle(input_pickle_filename: str = '50k_mol_smis',
+
+def mol_smi_from_mol_pickle(input_pickle_filename: str = '50k_mol_smis',
                         output_smi_filename: str = '50k_mol_smis',
                         root: Optional[Union[str, bytes, os.PathLike]] = None):
     if root is None:
@@ -27,16 +29,16 @@ def mol_smi_from_pickle(input_pickle_filename: str = '50k_mol_smis',
             writer.write(mol)
  
 def gen_crem_negs(num_neg: int,
-                    max_size: int,
-                    radius: int,
-                    frag_db: Union[str, bytes, os.PathLike,
-                                    sqlite3.Cursor, sqlite3.Connection],
-                    rxn_smi_file_prefix: Union[str, bytes, os.PathLike] = '50k_clean_rxnsmi_noreagent',
-                    dataset_name: Optional[str] = '50k', 
-                    root: Optional[Union[str, bytes, os.PathLike]] = None,
-                    splits: Optional[Union[str, 
-                                            List[str]]] = None,
-                    ncores: Optional[int] = 1):
+                max_size: int,
+                radius: int,
+                frag_db: Union[str, bytes, os.PathLike,
+                                sqlite3.Cursor, sqlite3.Connection],
+                rxn_smi_file_prefix: Union[str, bytes, os.PathLike] = '50k_clean_rxnsmi_noreagent',
+                dataset_name: Optional[str] = '50k', 
+                root: Optional[Union[str, bytes, os.PathLike]] = None,
+                splits: Optional[Union[str, 
+                                        List[str]]] = None,
+                ncores: Optional[int] = 1):
     '''     
     Assumes that there is only 1 product in every reaction!
     '''

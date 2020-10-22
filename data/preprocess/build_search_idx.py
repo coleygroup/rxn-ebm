@@ -10,17 +10,17 @@ molecules from the search index.
 NOTE: nmslib doesn't allow me to label the points with something else other than their original index 
 e.g. label each point in the search index with their SMILES string 
 ''' 
-import sys
 import os
-
-from tqdm import tqdm
+import sys
 import time
-import scipy
-from scipy import sparse 
-import nmslib
 from pathlib import Path
+from typing import Optional, Union
 
-from typing import Union, Optional
+import nmslib
+import scipy
+from scipy import sparse
+from tqdm import tqdm
+
 
 def validate_sparse_matrix(sparse_matrix: scipy.sparse.csr_matrix) -> scipy.sparse.csr_matrix:
     if sparse_matrix[-1].nonzero()[0].size == 0: # only needed for RDKit CountFingerprints (now no longer using!)
