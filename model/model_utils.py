@@ -36,7 +36,8 @@ def get_activation_function(activation: str) -> nn.Module:
         return nn.ELU()
     else:
         raise ValueError(f'Activation "{activation}" not supported.')
-    
+
+
 def initialize_weights(model: nn.Module) -> None:
     """
     Initializes the weights of a model in place.
@@ -47,18 +48,18 @@ def initialize_weights(model: nn.Module) -> None:
             nn.init.constant_(param, 0)
         else:
             nn.init.xavier_normal_(param)
-            
-# def save_checkpoint(state, filename: str='checkpoint.pth.tar', 
+
+# def save_checkpoint(state, filename: str='checkpoint.pth.tar',
 #                     is_best: Optional[bool]=False) -> None:
 #     torch.save(state, filename)
 #     if is_best:
 #         shutil.copyfile(filename, 'model_best.pth.tar')
 
-def seed_everything(seed: Optional[int]=0) -> None:
+
+def seed_everything(seed: Optional[int] = 0) -> None:
     torch.manual_seed(seed)
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
 
-    print('Using seed: {}'.format(seed))
-
+    print(f'Using seed: {seed}\n')

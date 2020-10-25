@@ -7,6 +7,7 @@ from model import model_utils
 
 Tensor = torch.Tensor
 
+
 class FeedforwardFingerprint(nn.Module):
     '''
     Currently supports 2 feedforward models:

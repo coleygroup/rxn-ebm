@@ -3,7 +3,7 @@ import random
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, Tuple
 
 import numpy as np
 import torch
@@ -139,6 +139,7 @@ class Experiment():
             lookup_dict_filename,
             mol_fps_filename,
             search_index_filename)
+            
         model_utils.seed_everything(random_seed)
 
     def __repr__(self):
@@ -240,13 +241,10 @@ class Experiment():
             search_index_filename: str,
             rxn_smis_file_prefix: Optional[str] = None):
         print('Initialising dataloaders...')
-        if self.num_workers > 0:
-            if 'cos' in self.augmentations.keys() or 'cosine' in self.augmentations.keys():
-                worker_init_fn = expt_utils._worker_init_fn_nmslib_
-            else:
-                worker_init_fn = expt_utils._worker_init_fn_default_
-        else:  # i.e. num_workers == 0
-            worker_init_fn = None
+        if 'cos' in self.augmentations or 'cosine' in self.augmentations:
+            worker_init_fn = expt_utils._worker_init_fn_nmslib
+        else:
+            worker_init_fn = expt_utils._worker_init_fn_default
 
         rxn_smis_filenames = defaultdict(str)
         precomp_filenames = defaultdict(str)
@@ -256,18 +254,18 @@ class Experiment():
                 lookup_dict_filename,
                 mol_fps_filename,
                 search_index_filename)
-            for dataset_name in [
+            for phase in [
                 'train',
                 'valid',
-                'test']:  # rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'
-                rxn_smis_filenames[dataset_name] = rxn_smis_file_prefix + f'_{dataset_name}.pickle'
+                    'test']:  # rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'
+                rxn_smis_filenames[phase] = rxn_smis_file_prefix + f'_{phase}.pickle'
         else:
             augmented_data = None
-            for dataset_name in [
+            for phase in [
                 'train',
                 'valid',
-                'test']:  # precomp_file_prefix = '50k_count_rdm_5'
-                precomp_filenames[dataset_name] = precomp_file_prefix + f'_{dataset_name}.npz'
+                    'test']:  # precomp_file_prefix = '50k_count_rdm_5'
+                precomp_filenames[phase] = precomp_file_prefix + f'_{phase}.npz'
 
         if self.rxn_type == 'sep':
             input_dim = self.rctfp_size + self.prodfp_size
@@ -276,11 +274,11 @@ class Experiment():
 
         pin_memory = True if torch.cuda.is_available() else False
         train_dataset = dataset.ReactionDataset(
-            input_dim,
-            precomp_filenames['train'],
-            rxn_smis_filenames['train'],
-            onthefly,
-            augmented_data)
+            input_dim=input_dim,
+            precomp_rxnfp_filename=precomp_filenames['train'],
+            rxn_smis_filename=rxn_smis_filenames['train'],
+            onthefly=onthefly,
+            augmented_data=augmented_data)
         self.train_loader = DataLoader(
             train_dataset, self.batch_size,
             num_workers=self.num_workers, worker_init_fn=worker_init_fn,
@@ -288,11 +286,11 @@ class Experiment():
         self.train_size = len(train_dataset)
 
         val_dataset = dataset.ReactionDataset(
-            input_dim,
-            precomp_filenames['valid'],
-            rxn_smis_filenames['valid'],
-            onthefly,
-            augmented_data)
+            input_dim=input_dim,
+            precomp_rxnfp_filename=precomp_filenames['valid'],
+            rxn_smis_filename=rxn_smis_filenames['valid'],
+            onthefly=onthefly,
+            augmented_data=augmented_data)
         self.val_loader = DataLoader(
             val_dataset, self.batch_size,
             num_workers=self.num_workers, worker_init_fn=worker_init_fn,
@@ -300,11 +298,11 @@ class Experiment():
         self.val_size = len(val_dataset)
 
         test_dataset = dataset.ReactionDataset(
-            input_dim,
-            precomp_filenames['test'],
-            rxn_smis_filenames['test'],
-            onthefly,
-            augmented_data)
+            input_dim=input_dim,
+            precomp_rxnfp_filename=precomp_filenames['test'],
+            rxn_smis_filename=rxn_smis_filenames['test'],
+            onthefly=onthefly,
+            augmented_data=augmented_data)
         self.test_loader = DataLoader(
             test_dataset, self.batch_size,
             num_workers=self.num_workers, worker_init_fn=worker_init_fn,
@@ -373,7 +371,9 @@ class Experiment():
             p.grad = None  # faster, equivalent to self.model.zero_grad()
         scores = self.model(batch)  # size N x K
 
-        scores[torch.isnan(scores)] = float('inf') # to account for NaN values due to NaN input from CReM's insufficient num_neg 
+        # scores[torch.isnan(scores)] = float('inf')
+        # to account for NaN values due to NaN input from CReM's insufficient
+        # num_neg
 
         # positives are the 0-th index of each sample
         loss = (scores[:, 0] + torch.logsumexp(-scores, dim=1)).sum()
@@ -398,7 +398,9 @@ class Experiment():
                 batch = batch.to(self.device)
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(
                     batch, backprop=True)
+                # print('curr_batch_loss:', curr_batch_loss)
                 train_loss += curr_batch_loss
+                # print('train_loss:', train_loss)
                 train_correct_preds += curr_batch_correct_preds
             self.train_accs.append(train_correct_preds / self.train_size)
             self.train_losses.append(train_loss / self.train_size)
@@ -463,23 +465,19 @@ class Experiment():
         torch.save(self.stats, self.stats_filename)
 
     def get_scores_and_loss(self,
-                            dataset_name: Optional[str] = 'test',
-                            dataloader: Optional[torch.utils.data.DataLoader] = None,
-                            dataset_len: Optional[int] = None) -> Tensor:
+                            phase: Optional[str] = 'test',
+                            custom_dataloader: Optional[torch.utils.data.DataLoader] = None
+                            ) -> Tuple[Tensor, float]:
         '''
         Gets raw energy values (scores) from a trained model on a given dataloader,
         with the option to save pos_neg_smis to analyse model performance
 
         Parameters
         ----------
-        dataset_name : str (Default = 'test')
-            choose from 'train', 'test', or 'valid'
-            whether to get scores from train/test/valid datasets
-        dataloader : Optional[Dataloader] (Default = None)
-            custom dataloader that loops through dataset that is not the original train, test or val
-            (which are simply accessed by providing a key parameter)
-        dataset_len : Optional[int] (Default = None)
-            length of dataset used for dataloader
+        phase : str (Default = 'test') [train', 'test', 'valid', 'custom']
+            whether to get scores from train/test/valid phases or a custom_dataloader
+        custom_dataloader : Optional[Dataloader] (Default = None)
+            custom dataloader that loops through dataset that is not the original train, test or val 
 
         Returns
         -------
@@ -491,16 +489,14 @@ class Experiment():
         TODO: fix show_neg: index into SMILES molecule vocab to retrieve molecules -->
         save as groups [true product/rct SMILES, 1st NN SMILES, ... K-1'th NN SMILES])
         '''
-        if dataloader is not None:
-            if dataset_len is None:
-                raise ValueError(
-                    'Please provide the size of the custom dataset')
-            dataset_name = 'custom'
-        elif dataset_name == 'test':
+        if phase == 'custom':
+            custom_dataset_len = len(custom_dataloader.dataset) 
+            dataloader = custom_dataloader
+        elif phase == 'test':
             dataloader = self.test_loader
-        elif dataset_name == 'train':
+        elif phase == 'train':
             dataloader = self.train_loader
-        elif dataset_name == 'val':
+        elif phase == 'val':
             dataloader == self.val_loader
 
         self.model.eval()
@@ -511,23 +507,23 @@ class Experiment():
                 scores.append(self.model(batch).cpu())
 
             scores = torch.cat(scores, dim=0).squeeze(dim=-1)
-            scores[torch.isnan(scores)] = float('inf') # to account for NaN values due to NaN input from CReM's insufficient num_neg 
+ 
             loss = (scores[:, 0] + torch.logsumexp(-1 * scores, dim=1)).sum()
-            if dataset_len is not None:  # means using a custom dataset other than train/valid/test
-                loss /= dataset_len
-            elif dataset_name == 'test':
+            if phase == 'custom':  
+                loss /= custom_dataset_len
+            elif phase == 'test':
                 loss /= self.test_size
-            elif dataset_name == 'train':
+            elif phase == 'train':
                 loss /= self.train_size
-            elif dataset_name == 'val':
+            elif phase == 'val':
                 loss /= self.val_size
-            print(f'Loss on {dataset_name} : {loss.item():.6f}')
+            print(f'Loss on {phase} : {loss.item():.6f}')
+
             return scores, loss
 
     def get_topk_acc(self,
-                     dataset_name: Optional[str] = 'test',
-                     dataloader: Optional[torch.utils.data.DataLoader] = None,
-                     dataset_len: Optional[int] = None,
+                     phase: Optional[str] = 'test',
+                     custom_dataloader: Optional[torch.utils.data.DataLoader] = None, 
                      k: Optional[int] = 1,
                      repeats: Optional[int] = 1,
                      save_scores: Optional[bool] = True,
@@ -543,11 +539,15 @@ class Experiment():
 
         Parameters
         ----------
+        phase : str (Default = 'test') [train', 'test', 'valid', 'custom']
+            whether to get scores from train/test/valid phases or a custom_dataloader
+        custom_dataloader : Optional[Dataloader] (Default = None)
+            custom dataloader that loops through dataset that is not the original train, test or val
         save_scores: bool (Default = True)
-            whether to save the generated scores tensor
+            whether to save the generated scores tensor to disk
         name_scores: Union[str, bytes, os.PathLike] (Default = None)
             filename of scores to save as a .pkl file
-            If None, automatically set to 'scores_<dataset_name>_<self.expt_name>'
+            If None, automatically set to 'scores_<phase>_<self.expt_name>'
 
         Returns
         -------
@@ -557,9 +557,9 @@ class Experiment():
         Also see: self.get_scores_and_loss()
         '''
         accs = np.array([])
-        for repeat in range(repeats): 
+        for repeat in range(repeats):
             scores, loss = self.get_scores_and_loss(
-                dataset_name=dataset_name, dataloader=dataloader, dataset_len=dataset_len)
+                phase=phase, custom_dataloader=custom_dataloader)
             pred_labels = torch.topk(scores, k, dim=1, largest=False)[1]
             accs = np.append(accs, torch.where(pred_labels == 0)[
                              0].shape[0] / pred_labels.shape[0])
@@ -567,12 +567,12 @@ class Experiment():
         if path_scores is None:
             path_scores = Path(__file__).parents[1] / 'scores'
         if name_scores is None:
-            name_scores = f'scores_{dataset_name}_{self.expt_name}.pkl'
+            name_scores = f'scores_{phase}_{self.expt_name}.pkl'
         if save_scores:
             print('Saving scores at: ', Path(path_scores / name_scores))
             torch.save(scores, Path(path_scores / name_scores))
 
-        if dataset_name == 'train':
+        if phase == 'train':
             self.stats['train_loss_nodropout'] = loss
             self.stats['train_acc_nodropout'] = accs
             torch.save(self.stats, self.stats_filename)

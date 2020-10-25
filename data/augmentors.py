@@ -4,11 +4,11 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
-import nmslib
 import numpy as np
 import scipy
 from scipy import sparse
 
+import nmslib
 from data.preprocess import smi_to_fp
 
 sparse_fp = scipy.sparse.csr_matrix
@@ -16,9 +16,10 @@ dense_fp = np.ndarray  # try not to use, more memory intensive
 
 ''' TODO: split precomputation into one .npz file of just random negatives, one .npz file of just cosine negatives,
 and one .npz file of just bit negatives, so that if we want to modify certain augmentation hyperparams midway through training,
-e.g. start with just random & cosine --> include random, cosine & bit --> increase num_neg of bit etc., 
-separately stored .npz files will make it much easier.  
+e.g. start with just random & cosine --> include random, cosine & bit --> increase num_neg of bit etc.,
+separately stored .npz files will make it much easier.
 '''
+
 
 def rcts_prod_fps_from_rxn_smi(rxn_smi: str,
                                fp_type: str,
@@ -33,7 +34,7 @@ def rcts_prod_fps_from_rxn_smi(rxn_smi: str,
         dtype = 'bool'  # to add rcts_fp w/o exceeding value of 1
         final_dtype = 'int8'  # to cast rcts_fp back into 'int8'
     else:  # count
-        dtype = 'int16' # or maybe to infer dtype, but that adds computation overhead
+        dtype = 'int16'  # or maybe to infer dtype, but that adds computation overhead
         final_dtype = dtype
 
     rcts_smis = rxn_smi.split('>')[0].split('.')
@@ -91,8 +92,10 @@ class Augmentor(ABC):
 
 class Mutate(Augmentor):
     ''' NOTE: READS MUTATED SMIS FROM PRECOMPUTED DICTIONARY ON DISK
-    Adapted from CReM: https://github.com/DrrDom/crem 
-    to mutate product molecules into structurally-similar molecules 
+
+    Adapted from CReM: https://github.com/DrrDom/crem
+    to mutate product molecules into structurally-similar molecules
+    
     Ideas (maybe TODO)
         1) divide num_neg into K splits, where each split comes from mutate_mols() set up with specific sets of hyperparams
         (see crem_example notebook from his github repo)
@@ -105,10 +108,10 @@ class Mutate(Augmentor):
                  num_neg: int,
                  lookup_dict: dict,
                  mol_fps: sparse_fp,
-                 mut_smis: dict, 
+                 mut_smis: dict,
                  rxn_type: Optional[str] = 'diff',
                  fp_type: Optional[str] = 'count',
-                 radius: Optional[int] = 3, 
+                 radius: Optional[int] = 3,
                  fp_size: Optional[int] = 4096,
                  dtype: Optional[str] = 'int16'):
         super(
@@ -122,7 +125,7 @@ class Mutate(Augmentor):
         self.mut_smis = mut_smis
         self.radius = radius
         self.fp_size = fp_size
-        self.dtype = dtype 
+        self.dtype = dtype
 
         self.set_mol_smi_to_fp_func()
 
@@ -134,16 +137,17 @@ class Mutate(Augmentor):
 
     def get_one_sample(self, rxn_smi: str) -> List[sparse_fp]:
         '''
-        Also see: rcts_prod_fps_from_rxn_smi, make_rxn_fp, smi_to_fp.mol_smi_to_count_fp() 
+        Also see: rcts_prod_fps_from_rxn_smi, make_rxn_fp, smi_to_fp.mol_smi_to_count_fp()
         '''
         prod_smi = rxn_smi.split('>>')[-1]
         mut_prod_smis = self.mut_smis[prod_smi]
-        if len(mut_prod_smis) > self.num_neg: 
-            mut_prod_smis = random.sample(mut_prod_smis, self.num_neg) 
+        if len(mut_prod_smis) > self.num_neg:
+            mut_prod_smis = random.sample(mut_prod_smis, self.num_neg)
 
-        mut_prod_fps = [] 
+        mut_prod_fps = []
         for mut_prod_smi in mut_prod_smis:
-            prod_fp = self.mol_smi_to_fp(mut_prod_smi, self.radius, self.fp_size, self.dtype)
+            prod_fp = self.mol_smi_to_fp(
+                mut_prod_smi, self.radius, self.fp_size, self.dtype)
             mut_prod_fps.append(prod_fp)
 
         rcts_fp, _ = rcts_prod_fps_from_rxn_smi(
@@ -154,9 +158,15 @@ class Mutate(Augmentor):
             neg_rxn_fp = make_rxn_fp(rcts_fp, mut_prod_fp, self.rxn_type)
             neg_rxn_fps.append(neg_rxn_fp)
 
-        if len(neg_rxn_fps) < self.num_neg: # pad with np.nan vectors if insufficient negs generated from CReM
-            dummy_fp = np.empty((1, self.fp_size))
-            dummy_fp.fill(np.nan) 
+        # TRYING NOW: pad with np.zeros vectors whenever insufficient negs generated from CReM
+        # TODO: pad using Random augmentor
+        # NOTE: np.nan doesn't work!!
+        # manually replacing nan values by float('inf'/some_big_number) messes
+        # up backpropagation & gradients :(
+        if len(neg_rxn_fps) < self.num_neg:
+            dummy_fp = np.zeros((1, self.fp_size))
+            # dummy_fp = np.empty((1, self.fp_size))
+            # dummy_fp.fill(np.nan)
             for i in range(self.num_neg - len(neg_rxn_fps)):
                 neg_rxn_fps.append(dummy_fp)
 
@@ -164,14 +174,14 @@ class Mutate(Augmentor):
 
     def get_idx(self, mut_prod_smis: List[str]) -> None:
         ''' Not applicable to CReM
-        Because need to expand lookup_dict to include the newly generated negative molecules, and 
-        there are too many to keep track! 
+        Because need to expand lookup_dict to include the newly generated negative molecules, and
+        there are too many to keep track!
         '''
-        pass 
+        pass
         # prod_idxs = []
-        # if len(mut_prod_smis) < self.num_neg: 
+        # if len(mut_prod_smis) < self.num_neg:
         #     for prod_smi in mut_prod_smis:
-        #         prod_idxs.append(self.lookup_dict[prod_smi])     
+        #         prod_idxs.append(self.lookup_dict[prod_smi])
         # else:
         #     for prod_smi in random.sample(mut_prod_smis, self.num_neg):
         #         prod_idxs.append(self.lookup_dict[prod_smi])
@@ -219,7 +229,8 @@ class Cosine(Augmentor):
             rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps)
         nn_prod_idxs = self.get_idx(prod_fp=prod_fp)
         # first index is the original molecule!
-        nn_prod_fps = [self.mol_fps[idx] for idx in nn_prod_idxs[1: self.num_neg + 1]]
+        nn_prod_fps = [self.mol_fps[idx]
+                       for idx in nn_prod_idxs[1: self.num_neg + 1]]
         neg_rxn_fps = []
         for nn_prod_fp in nn_prod_fps:
             neg_rxn_fp = make_rxn_fp(rcts_fp, nn_prod_fp, self.rxn_type)
@@ -272,7 +283,7 @@ class Random(Augmentor):
         self.rdm_idxs = random.sample(self.orig_idxs, k=len(self.orig_idxs))
         self.rdm_counter = -1
         # using this means that a product molecule (if it appears multiple times in different rxns)
-        # will consistently map to a particular randomly selected molecule, which might not be a bad thing!
+        # will consistently map to a particular randomly selected molecule, which might not be a bad thing! (in terms of traceability)
         # we use the original prod_idx in lookup_dict to access self.rdm_idxs
         # i.e. w/o this, a product molecule will stochastically map to
         # different molecules throughout training
@@ -294,6 +305,7 @@ class Random(Augmentor):
 
     def get_idx(self) -> int:
         self.rdm_counter += 1
+        self.rdm_counter %= self.mol_fps.shape[0]
         return self.rdm_idxs[self.rdm_counter]
         # return random.choice(self.orig_idxs)
 
@@ -336,7 +348,7 @@ class Bit(Augmentor):
         self.increment_bits = increment_bits or 1  # default is 1
         self.strategy = strategy
 
-        self.set_get_one_sample_func() 
+        self.set_get_one_sample_func()
 
     def get_one_sample_count(self, rxn_smi: str) -> List[sparse_fp]:
         ''' For count fingerprints
@@ -352,7 +364,8 @@ class Bit(Augmentor):
             rdm_bit_idxs = random.sample(
                 range(pos_rxn_fp.shape[-1]), k=self.num_bits)
             for bit_idx in rdm_bit_idxs:
-                neg_rxn_fp[0, bit_idx] = neg_rxn_fp[0, bit_idx] + self.increment_bits
+                neg_rxn_fp[0, bit_idx] = neg_rxn_fp[0,
+                                                    bit_idx] + self.increment_bits
             neg_rxn_fps.append(neg_rxn_fp)
         return neg_rxn_fps
 
@@ -373,7 +386,7 @@ class Bit(Augmentor):
                 neg_rxn_fp[0, bit_idx] = random.choice([-1, 0, 1])
             neg_rxn_fps.append(neg_rxn_fp)
         return neg_rxn_fps
-    
+
     def set_get_one_sample_func(self):
         if self.fp_type == 'count':
             self.get_one_sample = self.get_one_sample_count
@@ -381,9 +394,9 @@ class Bit(Augmentor):
             self.get_one_sample = self.get_one_sample_bit
 
     def get_one_sample(self, rxn_smi: str) -> List[sparse_fp]:
-        ''' indirectly set by self.set_get_one_sample_func() 
+        ''' indirectly set by self.set_get_one_sample_func()
         '''
-        pass 
+        pass
         # if self.fp_type == 'count':
         #     return self.get_one_sample_count(rxn_smi)
         # else:
