@@ -42,15 +42,15 @@ def gen_lookup_dict_from_file(mol_smis_filename: Union[str,
     Any shuffling will render this dictionary useless!
     '''
     if root is None:  # if not provided, goes up 2 levels to get to 'rxn-ebm/'
-        root = Path(__file__).parents[2] / 'data' / 'cleaned_data'
+        root = Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
     if Path(output_filename).suffix != '.pickle':
-        output_filename += '.pickle'
+        output_filename = str(output_filename) + '.pickle'
     if (root / output_filename).exists():
         print(f'At: {root / output_filename}')
         print('The lookup_dict file already exists!')
         return
     if Path(mol_smis_filename).suffix != '.pickle':
-        mol_smis_filename += '.pickle'
+        mol_smis_filename = str(mol_smis_filename) + '.pickle'
     with open(root / mol_smis_filename, 'rb') as handle:
         mol_smis = pickle.load(handle)
 
@@ -62,7 +62,7 @@ def gen_lookup_dict_from_file(mol_smis_filename: Union[str,
     # provide bad_smis_filename
     if bad_smis_filename:
         if Path(bad_smis_filename).suffix != '.pickle':
-            bad_smis_filename += '.pickle'
+            bad_smis_filename = str(bad_smis_filename) + '.pickle'
         with open(root / bad_smis_filename, 'rb') as handle:
             bad_smis = pickle.load(handle)
         for bad_smi in bad_smis:
@@ -122,9 +122,9 @@ def gen_count_mol_fps_from_file(mol_smis_filename: Union[str,
     ''' TODO: add docstring
     '''
     if root is None:
-        root = Path(__file__).parents[2] / 'data' / 'cleaned_data'
+        root = Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
     if Path(output_filename).suffix != '.npz':
-        output_filename += '.npz'
+        output_filename = str(output_filename) + '.npz'
     if (root / output_filename).exists():
         print(f'At: {root / output_filename}')
         print('The count_mol_fp file already exists!')
@@ -195,16 +195,16 @@ def gen_bit_mol_fps_from_file(mol_smis_filename: Union[str, bytes, os.PathLike],
         pathlib's Path object to the output bit mol_fps file
     '''
     if root is None:
-        root = Path(__file__).parents[2] / 'data' / 'cleaned_data'
+        root = Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
     if Path(output_filename).suffix != '.npz':
-        output_filename += '.npz'
+        output_filename = str(output_filename) + '.npz'
     if (root / output_filename).exists():
         print(f'At: {root / output_filename}')
         print('The bit_mol_fp file already exists!')
         return root / output_filename
 
     if Path(mol_smis_filename).suffix != '.pickle':
-        mol_smis_filename += '.pickle'
+        mol_smis_filename = str(mol_smis_filename) + '.pickle'
     with open(root / mol_smis_filename, 'rb') as handle:
         mol_smis = pickle.load(handle)
 
@@ -461,7 +461,7 @@ def gen_diff_fps_from_file(rxn_smi_file_prefix: str = '50k_clean_rxnsmi_noreagen
     root : Optional[Union[str, bytes, os.PathLike]] (Default = None)
         The root directory from which to load and save files
         This script, smi_to_fp.py should be located in rxn-ebm/data/preprocess/smi_to_fp.py;
-        by default, we assign root to: Path(__file__).parents[2] / 'data' / 'cleaned_data'
+        by default, we assign root to: Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
     distributed : bool (Default = False)
         whether to distribute the computation across all possible workers
 
@@ -473,7 +473,7 @@ def gen_diff_fps_from_file(rxn_smi_file_prefix: str = '50k_clean_rxnsmi_noreagen
     Also see: list_rxn_smis_to_diff_fps, rxn_smi_to_diff_fp
     '''
     if root is None:  # if not provided, goes up 2 levels to get to rxn-ebm/ then add data/cleaned_data/
-        root = Path(__file__).parents[2] / 'data' / 'cleaned_data'
+        root = Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
     if (root / f'{output_matrix_file_prefix}_train.npz').exists():
         print(f'At: {root / f"{output_matrix_file_prefix}_train.npz"}')
         print('The sparse diff_fp file already exists!')
@@ -483,9 +483,9 @@ def gen_diff_fps_from_file(rxn_smi_file_prefix: str = '50k_clean_rxnsmi_noreagen
     # LOAD LOOKUP_DICT & SPARSE_MOL_FPS (do not need to reload for train,
     # valid and test)
     if Path(lookup_dict_filename).suffix != '.pickle':
-        lookup_dict_filename += '.pickle'
+        lookup_dict_filename = str(lookup_dict_filename) + '.pickle'
     if Path(sparse_mol_fps_filename).suffix != '.npz':
-        sparse_mol_fps_filename += '.npz'
+        sparse_mol_fps_filename = str(sparse_mol_fps_filename) + '.npz'
 
     sparse_mol_fps = sparse.load_npz(root / sparse_mol_fps_filename)
     with open(root / lookup_dict_filename, 'rb') as handle:

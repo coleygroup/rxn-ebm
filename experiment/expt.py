@@ -106,7 +106,7 @@ class Experiment():
         if root:
             self.root = Path(root)
         else:
-            self.root = Path(__file__).parents[1] / 'data' / 'cleaned_data'
+            self.root = Path(__file__).resolve().parents[1] / 'data' / 'cleaned_data'
         self.checkpoint_folder = Path(checkpoint_folder)
 
         self.expt_name = expt_name
@@ -565,7 +565,7 @@ class Experiment():
                              0].shape[0] / pred_labels.shape[0])
 
         if path_scores is None:
-            path_scores = Path(__file__).parents[1] / 'scores'
+            path_scores = Path(__file__).resolve().parents[1] / 'scores'
         if name_scores is None:
             name_scores = f'scores_{phase}_{self.expt_name}.pkl'
         if save_scores:

@@ -36,7 +36,7 @@ def setup_paths(location: str = 'LOCAL',
         date_trained = date.today().strftime("%d_%m_%Y")
     if location.upper() == 'LOCAL':
         if root is None:
-            root = Path(__file__).parents[1] / 'checkpoints'
+            root = Path(__file__).resolve().parents[1] / 'checkpoints'
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f'created checkpoint_folder: {checkpoint_folder}')
@@ -48,8 +48,7 @@ def setup_paths(location: str = 'LOCAL',
         print(f'created checkpoint_folder: {checkpoint_folder}')
     elif location.upper() == 'ENGAGING':
         if root is None:
-            root = Path(__file__).parents[1] / \
-                'checkpoints'  # MAY CHANGE ########
+            root = Path(__file__).resolve().parents[1] / 'checkpoints' 
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f'created checkpoint_folder: {checkpoint_folder}')

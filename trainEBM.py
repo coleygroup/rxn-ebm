@@ -145,7 +145,7 @@ def prepare_data(args):
 def trainEBM(args): 
     ''' train EBM from scratch 
     ''' 
-    
+
     prepare_data(args)
 
     expt_name = '50k_rdm_5_cos_5_bit_5_1_1_mut_10'  # USER INPUT
@@ -171,8 +171,7 @@ def trainEBM(args):
         lookup_dict_filename,
         mol_fps_filename,
         search_index_filename,
-        mut_smis_filename,
-        num_workers=8,  # if parallelising, put a number > 0
+        mut_smis_filename, 
         seed=random_seed)
 
     rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'
@@ -272,8 +271,7 @@ def resumeEBM(args):
         lookup_dict_filename,
         mol_fps_filename,
         search_index_filename,
-        mut_smis_filename,
-        num_workers=8,  # if parallelising, put a number > 0
+        mut_smis_filename, 
         seed=random_seed)
 
     rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'

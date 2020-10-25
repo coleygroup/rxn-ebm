@@ -105,11 +105,11 @@ def build_and_save_index(mol_fps_filename: Union[str,
     Also see: build_nmslib_index
     '''
     if root is None:
-        root = Path(__file__).parents[2] / 'data' / 'cleaned_data'
+        root = Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
     if Path(mol_fps_filename).suffix != '.npz':
-        mol_fps_filename += '.npz'
+        mol_fps_filename = str(mol_fps_filename) + '.npz'
     if Path(output_filename).suffix != '.bin':
-        output_filename += '.bin'
+        output_filename = str(output_filename) + '.bin'
     if (root / output_filename).exists():
         print(f'At: {root / output_filename}')
         print('The search index file already exists!') 

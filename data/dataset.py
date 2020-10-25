@@ -61,9 +61,6 @@ class AugmentedData:
         full path to the folder containing all the cleaned, input data files, which includes
         lookup_dict, sparse mol_fps, search_index, mut_prod_smis
         If not provided, aka None, it defaults to full/path/to/rxn-ebm/data/cleaned_data/
-    num_workers : int (Default = 0)
-        how many workers to parallelize the PyTorch dataloader over
-        has implications on whether search_index is loaded immediately or loaded from _worker_init_fn_nmslib_
     seed : int (Default = 0)
         random seed to use. affects augmentations which do random selection e.g. Random sampling, Bit corruption,
         and CReM (in sampling the required number of mutated product SMILES from the pool of all available mutated SMILES)
@@ -82,8 +79,7 @@ class AugmentedData:
             radius: Optional[int] = 3,
             dtype: Optional[str] = 'int16',
             root: Optional[str] = None,
-            seed: Optional[int] = 0,
-            **kwargs):
+            seed: Optional[int] = 0):
         model_utils.seed_everything(seed)
 
         self.lookup_dict_filename = lookup_dict_filename
@@ -91,7 +87,7 @@ class AugmentedData:
         self.search_index_filename = search_index_filename
         self.mut_smis_filename = mut_smis_filename
         if root is None:  # set root = path/to/rxn-ebm/
-            root = Path(__file__).parents[1] / 'data' / 'cleaned_data'
+            root = Path(__file__).resolve().parents[1] / 'data' / 'cleaned_data'
         self.root = root
         with open(self.root / self.lookup_dict_filename, 'rb') as handle:
             self.lookup_dict = pickle.load(handle)
@@ -248,6 +244,7 @@ class AugmentedData:
         if distributed:
             print('distributed computing is not supported now!')
             return
+            # TODO: add support & documentation for distributed processing 
             # from mpi4py import MPI
             # from mpi4py.futures import MPIPoolExecutor as Pool
 
@@ -333,12 +330,15 @@ class ReactionDataset(Dataset):
         self.input_dim = input_dim
         self.onthefly = onthefly  # needed by worker_init_fn
         self.viz_neg = viz_neg  # TODO
+
         if root is None:
-            root = Path(__file__).parents[1] / 'data' / 'cleaned_data'
+            root = Path(__file__).resolve().parents[1] / 'data' / 'cleaned_data'
+            
         if (root / precomp_rxnfp_filename).exists():
             print('Loading pre-computed reaction fingerprints...')
             self.data = sparse.load_npz(root / precomp_rxnfp_filename)
             self.data = self.data.tocsr()
+
         elif self.onthefly:
             print('Generating augmentations on the fly...')
             self.data = augmented_data
@@ -347,6 +347,7 @@ class ReactionDataset(Dataset):
             self.query_params = query_params
             # will be used by expt_utils._worker_init_fn_nmslib_
             self.search_index_path = str(root / search_index_filename)
+
         else:
             raise RuntimeError(
                 'Please provide precomp_rxnfp_filename or set onthefly = True!')
@@ -366,25 +367,31 @@ class ReactionDataset(Dataset):
 if __name__ == '__main__':
     augmentations = {
         'rdm': {'num_neg': 2},
-        'cos': {'num_neg': 2},
-        'bit': {'num_neg': 2, 'num_bits': 3},
+        'cos': {'num_neg': 2, 'query_params': None},
+        'bit': {'num_neg': 2, 'num_bits': 3, 'increment_bits': 1},
         'mut': {'num_neg': 10},
     }
-    lookup_dict_filename = '50k_mol_smi_to_count_fp.pickle'
+
+    lookup_dict_filename = '50k_mol_smi_to_sparse_fp_idx.pickle'
     mol_fps_filename = '50k_count_mol_fps.npz'
     search_index_filename = '50k_cosine_count.bin'
-    augmented_data = AugmentedData(
+    mut_smis_filename = '50k_neg150_rad2_maxsize3_mutprodsmis.pickle'
+    
+    augmented_data = dataset.AugmentedData(
         augmentations,
         lookup_dict_filename,
         mol_fps_filename,
-        search_index_filename)
+        search_index_filename,
+        mut_smis_filename, 
+        seed=random_seed)
 
     rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'
-    precomp_output_file_prefix = '50k_rdm_5'
-    for dataset in ['train', 'valid', 'test']:
+    for phase in ['train', 'valid', 'test']:
         augmented_data.precompute(
-            output_filename=precomp_output_file_prefix + f'_{dataset}.npz',
-            rxn_smis=rxn_smis_file_prefix + f'_{dataset}.pickle')
+            output_filename=precomp_file_prefix + f'_{phase}.npz',
+            rxn_smis=rxn_smis_file_prefix + f'_{phase}.pickle',
+            distributed=False,
+            parallel=False)
 
     # from tqdm import tqdm
     # with open('data/cleaned_data/50k_clean_rxnsmi_noreagent_train.pickle', 'rb') as handle:

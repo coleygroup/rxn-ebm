@@ -21,7 +21,7 @@ def mol_smi_from_mol_pickle(input_pickle_filename: str = '50k_mol_smis',
     needed to create custom fragment database if one so desires (not recommended)
     '''
     if root is None:
-        root = Path(__file__).parents[2] / 'data' / 'cleaned_data'
+        root = Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
 
     with open(root / f'{input_filename}.pickle', 'rb') as handle:
         mol_smis = pickle.load(handle)
@@ -65,7 +65,7 @@ def gen_crem_negs(num_neg: int,
     if phases is None:
         phases = ['train', 'valid', 'test']
     if root is None:
-        root = Path(__file__).parents[2] / 'data' / 'cleaned_data'
+        root = Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
     if (root / f'{dataset_name}_neg{num_neg}_rad{radius}_maxsize{max_size}_mutprodsmis.pickle').exists():
         print('The mutprodsmis file already exists!')
         return

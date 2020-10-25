@@ -478,9 +478,9 @@ def clean_rxn_smis_all_phases(input_file_prefix: str = 'schneider50k_raw',
         remove_rct_mapping = True
 
     if input_root is None:
-        input_root = Path(__file__).parents[2] / 'data' / 'original_data'
+        input_root = Path(__file__).resolve().parents[2] / 'data' / 'original_data'
     if output_root is None:
-        output_root = Path(__file__).parents[2] / 'data' / 'cleaned_data'
+        output_root = Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
     phase_to_compute = ['train', 'valid', 'test']
     for phase in ['train', 'valid', 'test']:
         if (output_root / f'{output_file_prefix}_{phase}.pickle').exists():
@@ -568,7 +568,7 @@ def get_uniq_mol_smis_all_phases(rxn_smi_file_prefix: str = '50k_clean_rxnsmi_no
     NOTE: does not collect reagents
     '''
     if root is None:
-        root = Path(__file__).parents[2] / 'data' / 'cleaned_data'
+        root = Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
     if Path(output_filename).suffix != '.pickle':
         output_filename = str(output_filename) + '.pickle'
     if (root / output_filename).exists():
