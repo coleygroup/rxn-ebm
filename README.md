@@ -1,7 +1,7 @@
 # rxn-ebm
 Energy-based modeling of chemical reactions
 
-# Environmental setup
+## Environmental setup
 #### Using Conda
     conda create -n rxnebm python=3.8 tqdm pathlib typing scipy
     conda activate rxnebm
@@ -17,6 +17,7 @@ Energy-based modeling of chemical reactions
     # install crem
     pip install crem
 
+## Folder organisation
 ```
  rxn-ebm
     ├── trainEBM.py
@@ -30,12 +31,12 @@ Energy-based modeling of chemical reactions
     ├── data
     |    ├── dataset.py
     |    ├── augmentors.py
-    |    ├── crem_mutate.py
     |    ├── analyse_results.py
     |    ├── preprocess
     |    |        ├── clean_smiles.py    
     |    |        ├── smi_to_fp.py
-    |    |        └── build_search_idx.py
+    |    |        ├── prep_crem.py
+    |    |        └── prep_nmslib.py
     |    ├── original_data  
     |    └── cleaned_data
     ├── checkpoints
