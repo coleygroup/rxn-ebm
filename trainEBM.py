@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from data import dataset
-from data.preprocess import clean_smiles, smi_to_fp, build_search_idx
+from data.preprocess import clean_smiles, smi_to_fp, prep_nmslib, prep_crem
 from experiment import expt, expt_utils
 from model import FF
 
@@ -126,7 +126,6 @@ def prepare_data(args):
         remove_dup_rxns=args.remove_dup_rxns,  # remove_dup_rxns=False,
         remove_rct_mapping=args.remove_rct_mapping,  # remove_rct_mapping=False,
         remove_all_mapping=args.remove_all_mapping)  # remove_all_mapping=False)
-
     clean_smiles.get_uniq_mol_smis_all_phases(rxn_smi_file_prefix=args.clean_smi_pre,
                                  root=args.clean_smi_root,
                                  output_filename=args.mol_smi_filename,
@@ -135,7 +134,10 @@ def prepare_data(args):
     smi_to_fp.gen_count_mol_fps_from_file()
     smi_to_fp.gen_lookup_dict_from_file()
 
-    build_search_idx.build_and_save_index()
+    prep_nmslib.build_and_save_index()
+
+    prep_crem.gen_crem_negs(num_neg=150, max_size=3, radius=2,
+                  frag_db_filename='replacements02_sa2.db')
 
     print('Successfully prepared required data!\n\n')
 
@@ -143,6 +145,7 @@ def prepare_data(args):
 def trainEBM(args): 
     ''' train EBM from scratch 
     ''' 
+    
     prepare_data(args)
 
     expt_name = '50k_rdm_5_cos_5_bit_5_1_1_mut_10'  # USER INPUT
