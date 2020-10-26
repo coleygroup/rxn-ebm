@@ -20,7 +20,7 @@ sparse_fp = scipy.sparse.csr_matrix
 
 
 class AugmentedData:
-    '''
+    """
     Parameters
     ----------
     augmentations : dict
@@ -64,22 +64,23 @@ class AugmentedData:
     seed : int (Default = 0)
         random seed to use. affects augmentations which do random selection e.g. Random sampling, Bit corruption,
         and CReM (in sampling the required number of mutated product SMILES from the pool of all available mutated SMILES)
-    '''
+    """
 
     def __init__(
-            self,
-            augmentations: dict,
-            lookup_dict_filename: str,
-            mol_fps_filename: str,
-            search_index_filename: Optional[str] = None,
-            mut_smis_filename: Optional[str] = None,
-            rxn_type: Optional[str] = 'diff',
-            fp_type: Optional[str] = 'count',
-            fp_size: Optional[int] = 4096,
-            radius: Optional[int] = 3,
-            dtype: Optional[str] = 'int16',
-            root: Optional[str] = None,
-            seed: Optional[int] = 0):
+        self,
+        augmentations: dict,
+        lookup_dict_filename: str,
+        mol_fps_filename: str,
+        search_index_filename: Optional[str] = None,
+        mut_smis_filename: Optional[str] = None,
+        rxn_type: Optional[str] = "diff",
+        fp_type: Optional[str] = "count",
+        fp_size: Optional[int] = 4096,
+        radius: Optional[int] = 3,
+        dtype: Optional[str] = "int16",
+        root: Optional[str] = None,
+        seed: Optional[int] = 0,
+    ):
         model_utils.seed_everything(seed)
 
         self.lookup_dict_filename = lookup_dict_filename
@@ -87,9 +88,9 @@ class AugmentedData:
         self.search_index_filename = search_index_filename
         self.mut_smis_filename = mut_smis_filename
         if root is None:  # set root = path/to/rxn-ebm/
-            root = Path(__file__).resolve().parents[1] / 'data' / 'cleaned_data'
+            root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
         self.root = root
-        with open(self.root / self.lookup_dict_filename, 'rb') as handle:
+        with open(self.root / self.lookup_dict_filename, "rb") as handle:
             self.lookup_dict = pickle.load(handle)
         self.mol_fps = sparse.load_npz(self.root / self.mol_fps_filename)
 
@@ -102,20 +103,20 @@ class AugmentedData:
 
         self.augs = []  # list of callables: Augmentor.get_one_sample
         for key, value in augmentations.items():
-            if value['num_neg'] == 0:
+            if value["num_neg"] == 0:
                 continue
-            elif key == 'cosine' or key == 'cos' or key == 'neighbor':
+            elif key == "cosine" or key == "cos" or key == "neighbor":
                 self._init_cosine(**value)
-            elif key == 'random' or key == 'rdm':
+            elif key == "random" or key == "rdm":
                 self._init_random(**value)
-            elif key == 'bit' or key == 'bits' or key == 'fingerprint':
+            elif key == "bit" or key == "bits" or key == "fingerprint":
                 self._init_bit(**value)
-            elif key == 'mutate' or key == 'mut' or key == 'crem':
+            elif key == "mutate" or key == "mut" or key == "crem":
                 self._init_mutate(**value)
 
     def _init_cosine(self, num_neg: int, query_params: Optional[dict] = None):
         # NOTE: nmslib only accepts str for its filename, not Path objects
-        print('Initialising Cosine Augmentor...')
+        print("Initialising Cosine Augmentor...")
         # loaded later by precompute_helper or
         # expt_utils._worker_init_fn_nmslib_
         search_index = None
@@ -130,26 +131,25 @@ class AugmentedData:
             self.mol_fps,
             search_index,
             self.rxn_type,
-            self.fp_type)
+            self.fp_type,
+        )
         self.augs.append(self.cosaugmentor.get_one_sample)
 
     def _init_random(self, num_neg: int):
-        print('Initialising Random Augmentor...')
+        print("Initialising Random Augmentor...")
         self.rdmaugmentor = augmentors.Random(
-            num_neg,
-            self.lookup_dict,  
-            self.mol_fps,
-            self.rxn_type,
-            self.fp_type)
+            num_neg, self.lookup_dict, self.mol_fps, self.rxn_type, self.fp_type
+        )
         self.augs.append(self.rdmaugmentor.get_one_sample)
 
     def _init_bit(
-            self,
-            num_neg: int,
-            num_bits: int,
-            strategy: Optional[str] = None,
-            increment_bits: Optional[int] = 1):
-        print('Initialising Bit Augmentor...')
+        self,
+        num_neg: int,
+        num_bits: int,
+        strategy: Optional[str] = None,
+        increment_bits: Optional[int] = 1,
+    ):
+        print("Initialising Bit Augmentor...")
         self.bitaugmentor = augmentors.Bit(
             num_neg,
             num_bits,
@@ -158,17 +158,18 @@ class AugmentedData:
             self.lookup_dict,
             self.mol_fps,
             self.rxn_type,
-            self.fp_type)
-        if self.fp_type == 'count':
+            self.fp_type,
+        )
+        if self.fp_type == "count":
             self.augs.append(self.bitaugmentor.get_one_sample_count)
-        elif self.fp_type == 'bit':
+        elif self.fp_type == "bit":
             self.augs.append(self.bitaugmentor.get_one_sample_bit)
 
     def _init_mutate(self, num_neg: int):
-        print('Initialising Mutate Augmentor...')
-        if Path(self.mut_smis_filename).suffix != '.pickle':
-            self.mut_smis_filename = str(self.mut_smis_filename) + '.pickle'
-        with open(self.root / self.mut_smis_filename, 'rb') as handle:
+        print("Initialising Mutate Augmentor...")
+        if Path(self.mut_smis_filename).suffix != ".pickle":
+            self.mut_smis_filename = str(self.mut_smis_filename) + ".pickle"
+        with open(self.root / self.mut_smis_filename, "rb") as handle:
             mut_smis = pickle.load(handle)
 
         self.mutaugmentor = augmentors.Mutate(
@@ -180,15 +181,17 @@ class AugmentedData:
             self.fp_type,
             self.radius,
             self.fp_size,
-            self.dtype)
+            self.dtype,
+        )
         self.augs.append(self.mutaugmentor.get_one_sample)
 
     def get_one_minibatch(self, rxn_smi: str) -> sparse_fp:
-        ''' prepares one minibatch, which is 1 pos_rxn + K neg_rxns
+        """prepares one minibatch, which is 1 pos_rxn + K neg_rxns
         where K is the sum of all of the num_neg for each active augmentation
-        '''
+        """
         rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(
-            rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps)
+            rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps
+        )
         pos_rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, self.rxn_type)
 
         neg_rxn_fps = []
@@ -200,51 +203,49 @@ class AugmentedData:
         return out  # spy_sparse2torch_sparse(out)
 
     def __getitem__(self, idx: int) -> sparse_fp:
-        ''' Called by ReactionDataset.__getitem__(idx)
-        '''
+        """Called by ReactionDataset.__getitem__(idx)"""
         return self.get_one_minibatch(self.rxn_smis[idx])
 
     def precompute_helper(self):
-        if hasattr(self, 'cosaugmentor'):
+        if hasattr(self, "cosaugmentor"):
             if self.cosaugmentor.search_index is None:
                 self.cosaugmentor.search_index = nmslib.init(
-                    method='hnsw',
-                    space='cosinesimil_sparse',
-                    data_type=nmslib.DataType.SPARSE_VECTOR)
+                    method="hnsw",
+                    space="cosinesimil_sparse",
+                    data_type=nmslib.DataType.SPARSE_VECTOR,
+                )
                 self.cosaugmentor.search_index.loadIndex(
-                    str(self.root / self.search_index_filename), load_data=True)
+                    str(self.root / self.search_index_filename), load_data=True
+                )
                 if self.query_params is not None:
-                    self.cosaugmentor.search_index.setQueryTimeParams(
-                        self.query_params)
+                    self.cosaugmentor.search_index.setQueryTimeParams(self.query_params)
                 else:
-                    self.cosaugmentor.search_index.setQueryTimeParams(
-                        {'efSearch': 100})
+                    self.cosaugmentor.search_index.setQueryTimeParams({"efSearch": 100})
 
         out = []
         for i in tqdm(range(len(self.rxn_smis))):
             out.append(self[i])
         return out
 
-    def precompute(self,
-                   output_filename: str,
-                   rxn_smis: Union[List[str],
-                                   Union[str,
-                                         bytes,
-                                         os.PathLike]],
-                   distributed: Optional[bool] = False,
-                   parallel: Optional[bool] = True):
+    def precompute(
+        self,
+        output_filename: str,
+        rxn_smis: Union[List[str], Union[str, bytes, os.PathLike]],
+        distributed: Optional[bool] = False,
+        parallel: Optional[bool] = True,
+    ):
         self.load_smis(rxn_smis)
 
         if (self.root / output_filename).exists():
-            print(self.root / output_filename, 'already exists!')
+            print(self.root / output_filename, "already exists!")
             return
         else:
-            print('Precomputing...')
+            print("Precomputing...")
 
         if distributed:
-            print('distributed computing is not supported now!')
+            print("distributed computing is not supported now!")
             return
-            # TODO: add support & documentation for distributed processing 
+            # TODO: add support & documentation for distributed processing
             # from mpi4py import MPI
             # from mpi4py.futures import MPIPoolExecutor as Pool
 
@@ -252,14 +253,16 @@ class AugmentedData:
             # print(f'Distributing over {num_workers} total workers')
         elif parallel:
             from concurrent.futures import ProcessPoolExecutor as Pool
+
             try:
                 num_workers = len(os.sched_getaffinity(0))
             except AttributeError:
                 num_workers = os.cpu_count()
-            print(f'Parallelizing over {num_workers} cores')
+            print(f"Parallelizing over {num_workers} cores")
         else:
             from concurrent.futures import ProcessPoolExecutor as Pool
-            print('Not parallelizing!')
+
+            print("Not parallelizing!")
             num_workers = 1
 
         with Pool(max_workers=num_workers) as client:
@@ -271,17 +274,16 @@ class AugmentedData:
         sparse.save_npz(self.root / output_filename, diff_fps)
         return
 
-    def load_smis(
-            self, rxn_smis: Union[List[str], Union[str, bytes, os.PathLike]]):
+    def load_smis(self, rxn_smis: Union[List[str], Union[str, bytes, os.PathLike]]):
         if isinstance(rxn_smis, list) and isinstance(rxn_smis[0], str):
-            print('List of reaction SMILES strings detected.\n')
+            print("List of reaction SMILES strings detected.\n")
             self.rxn_smis = rxn_smis
         elif isinstance(rxn_smis, str):
-            print('Loading reaction SMILES from filename provided.\n')
-            with open(self.root / rxn_smis, 'rb') as handle:
+            print("Loading reaction SMILES from filename provided.\n")
+            with open(self.root / rxn_smis, "rb") as handle:
                 self.rxn_smis = pickle.load(handle)
         else:
-            raise ValueError('Error! No reaction SMILES provided.')
+            raise ValueError("Error! No reaction SMILES provided.")
         self.shape = (len(self.rxn_smis), self.mol_fps[0].shape[-1])
         # e.g. (40004, 4096) for train, needed to allow .shape[0] attribute
         # from ReactionDataset.__len__()
@@ -298,12 +300,13 @@ def spy_sparse2torch_sparse(data: scipy.sparse.csr_matrix) -> tensor:
     coo_data = data.tocoo()
     indices = torch.LongTensor([coo_data.row, coo_data.col])
     tensor = torch.sparse.IntTensor(
-        indices, torch.from_numpy(values), [samples, features])
+        indices, torch.from_numpy(values), [samples, features]
+    )
     return tensor
 
 
 class ReactionDataset(Dataset):
-    '''
+    """
     NOTE: ReactionDataset assumes that rxn_fp already exists,
     unless onthefly = True, in which case, an already initialised augmentor object must be passed.
     Otherwise, a RuntimeError is raised and training is interrupted.
@@ -314,33 +317,34 @@ class ReactionDataset(Dataset):
     onthefly : bool (Default = False)
         whether to generate augmentations on the fly
         if pre-computed filename is given, loading that file takes priority
-    '''
+    """
 
     def __init__(
-            self,
-            input_dim: int,
-            precomp_rxnfp_filename: str = None,
-            rxn_smis_filename: Optional[str] = None,
-            onthefly: bool = False,
-            augmented_data: Optional[AugmentedData] = None,
-            query_params: Optional[dict] = None,
-            search_index_filename: Optional[str] = None,
-            root: Optional[str] = None,
-            viz_neg: Optional[bool] = False):
+        self,
+        input_dim: int,
+        precomp_rxnfp_filename: str = None,
+        rxn_smis_filename: Optional[str] = None,
+        onthefly: bool = False,
+        augmented_data: Optional[AugmentedData] = None,
+        query_params: Optional[dict] = None,
+        search_index_filename: Optional[str] = None,
+        root: Optional[str] = None,
+        viz_neg: Optional[bool] = False,
+    ):
         self.input_dim = input_dim
         self.onthefly = onthefly  # needed by worker_init_fn
         self.viz_neg = viz_neg  # TODO
 
         if root is None:
-            root = Path(__file__).resolve().parents[1] / 'data' / 'cleaned_data'
-            
+            root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
+
         if (root / precomp_rxnfp_filename).exists():
-            print('Loading pre-computed reaction fingerprints...')
+            print("Loading pre-computed reaction fingerprints...")
             self.data = sparse.load_npz(root / precomp_rxnfp_filename)
             self.data = self.data.tocsr()
 
         elif self.onthefly:
-            print('Generating augmentations on the fly...')
+            print("Generating augmentations on the fly...")
             self.data = augmented_data
             self.data.load_smis(rxn_smis_filename)
             # will be used by expt_utils._worker_init_fn_nmslib_
@@ -350,48 +354,51 @@ class ReactionDataset(Dataset):
 
         else:
             raise RuntimeError(
-                'Please provide precomp_rxnfp_filename or set onthefly = True!')
+                "Please provide precomp_rxnfp_filename or set onthefly = True!"
+            )
 
     def __getitem__(self, idx: Union[int, tensor]) -> tensor:
-        ''' Returns 1 training sample: [pos_rxn_fp, neg_rxn_1_fp, ..., neg_rxn_K-1_fp]
-        '''
+        """Returns 1 training sample: [pos_rxn_fp, neg_rxn_1_fp, ..., neg_rxn_K-1_fp]"""
         if torch.is_tensor(idx):
             idx = idx.tolist()
         return torch.as_tensor(
-            self.data[idx].toarray().reshape(-1, self.input_dim)).float()
+            self.data[idx].toarray().reshape(-1, self.input_dim)
+        ).float()
 
     def __len__(self):
         return self.data.shape[0]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     augmentations = {
-        'rdm': {'num_neg': 2},
-        'cos': {'num_neg': 2, 'query_params': None},
-        'bit': {'num_neg': 2, 'num_bits': 3, 'increment_bits': 1},
-        'mut': {'num_neg': 10},
+        "rdm": {"num_neg": 2},
+        "cos": {"num_neg": 2, "query_params": None},
+        "bit": {"num_neg": 2, "num_bits": 3, "increment_bits": 1},
+        "mut": {"num_neg": 10},
     }
 
-    lookup_dict_filename = '50k_mol_smi_to_sparse_fp_idx.pickle'
-    mol_fps_filename = '50k_count_mol_fps.npz'
-    search_index_filename = '50k_cosine_count.bin'
-    mut_smis_filename = '50k_neg150_rad2_maxsize3_mutprodsmis.pickle'
-    
+    lookup_dict_filename = "50k_mol_smi_to_sparse_fp_idx.pickle"
+    mol_fps_filename = "50k_count_mol_fps.npz"
+    search_index_filename = "50k_cosine_count.bin"
+    mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
+
     augmented_data = dataset.AugmentedData(
         augmentations,
         lookup_dict_filename,
         mol_fps_filename,
         search_index_filename,
-        mut_smis_filename, 
-        seed=random_seed)
+        mut_smis_filename,
+        seed=random_seed,
+    )
 
-    rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'
-    for phase in ['train', 'valid', 'test']:
+    rxn_smis_file_prefix = "50k_clean_rxnsmi_noreagent"
+    for phase in ["train", "valid", "test"]:
         augmented_data.precompute(
-            output_filename=precomp_file_prefix + f'_{phase}.npz',
-            rxn_smis=rxn_smis_file_prefix + f'_{phase}.pickle',
+            output_filename=precomp_file_prefix + f"_{phase}.npz",
+            rxn_smis=rxn_smis_file_prefix + f"_{phase}.pickle",
             distributed=False,
-            parallel=False)
+            parallel=False,
+        )
 
     # from tqdm import tqdm
     # with open('data/cleaned_data/50k_clean_rxnsmi_noreagent_train.pickle', 'rb') as handle:
