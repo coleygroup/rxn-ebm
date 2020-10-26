@@ -39,6 +39,9 @@ For ease of reproducibility, the data is available at: https://drive.google.com/
 With the above data, you can simply specify the augmentations to apply, and trainEBM.py will pre-compute the positive & negative reaction fingerprints for training and testing. For additional convenience, a sample set of pre-computed reaction fingerprints has also been provided:
 - ```50k_rdm_5_cos_5_bit_5_1_1_mut_10_{split}.npz```, the syntax being: ```{dataset_name}_rdm_{num_rdm_negs}_cos_{num_cos_negs}_bit_{num_bit_negs}_{num_bits}_{increment_bits}_mut_{num_mut_negs}_{split}.npz``` 
 
+## Misc details
+This project uses ``` black ``` for auto-formatting to the ``` pep8 ``` style guide, and ``` isort ``` to sort imports. ``` pylint ``` is also used in ``` vscode ``` to lint all code. 
+
 ## Folder organisation
 ```
  rxn-ebm
