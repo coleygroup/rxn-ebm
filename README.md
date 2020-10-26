@@ -17,6 +17,11 @@ Energy-based modeling of chemical reactions
     # install crem
     pip install crem
 
+## Data setup
+The data was obtained from https://www.dropbox.com/sh/6ideflxcakrak10/AADN-TNZnuGjvwZYiLk7zvwra/schneider50k?dl=0&subfolder_nav_tracking=1
+We rename these 3 excel files to 'schneider50k_train.csv', 'schneider50k_test.csv' and 'schneider50k_valid.csv', and save them to data/original_data
+Then, simply adjust the parameters as you wish in trainEBM.py and run the script. (Currently adding more arguments to be parsed from command-line)  
+
 ## Folder organisation
 ```
  rxn-ebm
