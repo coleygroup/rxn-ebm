@@ -567,6 +567,51 @@ def clean_rxn_smis_all_phases(
                 cleaned_rxn_smis[phase], handle, protocol=pickle.HIGHEST_PROTOCOL
             )
 
+def remove_overlapping_rxn_smis(
+    rxn_smi_file_prefix: str = "50k_clean_rxnsmi_noreagent",
+    root: Optional[Union[str, bytes, os.PathLike]] = None
+):
+    """
+    docstring
+    """
+    if root is None:
+        root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
+    if (root / root / f'{rxn_smi_file_prefix}_dup_idxs.pickle').exists():
+        print(f"At: {root / f'{rxn_smi_file_prefix}_dup_idxs.pickle'}")
+        print("The dup_idxs file already exists!")
+        return
+
+    rxn_smi_phases = {'train': None, 'valid': None, 'test': None} 
+    for phase in rxn_smi_phases:
+        with open(root / f'{rxn_smi_file_prefix}_{phase}.pickle', 'rb') as handle:
+            rxn_smi_phases[phase] = pickle.load(handle)
+             
+    dup_idxs = {'test_in_train': [], 'test_in_valid': [], 'valid_in_train': []}
+    for i, rxn_smi in enumerate(tqdm(rxn_smi_phases['test'])):
+        if rxn_smi in rxn_smi_phases['train']:
+            dup_idxs['test_in_train'].append(rxn_smi_phases['train'].index(rxn_smi))
+            rxn_smi_phases['train'].remove(rxn_smi)
+            # print(f'At idx {i} of test, {rxn_smi} also in train at {dup_idx_train}', '\n')
+
+        elif rxn_smi in rxn_smi_phases['valid']:
+            dup_idxs['test_in_valid'].append(rxn_smi_phases['valid'].index(rxn_smi))
+            rxn_smi_phases['valid'].remove(rxn_smi)
+            # print(f'At idx {i} of test, {rxn_smi} also in valid at {dup_idx_valid}', '\n')
+
+    for i, rxn_smi in enumerate(tqdm(rxn_smi_phases['valid'])):
+        if rxn_smi in rxn_smi_phases['train']:
+            dup_idxs['valid_in_train'].append(rxn_smi_phases['train'].index(rxn_smi))
+            rxn_smi_phases['train'].remove(rxn_smi)
+            # print(f'At idx {i} of valid, {rxn_smi} also in train at {dup_idx_train}', '\n')
+
+    for key, value in dup_idxs.items():
+        print(key, len(value))
+    for phase in rxn_smi_phases:
+        print(phase, len(rxn_smi_phases[phase]))
+        with open(root / f'{rxn_smi_file_prefix}_{phase}.pickle', 'wb') as handle:
+            pickle.dump(rxn_smi_phases[phase], handle)
+    with open(root / f'{rxn_smi_file_prefix}_dup_idxs.pickle', 'wb') as handle:
+        pickle.dump(dup_idxs, handle)
 
 def get_uniq_mol_smis_all_phases(
     rxn_smi_file_prefix: str = "50k_clean_rxnsmi_noreagent",
@@ -649,14 +694,18 @@ if __name__ == "__main__":
     # TODO: add all arguments
     clean_rxn_smis_all_phases(
         args.raw_smi_pre,
-        args.clean_smi_pre,  # '50k_clean_rxnsmi_keepreagents_mapped_keepallrcts',
-        dataset_name=args.dataset_name,  # dataset_name='50k',
-        lines_to_skip=args.lines_to_skip,  # lines_to_skip=1,
-        keep_all_rcts=args.keep_all_rcts,  # keep_all_rcts=False,
-        remove_dup_rxns=args.remove_dup_rxns,  # remove_dup_rxns=False,
-        remove_rct_mapping=args.remove_rct_mapping,  # remove_rct_mapping=False,
-        remove_all_mapping=args.remove_all_mapping,
-    )  # remove_all_mapping=False)
+        args.clean_smi_pre, # '50k_clean_rxnsmi_noreagent_allmapped',  
+        dataset_name=args.dataset_name,   
+        lines_to_skip=args.lines_to_skip,   
+        keep_all_rcts=args.keep_all_rcts,   
+        remove_dup_rxns=args.remove_dup_rxns,   
+        remove_rct_mapping=args.remove_rct_mapping, 
+        remove_all_mapping=args.remove_all_mapping 
+    )  
+    remove_overlapping_rxn_smis(
+        rxn_smi_file_prefix=args.clean_smi_pre, # '50k_clean_rxnsmi_noreagent_allmapped',  
+        root=args.clean_smi_root,
+    )
     get_uniq_mol_smis_all_phases(
         rxn_smi_file_prefix=args.clean_smi_pre,
         root=args.clean_smi_root,

@@ -73,8 +73,7 @@ def gen_crem_negs(
         print("mutprodsmis file not found. Generating crem negatvies...")
         print("This will take a while!! (~9-12 hours for 150 negs/rxn on USPTO_50k...)")
 
-    all_mut_prod_smi = {}
-    insufficient = {}
+    all_mut_prod_smi, insufficient = {}, {} 
     for phase in phases:
         with open(root / f"{rxn_smi_file_prefix}_{phase}.pickle", "rb") as handle:
             rxn_smi_phase = pickle.load(handle)

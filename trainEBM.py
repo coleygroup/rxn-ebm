@@ -124,7 +124,6 @@ def parse_args():
 
 def prepare_data(args):
     # TODO: parse all arguments
-
     if args.clean_smi_root:
         print(f"Making dir {args.clean_smi_root}")
         os.makedirs(args.clean_smi_root, exist_ok=True)
@@ -132,14 +131,18 @@ def prepare_data(args):
     # TODO: add all arguments
     clean_smiles.clean_rxn_smis_all_phases(
         input_file_prefix=args.raw_smi_pre,
-        output_file_prefix=args.clean_smi_pre,  # '50k_clean_rxnsmi_keepreagents_mapped_keepallrcts',
-        dataset_name=args.dataset_name,  # dataset_name='50k',
-        lines_to_skip=args.lines_to_skip,  # lines_to_skip=1,
-        keep_all_rcts=args.keep_all_rcts,  # keep_all_rcts=False,
-        remove_dup_rxns=args.remove_dup_rxns,  # remove_dup_rxns=False,
-        remove_rct_mapping=args.remove_rct_mapping,  # remove_rct_mapping=False,
+        output_file_prefix=args.clean_smi_pre,   
+        dataset_name=args.dataset_name,   
+        lines_to_skip=args.lines_to_skip,  
+        keep_all_rcts=args.keep_all_rcts, 
+        remove_dup_rxns=args.remove_dup_rxns, 
+        remove_rct_mapping=args.remove_rct_mapping,  
         remove_all_mapping=args.remove_all_mapping,
-    )  # remove_all_mapping=False)
+    )   
+    clean_smiles.remove_overlapping_rxn_smis(
+        rxn_smi_file_prefix=args.clean_smi_pre,
+        root=args.clean_smi_root,
+    )
     clean_smiles.get_uniq_mol_smis_all_phases(
         rxn_smi_file_prefix=args.clean_smi_pre,
         root=args.clean_smi_root,
@@ -222,7 +225,7 @@ def trainEBM(args):
     train_args = {
         "batch_size": 4096,
         "learning_rate": 8e-3,  # to try: lr_finder & lr_schedulers
-        "optimizer": torch.optim.Adam,
+        "optimizer": "Adam",
         "epochs": 30,
         "early_stop": True,
         "min_delta": 1e-4,

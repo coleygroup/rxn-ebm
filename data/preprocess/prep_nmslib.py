@@ -119,9 +119,9 @@ def build_and_save_index(
         return
 
     mol_fps = sparse.load_npz(root / mol_fps_filename)
-    mol_fps_validated = validate_sparse_matrix(mol_fps)
+    # mol_fps = validate_sparse_matrix(mol_fps)
     index = build_nmslib_index(
-        method="hnsw", space="cosinesimil_sparse", data=mol_fps_validated, M=30, efC=100
+        method="hnsw", space="cosinesimil_sparse", data=mol_fps, M=30, efC=100
     )
     index.saveIndex(str(root / output_filename), save_data=True)
     print("Successfully built and saved index!")
