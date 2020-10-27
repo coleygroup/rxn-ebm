@@ -18,7 +18,7 @@ Energy-based modeling of chemical reactions
     pip install crem
 
 ## Training
-Simply adjust the parameters as you wish in trainEBM.py and run the script. (Currently adding more arguments to be parsed from command-line) <br>
+Simply adjust the parameters as you wish in ```trainEBM.py``` and run the script. **(Currently adding more arguments to be parsed from command-line)** <br>
 
 ## Data setup
 #### Data source
@@ -32,7 +32,7 @@ The entire data preprocessing pipeline can be run from ```trainEBM.prepare_data(
 3. Converts unique molecule SMILES into a matrix of Morgan count molecular fingerprints.
 4. Generates a lookup table (dictionary) mapping molecular SMILES strings into the corresponding index in that matrix of Morgan count fingerprints
 5. Builds a nearest-neighbour search index using the [nmslib](https://github.com/DrrDom/crem) package
-6. Generates a (very) large database of [CReM](https://github.com/DrrDom/crem) negatives, mapping each product SMILES string in the dataset (key), to a list of highly similar, mutated product SMILES strings (value). Note that this step can take from 10-13 hours on the USPTO_50k dataset for 150 mutated products / original product, and that CReM does not guarantee the requested number of mutated products. To deal with this, we pad with vectors of all 0's, and implement a simple masking layer in our network to ignore these vectors. <br>
+6. Generates a (very) large database of [CReM](https://github.com/DrrDom/crem) negatives, mapping each product SMILES string in the dataset (key), to a list of highly similar, mutated product SMILES strings (value). Note that this step can take from 10-13 hours on the USPTO_50k dataset for 150 mutated products / original product, and that CReM does not guarantee the requested number of mutated products. To deal with this, we pad with vectors of all 0's, and **(TODO)** implement a simple masking layer in our network to ignore these vectors. <br>
 
 #### List of provided data for pre-training rxn-ebm:
 For ease of reproducibility, all data is [available on Google Drive](https://drive.google.com/drive/folders/1ISXFL7SuVY_sW3z36hQfpyDMH1KF22nS?usp=sharing):
@@ -51,17 +51,17 @@ For our fine-tuning step, we trained a zoo of popular & state-of-the-art retrosy
 Specifically, we perform these steps:
 1. Keep all atom mapping
 2. Remove reaction SMILES strings with product molecules that are too small and clearly incorrect. The criteria used was ```len(prod_smi) < 3```. 4 reaction SMILES strings were caught by this criteria, with products: 		
-    - 'CN[C@H]1CC[C@@H](c2ccc(Cl)c(Cl)c2)c2ccc([I:19])cc21>>[IH:19]'
-    - 'O=C(CO)N1CCC(C(=O)[OH:28])CC1>>[OH2:28]'
-    - 'CC(=O)[Br:4]>>[BrH:4]'
-    - 'O=C(Cn1c(-c2ccc(Cl)c(Cl)c2)nc2cccnc21)[OH:10]>>[OH2:10]'
+    - ```'CN[C@H]1CC[C@@H](c2ccc(Cl)c(Cl)c2)c2ccc([I:19])cc21>>[IH:19]'```
+    - ```'O=C(CO)N1CCC(C(=O)[OH:28])CC1>>[OH2:28]'```
+    - ```'CC(=O)[Br:4]>>[BrH:4]'```
+    - ```'O=C(Cn1c(-c2ccc(Cl)c(Cl)c2)nc2cccnc21)[OH:10]>>[OH2:10]'```
 3. Remove all duplicate reaction SMILES strings
 4. Remove reaction SMILES in the training data that overlap with validation/test sets + validation data that overlap with the test set.
     - test_appears_in_train: 50
     - test_appears_in_valid: 6
     - valid_appears_in_train: 44
-5. Finally, we obtain an (extra) clean dataset of:
-    - Train: 39713 reaction SMILES
+5. Finally, we obtain an (extra) clean dataset of reaction SMILES:
+    - Train: 39713
     - Valid: 4989
     - Test: 5005
 
