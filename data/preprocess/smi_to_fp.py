@@ -71,9 +71,9 @@ def gen_lookup_dict_from_file(
     return mol_smi_to_fp
 
 
-##################################################
-############# MOLECULAR FINGERPRINTS #############
-##################################################
+########################################################
+############# COUNT MOLECULAR FINGERPRINTS #############
+########################################################
 def mol_smi_to_count_fp(
     mol_smi: str, radius: int = 3, fp_size: int = 4096, dtype: str = "int16"
 ) -> scipy.sparse.csr_matrix:
@@ -159,6 +159,9 @@ def gen_count_mol_fps_from_file(
     sparse.save_npz(root / output_filename, count_mol_fps)
 
 
+########################################################
+############### BIT MOLECULAR FINGERPRINTS #############
+########################################################
 def mol_smi_to_bit_fp(
     mol_smi: str, radius: int = 3, fp_size: int = 4096, dtype: str = "int8"
 ) -> sparse_fp:
@@ -207,112 +210,9 @@ def gen_bit_mol_fps_from_file(
     sparse.save_npz(root / output_filename, bit_mol_fps)
     return root / output_filename
 
-
-##################################################
-######### RAW FINGERPRINTS (DEPRECATED) ##########
-##################################################
-# def rxn_smi_to_raw_fp(rxn_smi: str,
-#                       lookup_dict,
-#                       dict,
-#                       sparse_mol_fps: scipy.sparse.csr_matrix,
-#                       max_rcts: int) -> Tuple[scipy.sparse.csr_matrix,
-#                                               int]:
-#     ''' TODO: make list_rxn_smis_to_raw_fps  function
-#     Given a reaction SMILES string, splits it into reactants and product, and then
-#     uses the lookup dict to index into the correct row of the sparse fp matrix,
-#     and concatenates molecular fingerprints into a long, row sparse vector, along with
-#     information on number of reactants in each reaction
-
-#     Agnostic to the type of fingerprint used, as long as they are in a scipy.sparse.csr_matrix format
-
-#     Parameters
-#     ----------
-#     rxn_smi : str
-#         The reaction SMILES string to be converted
-#     lookup_dict : dict
-#         The lookup dict mapping each unique molecule SMILES string to the corresponding index in the
-#         sparse matrix of molecular fingerprints
-#     sparse_mol_fps : scipy.sparse.csr_matrix
-#         The sparse matrix containing the molecular fingerprints. Accepts both bit and count fingerprints
-#     max_rcts : int
-#         The maximum number of reactants possible in any reaction for the given dataset (train + valid + test)
-
-#     Returns
-#     -------
-#     raw_fp : scipy.sparse.csr_matrix
-#         Each row contains horizontally stacked sparse fingerprints of each reactant molecule
-#         followed by the product molecule, i.e. each row is: 1 x (reactant fp size x max #reactants in entire dataset)
-#     num_rcts : int
-#         An integer stating the number of reactants in that reaction
-#     '''
-#     # from benchmarks, csr_matrix is almost 7x faster than lil_matrix!
-#     rct_fps = sparse.csr_matrix(
-#         (max_rcts,
-#          sparse_mol_fps[0].shape[1]),
-#         dtype=sparse_mol_fps[0].dtype)
-#     # prod_fp = sparse.csr_matrix((1, sparse_mol_fps[0].shape[1]), dtype = sparse_mol_fps[0].dtype)
-
-#     rcts_smi = rxn_smi.split('>')[0].split('.')
-#     for i, rct_smi in enumerate(rcts_smi):
-#         try:
-#             rct_index = lookup_dict[rct_smi]
-#             rct_fps[i] = sparse_mol_fps[rct_index]
-#         except KeyError:  # mol_smi is not in lookup_dict
-#             rct_fps[i] = sparse.csr_matrix(
-#                 np.zeros((1, sparse_mol_fps[0].shape[1])), dtype=sparse_mol_fps[0].dtype)
-# # print(len(rct_fps[i].nonzero()[0])) # these have to sum up to
-# # len(raw_fp.nonzero()[0])
-#     rct_fps = rct_fps.reshape((1, -1))
-
-#     prod_smi = rxn_smi.split('>')[-1]
-#     prod_index = lookup_dict[prod_smi]
-#     prod_fp = sparse_mol_fps[prod_index]
-# # print(len(prod_fp[0].nonzero()[0])) # these have to sum up to
-# # len(raw_fp.nonzero()[0])
-
-#     raw_fp = sparse.hstack([rct_fps, prod_fp]).tocsr()
-#     return raw_fp, len(rcts_smi)
-
-
-# def list_rxn_smis_to_raw_fps(
-#         rxn_smis_file: List[str],
-#         lookup_dict: dict,
-#         sparse_mol_fps: scipy.sparse.csr_matrix,
-#         max_rcts: int) -> scipy.sparse.csr_matrix:
-#     '''
-#     Iterates through a list of reaction SMILES strings and uses rxn_smi_to_raw_fp to
-#     convert them into a tuple: (sparse matrix of raw molecular fingerprints, list of the number of reactants in each reaction)
-#     '''
-#     list_sparse_raw_fps, list_num_rcts = [], []
-#     for rxn_smi in tqdm(rxn_smis_file, total=len(rxn_smis_file)):
-#         raw_fp, num_rcts = rxn_smi_to_raw_fp(
-#             rxn_smi, lookup_dict, sparse_mol_fps, max_rcts)
-#         list_sparse_raw_fps.append(raw_fp)
-#         list_num_rcts.append(num_rcts)
-
-#     raw_fps_matrix = sparse.vstack(list_sparse_raw_fps)
-#     return raw_fps_matrix, list_num_rcts
-
-
-# def gen_raw_fps_from_file():
-#     '''
-#     TODO: realised that this function is almost identical to gen_diff_fps_from_file
-#     just that this uses list_rxn_smis_to_raw_fps, instead of list_rxn_smis_to_diff_fps
-
-#     Therefore, to make this suite of functions more intuitive, maybe it's better for me to
-#     wrap all of them in a class, maybe called smiEncoder, which, at __init__, loads the needed
-#     files (or makes them, if they don't yet exist, like the lookup_dict, the mol_fp files)
-#     and then the user can call whatever functions they want (like gen_raw_fps or gen_diff_fps)
-#     The user will have to provide some parameters, like the filenames/paths, root path,
-#     the fp_type (count or bit, for now), fp_size, radius, dtype, output filename, whether to
-#     parallelize / do distributed processing
-#     '''
-#     return
-
-
-############################################
-######### DIFFERENCE FINGERPRINTS ##########
-############################################
+################################################################
+######### DIFFERENCE FINGERPRINTS (NOT ACTUALLY USED) ##########
+################################################################
 def rxn_smi_to_diff_fp(
     rxn_smi: str,
     lookup_dict: dict,
@@ -520,3 +420,107 @@ if __name__ == "__main__":
     gen_count_mol_fps_from_file()
     gen_lookup_dict_from_file()
     # gen_diff_fps_from_file()
+
+
+
+
+##################################################
+######### RAW FINGERPRINTS (DEPRECATED) ##########
+##################################################
+# def rxn_smi_to_raw_fp(rxn_smi: str,
+#                       lookup_dict,
+#                       dict,
+#                       sparse_mol_fps: scipy.sparse.csr_matrix,
+#                       max_rcts: int) -> Tuple[scipy.sparse.csr_matrix,
+#                                               int]:
+#     ''' TODO: make list_rxn_smis_to_raw_fps  function
+#     Given a reaction SMILES string, splits it into reactants and product, and then
+#     uses the lookup dict to index into the correct row of the sparse fp matrix,
+#     and concatenates molecular fingerprints into a long, row sparse vector, along with
+#     information on number of reactants in each reaction
+
+#     Agnostic to the type of fingerprint used, as long as they are in a scipy.sparse.csr_matrix format
+
+#     Parameters
+#     ----------
+#     rxn_smi : str
+#         The reaction SMILES string to be converted
+#     lookup_dict : dict
+#         The lookup dict mapping each unique molecule SMILES string to the corresponding index in the
+#         sparse matrix of molecular fingerprints
+#     sparse_mol_fps : scipy.sparse.csr_matrix
+#         The sparse matrix containing the molecular fingerprints. Accepts both bit and count fingerprints
+#     max_rcts : int
+#         The maximum number of reactants possible in any reaction for the given dataset (train + valid + test)
+
+#     Returns
+#     -------
+#     raw_fp : scipy.sparse.csr_matrix
+#         Each row contains horizontally stacked sparse fingerprints of each reactant molecule
+#         followed by the product molecule, i.e. each row is: 1 x (reactant fp size x max #reactants in entire dataset)
+#     num_rcts : int
+#         An integer stating the number of reactants in that reaction
+#     '''
+#     # from benchmarks, csr_matrix is almost 7x faster than lil_matrix!
+#     rct_fps = sparse.csr_matrix(
+#         (max_rcts,
+#          sparse_mol_fps[0].shape[1]),
+#         dtype=sparse_mol_fps[0].dtype)
+#     # prod_fp = sparse.csr_matrix((1, sparse_mol_fps[0].shape[1]), dtype = sparse_mol_fps[0].dtype)
+
+#     rcts_smi = rxn_smi.split('>')[0].split('.')
+#     for i, rct_smi in enumerate(rcts_smi):
+#         try:
+#             rct_index = lookup_dict[rct_smi]
+#             rct_fps[i] = sparse_mol_fps[rct_index]
+#         except KeyError:  # mol_smi is not in lookup_dict
+#             rct_fps[i] = sparse.csr_matrix(
+#                 np.zeros((1, sparse_mol_fps[0].shape[1])), dtype=sparse_mol_fps[0].dtype)
+# # print(len(rct_fps[i].nonzero()[0])) # these have to sum up to
+# # len(raw_fp.nonzero()[0])
+#     rct_fps = rct_fps.reshape((1, -1))
+
+#     prod_smi = rxn_smi.split('>')[-1]
+#     prod_index = lookup_dict[prod_smi]
+#     prod_fp = sparse_mol_fps[prod_index]
+# # print(len(prod_fp[0].nonzero()[0])) # these have to sum up to
+# # len(raw_fp.nonzero()[0])
+
+#     raw_fp = sparse.hstack([rct_fps, prod_fp]).tocsr()
+#     return raw_fp, len(rcts_smi)
+
+
+# def list_rxn_smis_to_raw_fps(
+#         rxn_smis_file: List[str],
+#         lookup_dict: dict,
+#         sparse_mol_fps: scipy.sparse.csr_matrix,
+#         max_rcts: int) -> scipy.sparse.csr_matrix:
+#     '''
+#     Iterates through a list of reaction SMILES strings and uses rxn_smi_to_raw_fp to
+#     convert them into a tuple: (sparse matrix of raw molecular fingerprints, list of the number of reactants in each reaction)
+#     '''
+#     list_sparse_raw_fps, list_num_rcts = [], []
+#     for rxn_smi in tqdm(rxn_smis_file, total=len(rxn_smis_file)):
+#         raw_fp, num_rcts = rxn_smi_to_raw_fp(
+#             rxn_smi, lookup_dict, sparse_mol_fps, max_rcts)
+#         list_sparse_raw_fps.append(raw_fp)
+#         list_num_rcts.append(num_rcts)
+
+#     raw_fps_matrix = sparse.vstack(list_sparse_raw_fps)
+#     return raw_fps_matrix, list_num_rcts
+
+
+# def gen_raw_fps_from_file():
+#     '''
+#     TODO: realised that this function is almost identical to gen_diff_fps_from_file
+#     just that this uses list_rxn_smis_to_raw_fps, instead of list_rxn_smis_to_diff_fps
+
+#     Therefore, to make this suite of functions more intuitive, maybe it's better for me to
+#     wrap all of them in a class, maybe called smiEncoder, which, at __init__, loads the needed
+#     files (or makes them, if they don't yet exist, like the lookup_dict, the mol_fp files)
+#     and then the user can call whatever functions they want (like gen_raw_fps or gen_diff_fps)
+#     The user will have to provide some parameters, like the filenames/paths, root path,
+#     the fp_type (count or bit, for now), fp_size, radius, dtype, output filename, whether to
+#     parallelize / do distributed processing
+#     '''
+#     return

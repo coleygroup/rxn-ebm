@@ -54,7 +54,7 @@ def get_optimizer(optimizer: str) -> torch.optim.Optimizer:
 def initialize_weights(model: nn.Module) -> None:
     """
     Initializes the weights of a model in place.
-    :param model: An PyTorch model.
+    :param model: A PyTorch model.
     """
     for param in model.parameters():
         if param.dim() == 1:

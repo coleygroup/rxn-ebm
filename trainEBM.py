@@ -312,7 +312,8 @@ def resumeEBM(args):
     optimizer_name = "Adam"  # USER INPUT, TODO: infer this from saved_stats
     model_name = "FeedforwardEBM"  # USER INPUT
     date_trained = "01_10_2020"  # USER INPUT
-    saved_stats_filename = "FeedforwardEBM_rdm_1_cos_1_bit_1_5_stats.pkl"  # f'{model_name}_{old_expt_name}_stats.pkl'
+    old_expt_name = "" # USER INPUT 
+    saved_stats_filename = f'{model_name}_{old_expt_name}_stats.pkl'
     checkpoint_folder = expt_utils.setup_paths(
         "LOCAL", load_trained=True, date_trained=date_trained
     )

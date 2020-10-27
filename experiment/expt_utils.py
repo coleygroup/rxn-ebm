@@ -21,8 +21,8 @@ def setup_paths(
     load_trained: Optional[bool] = False,
     date_trained: Optional[str] = None,
     root: Optional[Union[str, bytes, os.PathLike]] = None,
-):
-    """
+) -> Union[str, bytes, os.PathLike]:
+    """ TODO: return #scores_folder #cleaned_data_folder #raw_data_folder
     Parameters
     ----------
     root : Union[str, bytes, os.PathLike] (Default = None)
@@ -34,25 +34,29 @@ def setup_paths(
             raise ValueError("Please provide date_trained as DD_MM_YYYY")
     else:
         date_trained = date.today().strftime("%d_%m_%Y")
+
     if location.upper() == "LOCAL":
         if root is None:
             root = Path(__file__).resolve().parents[1] / "checkpoints"
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f"created checkpoint_folder: {checkpoint_folder}")
+
     elif location.upper() == "COLAB":
         if root is None:
             root = Path("/content/gdrive/My Drive/rxn_ebm/checkpoints/")
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f"created checkpoint_folder: {checkpoint_folder}")
+
     elif location.upper() == "ENGAGING":
         if root is None:
             root = Path(__file__).resolve().parents[1] / "checkpoints"
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f"created checkpoint_folder: {checkpoint_folder}")
-    return checkpoint_folder
+
+    return checkpoint_folder #scores_folder #cleaned_data_folder #raw_data_folder
 
 
 def load_model_opt_and_stats(
@@ -60,6 +64,8 @@ def load_model_opt_and_stats(
     checkpoint_folder: Union[str, bytes, os.PathLike],
     model_name: str = "FeedforwardFingerprint",
     optimizer_name: str = "Adam",
+    load_best: bool = True,
+    load_epoch : Optional[int] = None
 ):
     """
     Parameters
@@ -68,6 +74,11 @@ def load_model_opt_and_stats(
         filename or pathlike object to the saved stats dictionary (.pkl)
     checkpoint_folder : Union[str, bytes, os.PathLike]
         path to the checkpoint folder containing the .pth.tar file of the saved model & optimizer weights
+    load_best : bool (Default = True)
+        whether to load the checkpointed model from the best epoch (based on validation loss)
+        if false, load_epochs must be provided
+    load_epoch : int (Default = None)
+        the end of the epoch to load the checkpointed model from
 
     TODO: will need to specify cuda:device_id if doing distributed training
     """
@@ -78,15 +89,26 @@ def load_model_opt_and_stats(
     )
 
     try:
-        checkpoint_filename = (
-            saved_stats_filename[:-9]
-            + f'checkpoint_{str(saved_stats["best_epoch"]).zfill(4)}.pth.tar'
-        )
-        checkpoint = torch.load(
-            Path(checkpoint_folder) / Path(checkpoint_filename),
-            map_location=torch.device(curr_device),
-        )
-        print("loaded checkpoint from best_epoch: ", saved_stats["best_epoch"])
+        if load_best:
+            checkpoint_filename = (
+                saved_stats_filename[:-9]
+                + f'checkpoint_{str(saved_stats["best_epoch"]).zfill(4)}.pth.tar'
+            )
+            checkpoint = torch.load(
+                Path(checkpoint_folder) / Path(checkpoint_filename),
+                map_location=torch.device(curr_device),
+            )
+            print("loaded checkpoint from best_epoch: ", saved_stats["best_epoch"])
+        else:
+            checkpoint_filename = (
+                saved_stats_filename[:-9]
+                + f'checkpoint_{str(load_epoch).zfill(4)}.pth.tar'
+            )
+            checkpoint = torch.load(
+                Path(checkpoint_folder) / Path(checkpoint_filename),
+                map_location=torch.device(curr_device),
+            )
+            print("loaded checkpoint from load_epoch: ", load_epoch)
 
         if model_name == "FeedforwardFingerprint" or model_name == "FeedforwardEBM":
             saved_model = FF.FeedforwardFingerprint(**saved_stats["model_args"])
@@ -112,6 +134,7 @@ def load_model_opt_and_stats(
                 for k, v in state.items():
                     if torch.is_tensor(v):
                         state[k] = v.cuda()
+
     except Exception as e:
         print(e)
         print("best_epoch: {}".format(saved_stats["best_epoch"]))
