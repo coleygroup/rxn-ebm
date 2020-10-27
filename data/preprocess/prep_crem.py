@@ -67,6 +67,7 @@ def gen_crem_negs(
         root
         / f"{dataset_name}_neg{num_neg}_rad{radius}_maxsize{max_size}_mutprodsmis.pickle"
     ).exists():
+        print(f'At {root / f"{dataset_name}_neg{num_neg}_rad{radius}_maxsize{max_size}_mutprodsmis.pickle"}:')
         print("The mutprodsmis file already exists!")
         return
     else:

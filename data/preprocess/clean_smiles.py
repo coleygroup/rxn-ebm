@@ -684,6 +684,16 @@ def get_uniq_mol_smis_all_phases(
         ) as handle:
             pickle.dump(list(uniq_reag_smis), handle, protocol=pickle.HIGHEST_PROTOCOL)
 
+def train_valid_test_split(
+    rxn_smi_file_prefix: str = "FULL_clean_rxnsmi_noreagent",
+    root: Optional[Union[str, bytes, os.PathLike]] = None
+):
+    """
+    function to split data into train/valid/test. 
+    mainly intended for USPTO_FULL, since schneider's USPTO_50k is pre-split
+    """
+    pass
+
 
 if __name__ == "__main__":
     args = parse_args()
@@ -715,10 +725,15 @@ if __name__ == "__main__":
 
     # to clean USPTO_FULL (GLN)
     # clean_rxn_smis_all_phases(
-    #     'USPTO_FULL_GLN',
-    #     'USPTO_FULL_GLN_clean_rxnsmi_noreagent',
+    #     'FULL_raw',
+    #     'FULL_clean_rxnsmi_noreagent',
     #     dataset_name='FULL',
-    #     lines_to_skip=1)
+    #     lines_to_skip=1,
+    #     root=None)
+    # remove_overlapping_rxn_smis(
+    #     rxn_smi_file_prefix='FULL',  
+    #     root=None,
+    # )
     # get_uniq_mol_smis_all_phases(rxn_smi_file_prefix='USPTO_FULL_GLN_clean_rxnsmi_noreagent',
     #                              output_filename='USPTO_FULL_mol_smis')
 
