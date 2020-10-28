@@ -591,6 +591,7 @@ def clean_rxn_smis_FULL_one_phase(
     Cleans reaction SMILES strings by removing those with:
         bad product (SMILES not parsable by rdkit)
         too small products, like 'O' (='H2O'), 'N'(='NH3'), i.e. a large reactant fails to be recorded as a product
+        empty reactants, like '>>CC(C)OC(=N)N'
 
     It also checks these, but does not remove them, since atom mapping is not needed for rxn-ebm:
         missing atom mapping (not all atoms in the product molecule have atom mapping),
@@ -639,6 +640,9 @@ def clean_rxn_smis_FULL_one_phase(
         indices of reaction SMILES strings in original dataset with missing atom mapping
     dup_rxn_idxs : List[int]
         indices of reaction SMILES strings in original dataset that are duplicates of an already cleaned & extracted reaction SMILES string
+    empty_rcts_idxs : List[int]
+        indices of reaction SMILES strings in original dataset which have empty reactants,
+        e.g. ">>CC(C)OC(=N)N" 
 
     Also see: move_reagents, remove_mapping
     """
@@ -652,6 +656,7 @@ def clean_rxn_smis_FULL_one_phase(
     missing_map, missing_map_idxs = 0, []
     too_small, too_small_idxs = 0, []
     dup_rxns, dup_rxn_idxs = 0, []
+    empty_rcts, empty_rcts_idxs = 0, []
     extracted = 0
     num_single, num_multi = 0, 0 # to keep track of number of rxns w/ multiple products
 
@@ -664,12 +669,16 @@ def clean_rxn_smis_FULL_one_phase(
             header = next(reader)  # skip first row of csv file  
 
         for i, row in enumerate(tqdm(reader, total=total_lines)):
+            # if i > 1000:
+            #     break
+
             rxn_smi = row[header.index("ReactionSmiles")]
             all_rcts_smi, all_reag_smi, prods_smi = rxn_smi.split(">")
             
             all_rcts_smi = all_rcts_smi.split()[0]  # remove ' |f:1...'
             if all_rcts_smi == "":
                 empty_rcts += 1
+                empty_rcts_idxs.append(i)
                 continue 
 
             prods_smi = prods_smi.split()[0]  # remove ' |f:1...'
@@ -747,6 +756,7 @@ def clean_rxn_smis_FULL_one_phase(
             too_small_idxs,
             missing_map_idxs,
             dup_rxn_idxs,
+            empty_rcts_idxs
         ) 
 
 def clean_rxn_smis_FULL_all_phases(
@@ -1031,7 +1041,7 @@ if __name__ == "__main__":
         os.makedirs(args.clean_smi_root, exist_ok=True)
 
     # TODO: add all arguments
-    if args.dataset_name == '50k':
+    if args.dataset_name == 'HELLO':
         clean_rxn_smis_50k_all_phases(
             args.raw_smi_pre,
             args.clean_smi_pre, # '50k_clean_rxnsmi_noreagent_allmapped',   
