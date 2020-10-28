@@ -1,4 +1,4 @@
-# rxn-ebm
+# rxnebm
 Energy-based modeling of chemical reactions
 
 ## Environmental setup
