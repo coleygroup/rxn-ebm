@@ -162,7 +162,7 @@ def prepare_data(args):
     print("Successfully prepared required data!\n\n")
 
 
-def trainEBM(args):
+def train(args):
     """train EBM from scratch"""
 
     prepare_data(args)
@@ -264,7 +264,7 @@ def trainEBM(args):
     scores_train = experiment.get_topk_acc(phase="train", k=1)
 
 
-def resumeEBM(args):
+def resume(args):
     """resume training from saved checkpoint. Highly similar to trainEBM() except in
     loading saved model, optimizer & stats (& inferring existing model_args from saved stats file)
     """
@@ -365,6 +365,6 @@ if __name__ == "__main__":
     args = parse_args()
 
     if args.train_from_scratch:
-        trainEBM(args)
+        train(args)
     else:
-        resumeEBM(args)
+        resume(args)
