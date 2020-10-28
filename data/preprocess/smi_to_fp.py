@@ -38,6 +38,8 @@ def gen_lookup_dict_from_file(
     """
     if root is None:  # if not provided, goes up 2 levels to get to 'rxn-ebm/'
         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
+    else:
+        root = Path(root)
     if Path(output_filename).suffix != ".pickle":
         output_filename = str(output_filename) + ".pickle"
     if (root / output_filename).exists():
@@ -109,6 +111,8 @@ def gen_count_mol_fps_from_file(
     """TODO: add docstring"""
     if root is None:
         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
+    else:
+        root = Path(root)
     if Path(output_filename).suffix != ".npz":
         output_filename = str(output_filename) + ".npz"
     if (root / output_filename).exists():
@@ -116,7 +120,7 @@ def gen_count_mol_fps_from_file(
         print("The count_mol_fp file already exists!")
         return
 
-    cleaned_mol_smis_path = root / str(Path(mol_smis_filename).stem + "_count.pickle")
+    cleaned_mol_smis_path = root / str(Path(mol_smis_filename).stem + "_cleaned.pickle")
     bad_mol_smis_path = root / str(Path(mol_smis_filename).stem + "_bad.pickle")
     if Path(mol_smis_filename).suffix != ".pickle":
         mol_smis_filename = str(mol_smis_filename) + ".pickle"
@@ -128,16 +132,14 @@ def gen_count_mol_fps_from_file(
         cand_mol_fp = mol_smi_to_count_fp(mol_smi, radius, fp_size, dtype)
         if cand_mol_fp.nnz == 0:
             bad_idx.append(i)
-            # don't add, and keep track of index (or impute, like adding +1 at
-            # 0'th index)
+            # don't add, and keep track of index  
             continue
         else:  # sparsify then append to list
             count_mol_fps.append(cand_mol_fp)
 
     bad_smis = []
-    if (
-        bad_idx
-    ):  # to catch small molecules like 'O', 'Cl', 'N' that give count vector of all 0 values
+    if bad_idx:  
+        # to catch small molecules like 'O', 'Cl', 'N' that give count vector of all 0 values
         # add empty sparse vector at the end as dummy vector
         count_mol_fps.append(sparse.csr_matrix((1, fp_size), dtype=dtype))
         idx_offset = 0  # offset is needed as the indices will dynamically change after popping each bad_smi
@@ -190,6 +192,8 @@ def gen_bit_mol_fps_from_file(
     """
     if root is None:
         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
+    else:
+        root = Path(root)
     if Path(output_filename).suffix != ".npz":
         output_filename = str(output_filename) + ".npz"
     if (root / output_filename).exists():
@@ -210,218 +214,228 @@ def gen_bit_mol_fps_from_file(
     sparse.save_npz(root / output_filename, bit_mol_fps)
     return root / output_filename
 
-################################################################
-######### DIFFERENCE FINGERPRINTS (NOT ACTUALLY USED) ##########
-################################################################
-def rxn_smi_to_diff_fp(
-    rxn_smi: str,
-    lookup_dict: dict,
-    sparse_mol_fps: scipy.sparse.csr_matrix,
-    fp_type: str = "count",
-) -> sparse_fp:
-    """
-    Given a reaction SMILES string, splits it into reactants and product, and then
-    uses the lookup dict to access the correct row of the sparse molecular fp matrix,
-    and then builds the difference fingerprint
-
-    Accepts both count and bit fingerprints.
-    For bit fingerprints, adds an additional step of capping the maximum and minimum values
-    to be 1 and -1 respectively
-
-    Parameters
-    ----------
-    rxn_smi : str
-        The reaction SMILES string to be converted
-    lookup_dict : dict
-        The lookup dict mapping each unique molecule SMILES string to the corresponding index in the
-        sparse matrix of molecular fingerprints
-    sparse_mol_fps : scipy.sparse.csr_matrix
-        The sparse matrix containing the molecular fingerprints
-    fp_type : str (Default = 'count')
-        The fingerprint type. Affects the maximum allowed value of the resulting difference fingerprint
-        For a bit fingerprint, this will be 1. For a count fingerprint, this will be integers > 1.
-
-    Inferred/Automatic parameters
-    -------------------
-    These are automatically determined
-    fp_size : int (Default = 4096)
-        The length of each input molecular fingerprint,
-        which will also be the length of the output sparse matrix
-    dtype : str (Default = 'int16')
-        The data type of the output sparse matrix
-        Recommended: 'int16' for count vectors, 'int8' for bit vectors
-        For bit vectors, we store them as 'boolean' arrays first when summing reactant fingerprints
-        This prevents bit values from exceeding 1. Finally we convert to 'int8' to substract from the product fingerprint
-
-    Returns
-    -------
-    diff_fp : scipy.sparse.csr_matrix
-        The difference fingerprint which is in sparse matrix format with the same shape as the
-        original molecular fingerprint
-
-    Also see: rxn_smi_to_diff_fp, which calls this function
-    """
-    if fp_type == "bit":
-        dtype = (
-            "bool"  # must use boolean array to not exceed bit value of 1 when summing
-        )
-    else:
-        dtype = sparse_mol_fps[0].dtype  # infer dtype, for count fingerprints
-
-    rcts_smi = rxn_smi.split(">")[0].split(".")
-    diff_fp = sparse.csr_matrix(sparse_mol_fps[0].shape, dtype=dtype)  # infer fp_size
-    for rct_smi in rcts_smi:
-        try:
-            rct_index = lookup_dict[rct_smi]
-            sparse_rct_fp = sparse_mol_fps[rct_index]
-            diff_fp = diff_fp + sparse_rct_fp
-        except KeyError:  # one of the small molecules giving bad SMILES, which give completely 0 count fingerprint
-            continue
-
-    if fp_type == "bit":
-        # convert to 'int8' for final subtraction
-        diff_fp = diff_fp.astype("int8")
-    prod_smi = rxn_smi.split(">")[-1]
-    prod_index = lookup_dict[prod_smi]
-    sparse_prod_fp = sparse_mol_fps[prod_index]
-    diff_fp = sparse_prod_fp - diff_fp
-    return diff_fp
-
-
-def list_rxn_smis_to_diff_fps(
-    rxn_smis_file: List[str], lookup_dict: dict, sparse_mol_fps: scipy.sparse.csr_matrix
-) -> scipy.sparse.csr_matrix:
-    """
-    Iterates through given list of reaction SMILES strings and uses rxn_smi_to_diff_fp to
-    generate difference fingerprints, given the lookup dict to access the corresponding sparse molecular fingerprints
-
-    Parameters
-    ----------
-    rxn_smi_file : List[str]
-        A list of reaction SMILES strings
-        There should be a separate file for train, valid & test
-    lookup_dict : dict
-        The lookup dict mapping each unique molecule SMILES string to the corresponding index in the
-        sparse matrix of molecular fingerprints
-    sparse_mol_fps : scipy.sparse.csr_matrix
-        The sparse matrix containing the molecular fingerprints
-
-    Returns
-    -------
-    diff_fps_matrix : scipy.sparse.csr_matrix
-        A sparse matrix where each row is one difference reaction fingerprint
-
-    Also see: rxn_smi_to_diff_fp
-    """
-    # iterate through rxn_smis and use mol_fp_to_diff_fp to do the conversion
-    list_sparse_diff_fps = []
-    for rxn_smi in tqdm(rxn_smis_file, total=len(rxn_smis_file)):
-        diff_fp = rxn_smi_to_diff_fp(rxn_smi, lookup_dict, sparse_mol_fps)
-        list_sparse_diff_fps.append(diff_fp)
-
-    diff_fps_matrix = sparse.vstack(list_sparse_diff_fps)
-    return diff_fps_matrix
-
-
-def gen_diff_fps_from_file(
-    rxn_smi_file_prefix: str = "50k_clean_rxnsmi_noreagent",
-    lookup_dict_filename: Union[
-        str, bytes, os.PathLike
-    ] = "50k_mol_smi_to_sparse_fp_idx.pickle",
-    sparse_mol_fps_filename: Union[str, bytes, os.PathLike] = "50k_count_mol_fps.npz",
-    output_matrix_file_prefix: str = "50k_count_diff_fps",
-    root: Optional[Union[str, bytes, os.PathLike]] = None,
-    distributed: bool = False,
-) -> None:
-    """
-    Generates difference fingerprints from reaction SMILES .pickle files for a whole dataset
-    (train, valid and test) after also loading the corresponding lookup dict and sparse molecular fingerprint matrix
-
-    Parameters
-    ----------
-    rxn_smi_file_prefix : str
-        Filename prefix to the reaction SMILES .pickle file
-        Internally, we append f'_{train/valid/test}.pickle' to this prefix to get the rxn smi's filename
-    lookup_dict_filename : Union[str, bytes, os.PathLike]
-        Filename of the lookup dict .pickle file; if '.pickle' is not included, automatically adds it
-        There will only be one lookup dict file for one whole dataset
-        (e.g. USPTO_50k has one, USPTO_STEREO has one)
-    sparse_mol_fps_filename : Union[str, bytes, os.PathLike]
-        Filename of the pre-computed sparse molecular fingerprints .npz file; if '.npz' is not included, automatically adds it
-        Just like the lookup dict, there will only be one sparse molecular fingerprint matrix for one whole dataset
-        Accepts both count and bit morgan fingerprints
-    output_matrix_file_prefix : str
-        Filename prefix to save the output sparse matrix
-        Internally, we append f'_{train/valid/test}.pickle' to this prefix to get the output filename
-    root : Optional[Union[str, bytes, os.PathLike]] (Default = None)
-        The root directory from which to load and save files
-        This script, smi_to_fp.py should be located in rxn-ebm/data/preprocess/smi_to_fp.py;
-        by default, we assign root to: Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
-    distributed : bool (Default = False)
-        whether to distribute the computation across all possible workers
-
-    Saves
-    -----
-    diff_fps_matrix : scipy.sparse.csr_matrix
-        Saves the output sparse matrix of difference fingerprints using output_matrix_filename
-
-    Also see: list_rxn_smis_to_diff_fps, rxn_smi_to_diff_fp
-    """
-    if (
-        root is None
-    ):  # if not provided, goes up 2 levels to get to rxn-ebm/ then add data/cleaned_data/
-        root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
-    if (root / f"{output_matrix_file_prefix}_train.npz").exists():
-        print(f'At: {root / f"{output_matrix_file_prefix}_train.npz"}')
-        print("The sparse diff_fp file already exists!")
-        print("Please check the directory again.")
-        return
-
-    # LOAD LOOKUP_DICT & SPARSE_MOL_FPS (do not need to reload for train,
-    # valid and test)
-    if Path(lookup_dict_filename).suffix != ".pickle":
-        lookup_dict_filename = str(lookup_dict_filename) + ".pickle"
-    if Path(sparse_mol_fps_filename).suffix != ".npz":
-        sparse_mol_fps_filename = str(sparse_mol_fps_filename) + ".npz"
-
-    sparse_mol_fps = sparse.load_npz(root / sparse_mol_fps_filename)
-    with open(root / lookup_dict_filename, "rb") as handle:
-        lookup_dict = pickle.load(handle)
-
-    phases = ["train", "valid", "test"]
-    for phase in phases:
-        print(f"Processing {phase}...")
-        # to give time for printing before tqdm progress bar appears
-        time.sleep(0.5)
-
-        with open(root / f"{rxn_smi_file_prefix}_{phase}.pickle", "rb") as handle:
-            rxn_smis = pickle.load(handle)
-        if distributed:
-            try:
-                num_workers = len(os.sched_getaffinity(0))
-            except AttributeError:
-                num_workers = os.cpu_count()
-            print(f"Parallelizing over {num_workers} cores")
-        else:
-            print("Not parallelizing!")
-            num_workers = 1
-
-        with Pool(max_workers=num_workers) as client:
-            future = client.submit(
-                list_rxn_smis_to_diff_fps, rxn_smis, lookup_dict, sparse_mol_fps
-            )
-            diff_fps_matrix = future.result()
-        sparse.save_npz(
-            root / f"{output_matrix_file_prefix}_{phase}.npz", diff_fps_matrix
-        )
-
-
 if __name__ == "__main__":
-    gen_count_mol_fps_from_file()
-    gen_lookup_dict_from_file()
+    dataset_name = 'FULL'
+    if dataset_name == '50k': #args.dataset_name
+        gen_count_mol_fps_from_file()
+        gen_lookup_dict_from_file()
+    else:
+        gen_count_mol_fps_from_file(
+            mol_smis_filename='FULL_mol_smis',
+            output_filename='FULL_count_mol_fps'
+        )
+        gen_lookup_dict_from_file(
+            mol_smis_filename='FULL_mol_smis',
+            output_filename='FULL_mol_smi_to_sparse_fp_idx'
+        )
     # gen_diff_fps_from_file()
 
 
+
+################################################################
+######### DIFFERENCE FINGERPRINTS (NOT ACTUALLY USED) ##########
+################################################################
+# def rxn_smi_to_diff_fp(
+#     rxn_smi: str,
+#     lookup_dict: dict,
+#     sparse_mol_fps: scipy.sparse.csr_matrix,
+#     fp_type: str = "count",
+# ) -> sparse_fp:
+#     """
+#     Given a reaction SMILES string, splits it into reactants and product, and then
+#     uses the lookup dict to access the correct row of the sparse molecular fp matrix,
+#     and then builds the difference fingerprint
+
+#     Accepts both count and bit fingerprints.
+#     For bit fingerprints, adds an additional step of capping the maximum and minimum values
+#     to be 1 and -1 respectively
+
+#     Parameters
+#     ----------
+#     rxn_smi : str
+#         The reaction SMILES string to be converted
+#     lookup_dict : dict
+#         The lookup dict mapping each unique molecule SMILES string to the corresponding index in the
+#         sparse matrix of molecular fingerprints
+#     sparse_mol_fps : scipy.sparse.csr_matrix
+#         The sparse matrix containing the molecular fingerprints
+#     fp_type : str (Default = 'count')
+#         The fingerprint type. Affects the maximum allowed value of the resulting difference fingerprint
+#         For a bit fingerprint, this will be 1. For a count fingerprint, this will be integers > 1.
+
+#     Inferred/Automatic parameters
+#     -------------------
+#     These are automatically determined
+#     fp_size : int (Default = 4096)
+#         The length of each input molecular fingerprint,
+#         which will also be the length of the output sparse matrix
+#     dtype : str (Default = 'int16')
+#         The data type of the output sparse matrix
+#         Recommended: 'int16' for count vectors, 'int8' for bit vectors
+#         For bit vectors, we store them as 'boolean' arrays first when summing reactant fingerprints
+#         This prevents bit values from exceeding 1. Finally we convert to 'int8' to substract from the product fingerprint
+
+#     Returns
+#     -------
+#     diff_fp : scipy.sparse.csr_matrix
+#         The difference fingerprint which is in sparse matrix format with the same shape as the
+#         original molecular fingerprint
+
+#     Also see: rxn_smi_to_diff_fp, which calls this function
+#     """
+#     if fp_type == "bit":
+#         dtype = (
+#             "bool"  # must use boolean array to not exceed bit value of 1 when summing
+#         )
+#     else:
+#         dtype = sparse_mol_fps[0].dtype  # infer dtype, for count fingerprints
+
+#     rcts_smi = rxn_smi.split(">")[0].split(".")
+#     diff_fp = sparse.csr_matrix(sparse_mol_fps[0].shape, dtype=dtype)  # infer fp_size
+#     for rct_smi in rcts_smi:
+#         try:
+#             rct_index = lookup_dict[rct_smi]
+#             sparse_rct_fp = sparse_mol_fps[rct_index]
+#             diff_fp = diff_fp + sparse_rct_fp
+#         except KeyError:  # one of the small molecules giving bad SMILES, which give completely 0 count fingerprint
+#             continue
+
+#     if fp_type == "bit":
+#         # convert to 'int8' for final subtraction
+#         diff_fp = diff_fp.astype("int8")
+#     prod_smi = rxn_smi.split(">")[-1]
+#     prod_index = lookup_dict[prod_smi]
+#     sparse_prod_fp = sparse_mol_fps[prod_index]
+#     diff_fp = sparse_prod_fp - diff_fp
+#     return diff_fp
+
+
+# def list_rxn_smis_to_diff_fps(
+#     rxn_smis_file: List[str], lookup_dict: dict, sparse_mol_fps: scipy.sparse.csr_matrix
+# ) -> scipy.sparse.csr_matrix:
+#     """
+#     Iterates through given list of reaction SMILES strings and uses rxn_smi_to_diff_fp to
+#     generate difference fingerprints, given the lookup dict to access the corresponding sparse molecular fingerprints
+
+#     Parameters
+#     ----------
+#     rxn_smi_file : List[str]
+#         A list of reaction SMILES strings
+#         There should be a separate file for train, valid & test
+#     lookup_dict : dict
+#         The lookup dict mapping each unique molecule SMILES string to the corresponding index in the
+#         sparse matrix of molecular fingerprints
+#     sparse_mol_fps : scipy.sparse.csr_matrix
+#         The sparse matrix containing the molecular fingerprints
+
+#     Returns
+#     -------
+#     diff_fps_matrix : scipy.sparse.csr_matrix
+#         A sparse matrix where each row is one difference reaction fingerprint
+
+#     Also see: rxn_smi_to_diff_fp
+#     """
+#     # iterate through rxn_smis and use mol_fp_to_diff_fp to do the conversion
+#     list_sparse_diff_fps = []
+#     for rxn_smi in tqdm(rxn_smis_file, total=len(rxn_smis_file)):
+#         diff_fp = rxn_smi_to_diff_fp(rxn_smi, lookup_dict, sparse_mol_fps)
+#         list_sparse_diff_fps.append(diff_fp)
+
+#     diff_fps_matrix = sparse.vstack(list_sparse_diff_fps)
+#     return diff_fps_matrix
+
+
+# def gen_diff_fps_from_file(
+#     rxn_smi_file_prefix: str = "50k_clean_rxnsmi_noreagent",
+#     lookup_dict_filename: Union[
+#         str, bytes, os.PathLike
+#     ] = "50k_mol_smi_to_sparse_fp_idx.pickle",
+#     sparse_mol_fps_filename: Union[str, bytes, os.PathLike] = "50k_count_mol_fps.npz",
+#     output_matrix_file_prefix: str = "50k_count_diff_fps",
+#     root: Optional[Union[str, bytes, os.PathLike]] = None,
+#     distributed: bool = False,
+# ) -> None:
+#     """
+#     Generates difference fingerprints from reaction SMILES .pickle files for a whole dataset
+#     (train, valid and test) after also loading the corresponding lookup dict and sparse molecular fingerprint matrix
+
+#     Parameters
+#     ----------
+#     rxn_smi_file_prefix : str
+#         Filename prefix to the reaction SMILES .pickle file
+#         Internally, we append f'_{train/valid/test}.pickle' to this prefix to get the rxn smi's filename
+#     lookup_dict_filename : Union[str, bytes, os.PathLike]
+#         Filename of the lookup dict .pickle file; if '.pickle' is not included, automatically adds it
+#         There will only be one lookup dict file for one whole dataset
+#         (e.g. USPTO_50k has one, USPTO_STEREO has one)
+#     sparse_mol_fps_filename : Union[str, bytes, os.PathLike]
+#         Filename of the pre-computed sparse molecular fingerprints .npz file; if '.npz' is not included, automatically adds it
+#         Just like the lookup dict, there will only be one sparse molecular fingerprint matrix for one whole dataset
+#         Accepts both count and bit morgan fingerprints
+#     output_matrix_file_prefix : str
+#         Filename prefix to save the output sparse matrix
+#         Internally, we append f'_{train/valid/test}.pickle' to this prefix to get the output filename
+#     root : Optional[Union[str, bytes, os.PathLike]] (Default = None)
+#         The root directory from which to load and save files
+#         This script, smi_to_fp.py should be located in rxn-ebm/data/preprocess/smi_to_fp.py;
+#         by default, we assign root to: Path(__file__).resolve().parents[2] / 'data' / 'cleaned_data'
+#     distributed : bool (Default = False)
+#         whether to distribute the computation across all possible workers
+
+#     Saves
+#     -----
+#     diff_fps_matrix : scipy.sparse.csr_matrix
+#         Saves the output sparse matrix of difference fingerprints using output_matrix_filename
+
+#     Also see: list_rxn_smis_to_diff_fps, rxn_smi_to_diff_fp
+#     """
+#     if (
+#         root is None
+#     ):  # if not provided, goes up 2 levels to get to rxn-ebm/ then add data/cleaned_data/
+#         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
+#     if (root / f"{output_matrix_file_prefix}_train.npz").exists():
+#         print(f'At: {root / f"{output_matrix_file_prefix}_train.npz"}')
+#         print("The sparse diff_fp file already exists!")
+#         print("Please check the directory again.")
+#         return
+
+#     # LOAD LOOKUP_DICT & SPARSE_MOL_FPS (do not need to reload for train,
+#     # valid and test)
+#     if Path(lookup_dict_filename).suffix != ".pickle":
+#         lookup_dict_filename = str(lookup_dict_filename) + ".pickle"
+#     if Path(sparse_mol_fps_filename).suffix != ".npz":
+#         sparse_mol_fps_filename = str(sparse_mol_fps_filename) + ".npz"
+
+#     sparse_mol_fps = sparse.load_npz(root / sparse_mol_fps_filename)
+#     with open(root / lookup_dict_filename, "rb") as handle:
+#         lookup_dict = pickle.load(handle)
+
+#     phases = ["train", "valid", "test"]
+#     for phase in phases:
+#         print(f"Processing {phase}...")
+#         # to give time for printing before tqdm progress bar appears
+#         time.sleep(0.5)
+
+#         with open(root / f"{rxn_smi_file_prefix}_{phase}.pickle", "rb") as handle:
+#             rxn_smis = pickle.load(handle)
+#         if distributed:
+#             try:
+#                 num_workers = len(os.sched_getaffinity(0))
+#             except AttributeError:
+#                 num_workers = os.cpu_count()
+#             print(f"Parallelizing over {num_workers} cores")
+#         else:
+#             print("Not parallelizing!")
+#             num_workers = 1
+
+#         with Pool(max_workers=num_workers) as client:
+#             future = client.submit(
+#                 list_rxn_smis_to_diff_fps, rxn_smis, lookup_dict, sparse_mol_fps
+#             )
+#             diff_fps_matrix = future.result()
+#         sparse.save_npz(
+#             root / f"{output_matrix_file_prefix}_{phase}.npz", diff_fps_matrix
+#         )
 
 
 ##################################################

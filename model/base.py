@@ -4,7 +4,7 @@ from typing import List, Optional
 import torch
 import torch.nn as nn
 
-from model import model_utils
+from rxnebm.model import model_utils
 
 Tensor = torch.Tensor
 

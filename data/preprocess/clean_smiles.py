@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import List, Optional, Union, Tuple
 
 import numpy as np
+import random
 import rdkit
 from rdkit import Chem
 from rdkit.Chem import rdChemReactions
@@ -228,9 +229,7 @@ def move_reagents(
                 ):  # removes atom mapping if atom in reactant is not in product
                     a.ClearProp("molAtomMapNumber")
 
-        if (
-            keep_all_rcts
-        ):  # retain all reactants regardless of their contribution to product atoms
+        if keep_all_rcts: # keep all rcts rgdless of contribution to prod atoms
             reactants_smi_list.append(Chem.MolToSmiles(mol, True))
         elif used:
             reactants_smi_list.append(Chem.MolToSmiles(mol, True))
@@ -652,7 +651,7 @@ def clean_rxn_smis_FULL_one_phase(
     bad_prod, bad_prod_idxs = 0, []
     missing_map, missing_map_idxs = 0, []
     too_small, too_small_idxs = 0, []
-    dup_rxn_idxs = []
+    dup_rxns, dup_rxn_idxs = 0, []
     extracted = 0
     num_single, num_multi = 0, 0 # to keep track of number of rxns w/ multiple products
 
@@ -667,7 +666,12 @@ def clean_rxn_smis_FULL_one_phase(
         for i, row in enumerate(tqdm(reader, total=total_lines)):
             rxn_smi = row[header.index("ReactionSmiles")]
             all_rcts_smi, all_reag_smi, prods_smi = rxn_smi.split(">")
+            
             all_rcts_smi = all_rcts_smi.split()[0]  # remove ' |f:1...'
+            if all_rcts_smi == "":
+                empty_rcts += 1
+                continue 
+
             prods_smi = prods_smi.split()[0]  # remove ' |f:1...'
             if "." in prods_smi:
                 num_multi += 1
@@ -678,9 +682,7 @@ def clean_rxn_smis_FULL_one_phase(
 
             rids = ",".join(sorted(re.findall(pt, all_rcts_smi)))
             pids = ",".join(sorted(re.findall(pt, prods_smi)))
-            if (
-                rids != pids
-            ):  # atom mapping is not 1:1, but for rxn-ebm, this is not important
+            if rids != pids: # atom mapping is not 1:1
                 bad_mapping += 1
                 bad_mapping_idxs.append(i)
 
@@ -688,15 +690,12 @@ def clean_rxn_smis_FULL_one_phase(
 
             for prod_smi in prods_smi.split("."):
                 mol_prod = Chem.MolFromSmiles(prod_smi)
-                if (
-                    mol_prod is None
-                ):  # rdkit is not able to parse the product, critical!
+                if mol_prod is None: # rdkit cannot parse product, critical!
                     bad_prod += 1
                     bad_prod_idxs.append(i)
                     continue
 
-                # check if all atoms in product have atom mapping, but for
-                # rxn-ebm, this is not important
+                # check if all atoms in product have atom mapping 
                 if not all(
                     [a.HasProp("molAtomMapNumber") for a in mol_prod.GetAtoms()]
                 ):
@@ -726,6 +725,7 @@ def clean_rxn_smis_FULL_one_phase(
                 if rxn_smi not in set_clean_list:
                     set_clean_list.add(rxn_smi)
                 else:
+                    dup_rxns += 1
                     dup_rxn_idxs.append(i)
 
                 extracted += 1
@@ -736,6 +736,8 @@ def clean_rxn_smis_FULL_one_phase(
         print("bad prod: ", bad_prod)
         print("too small: ", too_small)
         print("missing map: ", missing_map)
+        print("duplicate rxn_smi: ", dup_rxns)
+        print("empty reactants: ", empty_rcts)
         print("raw rxn extracted: ", extracted, "\n")
         return (
             clean_list,
@@ -845,7 +847,7 @@ def clean_rxn_smis_FULL_all_phases(
             remove_rct_mapping=remove_rct_mapping,
             remove_all_mapping=remove_all_mapping,
         )
-        if remove_dup_rxns:  # [1] is set_clean_list
+        if remove_dup_rxns:  # set_clean_list
             clean_rxn_smis = future.result()[1]
         else:
             clean_rxn_smis = future.result()[0]
@@ -865,7 +867,22 @@ def clean_rxn_smis_FULL_all_phases(
                 bad_idxs, handle, protocol=pickle.HIGHEST_PROTOCOL
             )
 
-    split_clean_rxn_smis = train_valid_test_split(clean_rxn_smis)
+    # re-create every rxn_smi string, to remove weird "" using rxn_smi.rstrip()[0]
+    print('Filtering weird "" from rxn_smis...')
+    final_rxn_smis = []
+    for rxn_smi in tqdm(clean_rxn_smis):
+
+        filtered = []
+        components = rxn_smi.split('>')
+        for r in components:
+            if len(r.strip()): # i.e. not weird "" 
+                r = r.split()[0]
+            filtered.append(r)
+
+        final_rxn_smi = '>'.join(filtered)
+        final_rxn_smis.append(final_rxn_smi)
+
+    split_clean_rxn_smis = train_valid_test_split(final_rxn_smis)
     for phase in ['train', 'valid', 'test']:
         with open(
             output_root / f"{output_file_prefix}_{phase}.pickle", "wb"
@@ -888,30 +905,39 @@ def remove_overlapping_rxn_smis(
     """
     if root is None:
         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
-    if (root / root / f'{rxn_smi_file_prefix}_overlap_idxs.pickle').exists():
+    else:
+        root = Path(root)
+    if (
+        root / f'{rxn_smi_file_prefix}_overlap_idxs.pickle'
+    ).exists():
         print(f"At: {root / f'{rxn_smi_file_prefix}_overlap_idxs.pickle'}")
         print("The overlap_idxs file already exists!")
         return
 
     rxn_smi_phases = {'train': None, 'valid': None, 'test': None} 
+    rxn_smi_phases_set = {'train': None, 'valid': None, 'test': None}
     for phase in rxn_smi_phases:
         with open(root / f'{rxn_smi_file_prefix}_{phase}.pickle', 'rb') as handle:
             rxn_smi_phases[phase] = pickle.load(handle)
+            rxn_smi_phases_set[phase] = set(rxn_smi_phases[phase]) # speed up membership testing 
              
     overlap_idxs = {'test_in_train': [], 'test_in_valid': [], 'valid_in_train': []}
     for i, rxn_smi in enumerate(tqdm(rxn_smi_phases['test'])):
-        if rxn_smi in rxn_smi_phases['train']:
-            overlap_idxs['test_in_train'].append(rxn_smi_phases['train'].index(rxn_smi))
-            rxn_smi_phases['train'].remove(rxn_smi) 
+        if rxn_smi in rxn_smi_phases_set['train']:
+            overlap_idx = rxn_smi_phases['train'].index(rxn_smi)
+            overlap_idxs['test_in_train'].append(overlap_idx)
+            rxn_smi_phases['train'].pop(overlap_idx) 
 
-        elif rxn_smi in rxn_smi_phases['valid']:
-            overlap_idxs['test_in_valid'].append(rxn_smi_phases['valid'].index(rxn_smi))
-            rxn_smi_phases['valid'].remove(rxn_smi) 
+        elif rxn_smi in rxn_smi_phases_set['valid']:
+            overlap_idx = rxn_smi_phases['valid'].index(rxn_smi)
+            overlap_idxs['test_in_valid'].append(overlap_idx)
+            rxn_smi_phases['valid'].pop(overlap_idx) 
 
     for i, rxn_smi in enumerate(tqdm(rxn_smi_phases['valid'])):
-        if rxn_smi in rxn_smi_phases['train']:
-            overlap_idxs['valid_in_train'].append(rxn_smi_phases['train'].index(rxn_smi))
-            rxn_smi_phases['train'].remove(rxn_smi) 
+        if rxn_smi in rxn_smi_phases_set['train']:
+            overlap_idx = rxn_smi_phases['train'].index(rxn_smi)
+            overlap_idxs['valid_in_train'].append(overlap_idx)
+            rxn_smi_phases['train'].pop(overlap_idx) 
 
     for key, value in overlap_idxs.items():
         print(key, len(value))
@@ -952,6 +978,8 @@ def get_uniq_mol_smis_all_phases(
     """
     if root is None:
         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
+    else:
+        root = Path(root)
     if Path(output_filename).suffix != ".pickle":
         output_filename = str(output_filename) + ".pickle"
     if (root / output_filename).exists():
@@ -970,11 +998,14 @@ def get_uniq_mol_smis_all_phases(
     # (not reagents!)
     for phase in cleaned_rxn_smis:
         print("Processing reactants and product...")
-        for rxn_smi in tqdm(cleaned_rxn_smis[phase]):
+        for i, rxn_smi in enumerate(tqdm(cleaned_rxn_smis[phase])):
             rcts = rxn_smi.split(">")[0]
             prod = rxn_smi.split(">")[-1]
             rcts_prod_smis = rcts + "." + prod
             for mol_smi in rcts_prod_smis.split("."):
+                if mol_smi == '':
+                    print(f'At index {i} of {phase}, found mol_smis == ""')
+                    continue 
                 uniq_mol_smis.add(mol_smi)
 
         if save_reagents:
@@ -1000,7 +1031,7 @@ if __name__ == "__main__":
         os.makedirs(args.clean_smi_root, exist_ok=True)
 
     # TODO: add all arguments
-    if args.dataset_name == 'PLACEHOLDER':
+    if args.dataset_name == '50k':
         clean_rxn_smis_50k_all_phases(
             args.raw_smi_pre,
             args.clean_smi_pre, # '50k_clean_rxnsmi_noreagent_allmapped',   

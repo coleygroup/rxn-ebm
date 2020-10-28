@@ -13,7 +13,7 @@ from torch.utils.data import get_worker_info
 # logging.getLogger('nmslib').setLevel(logging.WARNING) # Only log WARNING
 # messages and above from nmslib
 import nmslib
-from model import FF
+from rxnebm.model import FF
 
 
 def setup_paths(
@@ -38,6 +38,8 @@ def setup_paths(
     if location.upper() == "LOCAL":
         if root is None:
             root = Path(__file__).resolve().parents[1] / "checkpoints"
+        else:
+            root = Path(root)
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f"created checkpoint_folder: {checkpoint_folder}")
@@ -45,6 +47,8 @@ def setup_paths(
     elif location.upper() == "COLAB":
         if root is None:
             root = Path("/content/gdrive/My Drive/rxn_ebm/checkpoints/")
+        else:
+            root = Path(root)
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f"created checkpoint_folder: {checkpoint_folder}")
@@ -52,6 +56,8 @@ def setup_paths(
     elif location.upper() == "ENGAGING":
         if root is None:
             root = Path(__file__).resolve().parents[1] / "checkpoints"
+        else:
+            root = Path(root)
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f"created checkpoint_folder: {checkpoint_folder}")

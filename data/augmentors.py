@@ -9,7 +9,7 @@ import scipy
 from scipy import sparse
 
 import nmslib
-from data.preprocess import smi_to_fp
+from rxnebm.data.preprocess import smi_to_fp
 
 sparse_fp = scipy.sparse.csr_matrix
 dense_fp = np.ndarray  # try not to use, more memory intensive

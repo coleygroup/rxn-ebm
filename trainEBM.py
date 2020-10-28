@@ -4,10 +4,10 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from data import dataset
-from data.preprocess import clean_smiles, smi_to_fp, prep_nmslib, prep_crem
-from experiment import expt, expt_utils
-from model import FF
+from rxnebm.data import dataset
+from rxnebm.data.preprocess import clean_smiles, smi_to_fp, prep_nmslib, prep_crem
+from rxnebm.experiment import expt, expt_utils
+from rxnebm.model import FF
 
 torch.backends.cudnn.benchmark = True
 

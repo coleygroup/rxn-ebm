@@ -39,7 +39,7 @@ def build_nmslib_index(
     method="hnsw",
     space="cosinesimil_sparse",
     data_type=nmslib.DataType.SPARSE_VECTOR,
-    num_threads=4,
+    num_threads=8,
     M=30,
     efC=100,
 ):
@@ -69,7 +69,7 @@ def query_nmslib_index(
     spaces_index,
     query_matrix,
     space="cosinesimil_sparse",
-    num_threads=4,
+    num_threads=8,
     efS=100,
     K=100,
 ):
@@ -102,6 +102,7 @@ def query_nmslib_index(
 def build_and_save_index(
     mol_fps_filename: Union[str, bytes, os.PathLike] = "50k_count_mol_fps.npz",
     output_filename: Union[str, bytes, os.PathLike] = "50k_cosine_count.bin",
+    index_time_params: Optional[dict] = None,
     root: Optional[Union[str, bytes, os.PathLike]] = None,
 ):
     """
@@ -109,6 +110,8 @@ def build_and_save_index(
     """
     if root is None:
         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
+    else:
+        root = Path(root)
     if Path(mol_fps_filename).suffix != ".npz":
         mol_fps_filename = str(mol_fps_filename) + ".npz"
     if Path(output_filename).suffix != ".bin":
@@ -118,14 +121,27 @@ def build_and_save_index(
         print("The search index file already exists!")
         return
 
-    mol_fps = sparse.load_npz(root / mol_fps_filename)
-    # mol_fps = validate_sparse_matrix(mol_fps)
+    mol_fps = sparse.load_npz(root / mol_fps_filename) 
+    if index_time_params is None:
+        index_time_params = {
+            'num_threads': 8,
+            'efC': 100,
+            'M': 30,
+        }
     index = build_nmslib_index(
-        method="hnsw", space="cosinesimil_sparse", data=mol_fps, M=30, efC=100
+        method="hnsw", space="cosinesimil_sparse", data=mol_fps, **index_time_params
     )
     index.saveIndex(str(root / output_filename), save_data=True)
     print("Successfully built and saved index!")
 
 
 if __name__ == "__main__":
-    build_and_save_index()  # defaults to countfps
+    dataset_name = 'FULL'
+    if dataset_name == '50k': #args.dataset_name
+        build_and_save_index()  # defaults to countfps 
+    else:
+        build_and_save_index(
+            mol_fps_filename='FULL_count_mol_fps',
+            output_filename='FULL_cosine_count'
+        )   
+    

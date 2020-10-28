@@ -11,9 +11,9 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from data import dataset
-from experiment import expt_utils
-from model import model_utils
+from rxnebm.data import dataset
+from rxnebm.experiment import expt_utils
+from rxnebm.model import model_utils
 
 Tensor = torch.Tensor
 
@@ -591,6 +591,8 @@ class Experiment:
 
         if path_scores is None:
             path_scores = Path(__file__).resolve().parents[1] / "scores"
+        else:
+            path_scores = Path(path_scores)
         if name_scores is None:
             name_scores = f"scores_{phase}_{self.expt_name}.pkl"
         if save_scores:

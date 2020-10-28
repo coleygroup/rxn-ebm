@@ -24,7 +24,8 @@ def mol_smi_from_mol_pickle(
     """
     if root is None:
         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
-
+    else:
+        root = Path(root)
     with open(root / f"{input_filename}.pickle", "rb") as handle:
         mol_smis = pickle.load(handle)
 
@@ -63,6 +64,8 @@ def gen_crem_negs(
         phases = ["train", "valid", "test"]
     if root is None:
         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
+    else:
+        root = Path(root)
     if (
         root
         / f"{dataset_name}_neg{num_neg}_rad{radius}_maxsize{max_size}_mutprodsmis.pickle"

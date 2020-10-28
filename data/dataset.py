@@ -13,8 +13,8 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 import nmslib
-from data import augmentors
-from model import model_utils
+from rxnebm.data import augmentors
+from rxnebm.model import model_utils
 
 sparse_fp = scipy.sparse.csr_matrix
 
@@ -89,6 +89,8 @@ class AugmentedData:
         self.mut_smis_filename = mut_smis_filename
         if root is None:  # set root = path/to/rxn-ebm/
             root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
+        else:
+            root = Path(root)
         self.root = root
         with open(self.root / self.lookup_dict_filename, "rb") as handle:
             self.lookup_dict = pickle.load(handle)
@@ -337,7 +339,8 @@ class ReactionDataset(Dataset):
 
         if root is None:
             root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
-
+        else:
+            root = Path(root)
         if (root / precomp_rxnfp_filename).exists():
             print("Loading pre-computed reaction fingerprints...")
             self.data = sparse.load_npz(root / precomp_rxnfp_filename)
