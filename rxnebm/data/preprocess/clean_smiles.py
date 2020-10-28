@@ -1041,7 +1041,7 @@ if __name__ == "__main__":
         os.makedirs(args.clean_smi_root, exist_ok=True)
 
     # TODO: add all arguments
-    if args.dataset_name == 'HELLO':
+    if args.dataset_name == '50k':
         clean_rxn_smis_50k_all_phases(
             args.raw_smi_pre,
             args.clean_smi_pre, # '50k_clean_rxnsmi_noreagent_allmapped',   
