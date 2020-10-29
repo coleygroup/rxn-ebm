@@ -126,11 +126,13 @@ class ReadoutNet(nn.Module):
 
          
 def scatter_max(src, index, dim=-1, out=None, dim_size=None, fill_value=0):
-    return orig_smax(src, index, dim, out, dim_size, fill_value)[0]
+    # return orig_smax(src, index, dim, out, dim_size, fill_value)[0]
+    return orig_smax(src, index, dim, out, dim_size)[0]
 
 
 def scatter_min(src, index, dim=-1, out=None, dim_size=None, fill_value=0):
-    return orig_smin(src, index, dim, out, dim_size, fill_value)[0]
+    # return orig_smin(src, index, dim, out, dim_size, fill_value)[0]
+    return orig_smin(src, index, dim, out, dim_size)[0]
 
 
 def get_agg(agg_type):
