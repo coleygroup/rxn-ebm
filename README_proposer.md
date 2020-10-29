@@ -21,9 +21,17 @@ This should work standalone. @Min Htoo: feel free to merge as appropriate.
     # install gln as a package
     cd ./rxnebm/proposer/GLN_original
     pip install -e .
+    
+    # install tensorflow
+    pip install tensorflow-gpu==1.14 gast==0.2.2
 
 ## Sample usage
 #### GLN Proposer
 From the project root
 
     python rxnebm/proposer/gln_proposer_test.py
+
+#### Molecular Transformer (Karpov) Proposer
+From the project root
+
+    python rxnebm/proposer/mt_karpov_proposer_test.py
