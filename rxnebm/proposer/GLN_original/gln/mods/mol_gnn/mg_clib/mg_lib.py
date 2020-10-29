@@ -2,6 +2,7 @@ import ctypes
 import numpy as np
 import os
 import sys
+from gln_config import gln_config
 try:
     import torch
 except:
@@ -13,10 +14,12 @@ class _mg_lib(object):
         dir_path = os.path.dirname(os.path.realpath(__file__))
         self.lib = ctypes.CDLL('%s/build/dll/libmolgnn.so' % dir_path)
 
-        atom_file = '%s/default_atoms.txt' % dir_path
-        for i in range(len(sys_args)):
-            if sys_args[i] == '-f_atoms':
-                atom_file = sys.argv[i + 1]
+        # atom_file = '%s/default_atoms.txt' % dir_path
+        # for i in range(len(sys_args)):
+        #     if sys_args[i] == '-f_atoms':
+        #         atom_file = sys.argv[i + 1]
+
+        atom_file = gln_config["atom_file"]
         atom_nums = []
         with open(atom_file, 'r') as f:
             for row in f:
