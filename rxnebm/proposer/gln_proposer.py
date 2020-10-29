@@ -1,25 +1,25 @@
 from gln.test.model_inference import RetroGLN
 from proposer_base import Proposer
-from typing import List
+from typing import Dict, List
 
 
 class GLNProposer(Proposer):
     """GLN proposer, wrapping around GLN.gln.test.model_inference.RetroGLN"""
 
-    def __init__(self, model_path: str) -> None:
+    def __init__(self, gln_config: Dict) -> None:
         super().__init__()
-        self.model = self.build_model(model_path)
+        self.model = self.build_model(gln_config)
 
     @staticmethod
-    def build_model(model_path: str):
-        model = RetroGLN(dropbox="./rxnebm/proposer/GLN/dropbox",
-                         model_dump=model_path)
+    def build_model(gln_config: Dict) -> RetroGLN:
+        model = RetroGLN(dropbox=gln_config["dropbox"],
+                         model_dump=gln_config["model_path"])
 
         return model
 
     def propose(self, input_smiles: List[str],
                 rxn_types: List[str],
-                topk: int = 1, **kwargs) -> List[List]:
+                topk: int = 1, **kwargs) -> List[Dict[str, List]]:
 
         results = []
         for smi, rxn_type in zip(input_smiles, rxn_types):
