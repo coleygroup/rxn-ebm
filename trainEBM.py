@@ -129,7 +129,7 @@ def prepare_data(args):
         os.makedirs(args.clean_smi_root, exist_ok=True)
 
     # TODO: add all arguments
-    clean_smiles.clean_rxn_smis_all_phases(
+    clean_smiles.clean_rxn_smis_50k_all_phases(
         input_file_prefix=args.raw_smi_pre,
         output_file_prefix=args.clean_smi_pre,   
         dataset_name=args.dataset_name,   
@@ -167,15 +167,15 @@ def train(args):
 
     prepare_data(args)
 
-    expt_name = "50k_rdm_5_cos_5_bit_5_1_1_mut_10"  # USER INPUT
-    precomp_file_prefix = "50k_rdm_5_cos_5_bit_5_1_1_mut_10"  # USER INPUT, expt.py will append f'_{phase}.npz' to the end
+    expt_name = "50k_rdm_1_cos_1_bit_1_1_1_mut_1"  # USER INPUT 50k_rdm_5_cos_5_bit_5_1_1_mut_10
+    precomp_file_prefix = "50k_rdm_1_cos_1_bit_1_1_1_mut_1"  # USER INPUT, expt.py will append f'_{phase}.npz' to the end
     random_seed = 0
 
     augmentations = {  # USER INPUT, pass in 'query_params': dict_of_query_params if desired. see nmslib docs for possible query parameters
-        "rdm": {"num_neg": 5},  
-        "cos": {"num_neg": 5, "query_params": None},
-        "bit": {"num_neg": 5, "num_bits": 1, "increment_bits": 1},
-        "mut": {"num_neg": 10},
+        "rdm": {"num_neg": 1},  
+        "cos": {"num_neg": 1, "query_params": None},
+        "bit": {"num_neg": 1, "num_bits": 1, "increment_bits": 1},
+        "mut": {"num_neg": 1},
     }
 
     #######################################################

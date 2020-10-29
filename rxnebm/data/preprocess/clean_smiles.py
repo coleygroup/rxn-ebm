@@ -1014,7 +1014,7 @@ def get_uniq_mol_smis_all_phases(
             rcts_prod_smis = rcts + "." + prod
             for mol_smi in rcts_prod_smis.split("."):
                 if mol_smi == '':
-                    print(f'At index {i} of {phase}, found mol_smis == ""')
+                    # print(f'At index {i} of {phase}, found mol_smis == ""')
                     continue 
                 uniq_mol_smis.add(mol_smi)
 

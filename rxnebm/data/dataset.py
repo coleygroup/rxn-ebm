@@ -253,6 +253,10 @@ class AugmentedData:
 
             # num_workers = MPI.COMM_WORLD.size
             # print(f'Distributing over {num_workers} total workers')
+
+            # with Pool(max_workers=num_workers) as client:
+                # future = client.submit(self.precompute_helper)
+                # diff_fps = future.result()
         elif parallel:
             from concurrent.futures import ProcessPoolExecutor as Pool
 
@@ -261,15 +265,15 @@ class AugmentedData:
             except AttributeError:
                 num_workers = os.cpu_count()
             print(f"Parallelizing over {num_workers} cores")
+
+            with Pool(max_workers=num_workers) as client:
+                future = client.submit(self.precompute_helper)
+                diff_fps = future.result()
+        
         else:
-            from concurrent.futures import ProcessPoolExecutor as Pool
-
             print("Not parallelizing!")
-            num_workers = 1
-
-        with Pool(max_workers=num_workers) as client:
-            future = client.submit(self.precompute_helper)
-            diff_fps = future.result()
+            
+            diff_fps = self.precompute_helper()
 
         diff_fps = sparse.vstack(diff_fps)  # COO format
         diff_fps = diff_fps.tocsr()
