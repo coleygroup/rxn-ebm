@@ -13,6 +13,11 @@ def test():
     assert len(product_smiles) == len(rxn_types)
     results = proposer.propose(product_smiles, rxn_types, topk=5, beam_size=50)
     print(results)
+    """
+    List of n[{"template": List of topk templates,
+               "reactants": List of topk reactants,
+               "scores": ndarray of topk scores}]
+    """
 
 
 if __name__ == "__main__":

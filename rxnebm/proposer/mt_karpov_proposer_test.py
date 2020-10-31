@@ -18,6 +18,9 @@ def test():
     assert len(product_smiles) == len(rxn_types)
     results = proposer.propose(product_smiles, rxn_types, topk=5, beam_size=5)
     print(results)
+    """
+    List of n[List of topk[List of reactants, score]]
+    """
 
 
 if __name__ == "__main__":
