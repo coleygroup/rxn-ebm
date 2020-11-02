@@ -167,15 +167,15 @@ def train(args):
 
     prepare_data(args)
 
-    expt_name = "50k_rdm_1_cos_1_bit_1_1_1_mut_1"  # USER INPUT 50k_rdm_5_cos_5_bit_5_1_1_mut_10
-    precomp_file_prefix = "50k_rdm_1_cos_1_bit_1_1_1_mut_1"  # USER INPUT, expt.py will append f'_{phase}.npz' to the end
+    expt_name = "test_masking"  # USER INPUT 50k_rdm_5_cos_5_bit_5_1_1_mut_10
+    precomp_file_prefix = "50k_rdm_0_cos_5_bit_0_1_1_mut_5"  # USER INPUT, expt.py will append f'_{phase}.npz' to the end
     random_seed = 0
 
     augmentations = {  # USER INPUT, pass in 'query_params': dict_of_query_params if desired. see nmslib docs for possible query parameters
-        "rdm": {"num_neg": 1},  
-        "cos": {"num_neg": 1, "query_params": None},
-        "bit": {"num_neg": 1, "num_bits": 1, "increment_bits": 1},
-        "mut": {"num_neg": 1},
+        "rdm": {"num_neg": 0},  
+        "cos": {"num_neg": 5, "query_params": None},
+        "bit": {"num_neg": 0, "num_bits": 1, "increment_bits": 1},
+        "mut": {"num_neg": 5},
     }
 
     #######################################################
@@ -208,7 +208,7 @@ def train(args):
     #######################################################
     checkpoint_folder = expt_utils.setup_paths("LOCAL")
     model_args = {
-        "hidden_sizes": [1024, 512],
+        "hidden_sizes": [512, 256],
         "output_size": 1,
         "dropout": 0.1,
         "activation": "ReLU",

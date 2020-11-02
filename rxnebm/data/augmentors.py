@@ -157,7 +157,9 @@ class Mutate(Augmentor):
             neg_rxn_fps.append(neg_rxn_fp)
  
         if len(neg_rxn_fps) < self.num_neg:
-            dummy_fp = np.zeros((1, self.fp_size)) # pad with np.zeros vectors whenever insufficient negs generated from CReM
+            # dummy_fp = np.empty((1, self.fp_size))
+            # dummy_fp.fill(np.nan)
+            dummy_fp = np.zeros((1, self.fp_size)) # pad with zero-vectors whenever insufficient negs generated from CReM
             for i in range(self.num_neg - len(neg_rxn_fps)):
                 neg_rxn_fps.append(dummy_fp)
 
@@ -203,6 +205,7 @@ class Cosine(Augmentor):
         rcts_fp, prod_fp = rcts_prod_fps_from_rxn_smi(
             rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps
         )
+
         nn_prod_idxs = self.get_idx(prod_fp=prod_fp)
         # first index is the original molecule!
         nn_prod_fps = [self.mol_fps[idx] for idx in nn_prod_idxs[1 : self.num_neg + 1]]

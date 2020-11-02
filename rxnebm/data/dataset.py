@@ -2,12 +2,11 @@ import os
 import pickle
 from concurrent.futures import ProcessPoolExecutor as Pool
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 
 import numpy as np
 import scipy
-import torch
-import torch.tensor as tensor
+import torch 
 from scipy import sparse
 from torch.utils.data import Dataset
 from tqdm import tqdm
@@ -17,7 +16,7 @@ from rxnebm.data import augmentors
 from rxnebm.model import model_utils
 
 sparse_fp = scipy.sparse.csr_matrix
-
+Tensor = torch.Tensor
 
 class AugmentedData:
     """
@@ -276,7 +275,10 @@ class AugmentedData:
             diff_fps = self.precompute_helper()
 
         diff_fps = sparse.vstack(diff_fps)  # COO format
-        diff_fps = diff_fps.tocsr()
+        try:
+            diff_fps = diff_fps.tocsr(copy=False)
+        except:
+            print('Could not convert to csr format')
         sparse.save_npz(self.root / output_filename, diff_fps)
         return
 
@@ -295,7 +297,7 @@ class AugmentedData:
         # from ReactionDataset.__len__()
 
 
-def spy_sparse2torch_sparse(data: scipy.sparse.csr_matrix) -> tensor:
+def spy_sparse2torch_sparse(data: scipy.sparse.csr_matrix) -> Tensor:
     """
     :param data: a scipy sparse csr matrix
     :return: a sparse torch tensor
@@ -364,13 +366,23 @@ class ReactionDataset(Dataset):
                 "Please provide precomp_rxnfp_filename or set onthefly = True!"
             )
 
-    def __getitem__(self, idx: Union[int, tensor]) -> tensor:
-        """Returns 1 training sample: [pos_rxn_fp, neg_rxn_1_fp, ..., neg_rxn_K-1_fp]"""
+    def __getitem__(self, idx: Union[int, Tensor]) -> Tuple[Tensor, Tensor]:
+        """Returns tuple of minibatch & boolean mask
+
+        each minibatch of K rxn fps: [pos_rxn_fp, neg_rxn_1_fp, ..., neg_rxn_K-1_fp]
+        if the minibatch is of shape [K, fp_size], the mask is of shape [K]
+        the mask is False whenever there is an all-zeros fingerprint vector
+        due to insufficient negatives generated from CReM
+        """
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        return torch.as_tensor(
+
+        rxn_smi_fps = torch.as_tensor(
             self.data[idx].toarray().reshape(-1, self.input_dim)
-        ).float()
+        )
+        mask = torch.sum(rxn_smi_fps.bool(), axis=1).bool()
+
+        return rxn_smi_fps.float(), mask
 
     def __len__(self):
         return self.data.shape[0]

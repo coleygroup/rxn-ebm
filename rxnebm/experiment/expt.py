@@ -35,8 +35,7 @@ class Experiment:
 
     Parameters
     ----------
-    device : Optional[str] (Default = None)
-        'cuda' or 'cpu'
+    device : Optional[str] (Default = None) [torch.device('cuda'), torch.device('cpu')]
         device to do training, testing & inference on.
         If None, automatically detects if GPU is available, else uses CPU.
     load_checkpoint : Optional[bool] (Default = False)
@@ -383,7 +382,7 @@ class Experiment:
         )
         torch.save(checkpoint_dict, checkpoint_filename)
 
-    def _one_batch(self, batch: Tensor, backprop: bool = True):
+    def _one_batch(self, batch: Tensor, mask: Tensor, backprop: bool = True):
         """
         Passes one batch of samples through model to get scores & loss
         Does backprop if training
@@ -393,6 +392,9 @@ class Experiment:
             p.grad = None  # faster, equivalent to self.model.zero_grad()
         scores = self.model(batch)  # size N x K
 
+        # replace all-zero vectors with float('inf'), making those gradients 0 on backprop 
+        scores = torch.where(mask, scores, torch.Tensor([float('inf')]))
+ 
         # positives are the 0-th index of each sample
         loss = (scores[:, 0] + torch.logsumexp(-scores, dim=1)).sum()
 
@@ -413,13 +415,13 @@ class Experiment:
             self.model.train()
             train_loss, train_correct_preds = 0, 0
             for batch in tqdm(self.train_loader):
-                batch = batch.to(self.device)
+                batch_data = batch[0].to(self.device)
+                batch_mask = batch[1].to(self.device) 
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(
-                    batch, backprop=True
+                    batch_data, batch_mask, backprop=True
                 )
                 # print('curr_batch_loss:', curr_batch_loss)
-                train_loss += curr_batch_loss
-                # print('train_loss:', train_loss)
+                train_loss += curr_batch_loss 
                 train_correct_preds += curr_batch_correct_preds
             self.train_accs.append(train_correct_preds / self.train_size)
             self.train_losses.append(train_loss / self.train_size)
@@ -427,9 +429,10 @@ class Experiment:
             self.model.eval()
             val_loss, val_correct_preds = 0, 0
             for batch in tqdm(self.val_loader):
-                batch = batch.to(self.device)
+                batch_data = batch[0].to(self.device)
+                batch_mask = batch[1].to(self.device)
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(
-                    batch, backprop=False
+                    batch_data, batch_mask, backprop=False
                 )
                 val_loss += curr_batch_loss
                 val_correct_preds += curr_batch_correct_preds
@@ -467,9 +470,10 @@ class Experiment:
         self.model.eval()
         test_loss, test_correct_preds = 0, 0
         for batch in tqdm(self.test_loader):
-            batch = batch.to(self.device)
+            batch_data = batch[0].to(self.device)
+            batch_mask = batch[1].to(self.device)
             curr_batch_loss, curr_batch_correct_preds = self._one_batch(
-                batch, backprop=False
+                batch_data, batch_mask, backprop=False
             )
             test_loss += curr_batch_loss
             test_correct_preds += curr_batch_correct_preds
@@ -525,15 +529,19 @@ class Experiment:
             dataloader == self.val_loader
 
         self.model.eval()
-        scores = []
+        scores_combined = []
         with torch.no_grad():
             for batch in tqdm(dataloader):
-                batch = batch.to(self.device)
-                scores.append(self.model(batch).cpu())
+                batch_data = batch[0].to(self.device)
+                batch_mask = batch[1].to(self.device)
+                
+                scores = self.model(batch_data)
+                scores = torch.where(batch_mask, scores, torch.Tensor([float('inf')]))
+                scores_combined.append(scores.cpu())
 
-            scores = torch.cat(scores, dim=0).squeeze(dim=-1)
+            scores_combined = torch.cat(scores_combined, dim=0).squeeze(dim=-1)
 
-            loss = (scores[:, 0] + torch.logsumexp(-1 * scores, dim=1)).sum()
+            loss = (scores_combined[:, 0] + torch.logsumexp(-1 * scores_combined, dim=1)).sum()
             if phase == "custom":
                 loss /= custom_dataset_len
             elif phase == "test":
