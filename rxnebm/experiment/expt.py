@@ -65,7 +65,8 @@ class Experiment:
         prodfp_size: int,
         augmentations: dict,
         onthefly: Optional[bool] = False,
-        lookup_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
+        smi_to_fp_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
+        fp_to_smi_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         mol_fps_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         search_index_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         device: Optional[str] = None,
@@ -121,12 +122,13 @@ class Experiment:
         else:
             self._init_opt_and_stats(optimizer)
 
-        # if onthefly is True, need lookup_dict_filename, mol_fps_filename, (if
-        # doing cosine: search_index_filename)
+        # if onthefly is True, need smi_to_fp_dict_filename, 
+        # mol_fps_filename, (if cos: search_index_filename, fp_to_smi_dict_filename)
         self._init_dataloaders(
             precomp_file_prefix,
             onthefly,
-            lookup_dict_filename,
+            smi_to_fp_dict_filename,
+            fp_to_smi_dict_filename,
             mol_fps_filename,
             search_index_filename,
         )
@@ -235,7 +237,8 @@ class Experiment:
         self,
         precomp_file_prefix: str,
         onthefly: bool,
-        lookup_dict_filename: str,
+        smi_to_fp_dict_filename: str,
+        fp_to_smi_dict_filename: str,
         mol_fps_filename: str,
         search_index_filename: str,
         rxn_smis_file_prefix: Optional[str] = None,
@@ -251,7 +254,8 @@ class Experiment:
         if onthefly:
             augmented_data = dataset.AugmentedData(
                 self.augmentations,
-                lookup_dict_filename,
+                smi_to_fp_dict_filename,
+                fp_to_smi_dict_filename,
                 mol_fps_filename,
                 search_index_filename,
             )

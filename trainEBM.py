@@ -151,7 +151,7 @@ def prepare_data(args):
     )
 
     smi_to_fp.gen_count_mol_fps_from_file()
-    smi_to_fp.gen_lookup_dict_from_file()
+    smi_to_fp.gen_lookup_dicts_from_file()
 
     prep_nmslib.build_and_save_index()
 
@@ -167,27 +167,29 @@ def train(args):
 
     prepare_data(args)
 
-    expt_name = "test_masking"  # USER INPUT 50k_rdm_5_cos_5_bit_5_1_1_mut_10
-    precomp_file_prefix = "50k_rdm_0_cos_5_bit_0_1_1_mut_5"  # USER INPUT, expt.py will append f'_{phase}.npz' to the end
+    expt_name = "rdm_5_cos_5_bit_5_1_1_mut_10"  # USER INPUT 50k_rdm_5_cos_5_bit_5_1_1_mut_10
+    precomp_file_prefix = "50k_rdm_5_cos_5_bit_5_1_1_mut_10"  # USER INPUT, expt.py will append f'_{phase}.npz' to the end
     random_seed = 0
 
     augmentations = {  # USER INPUT, pass in 'query_params': dict_of_query_params if desired. see nmslib docs for possible query parameters
-        "rdm": {"num_neg": 0},  
+        "rdm": {"num_neg": 5},  
         "cos": {"num_neg": 5, "query_params": None},
-        "bit": {"num_neg": 0, "num_bits": 1, "increment_bits": 1},
-        "mut": {"num_neg": 5},
+        "bit": {"num_neg": 5, "num_bits": 1, "increment_bits": 1},
+        "mut": {"num_neg": 10},
     }
 
     #######################################################
     ##################### PRECOMPUTE ######################
     #######################################################
-    lookup_dict_filename = "50k_mol_smi_to_sparse_fp_idx.pickle"
+    smi_to_fp_dict_filename = "50k_mol_smi_to_sparse_fp_idx.pickle"
+    fp_to_smi_dict_filename = "50k_sparse_fp_idx_to_mol_smi.pickle"
     mol_fps_filename = "50k_count_mol_fps.npz"
     search_index_filename = "50k_cosine_count.bin"
     mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
     augmented_data = dataset.AugmentedData(
         augmentations,
-        lookup_dict_filename,
+        smi_to_fp_dict_filename,
+        fp_to_smi_dict_filename,
         mol_fps_filename,
         search_index_filename,
         mut_smis_filename,
@@ -208,7 +210,7 @@ def train(args):
     #######################################################
     checkpoint_folder = expt_utils.setup_paths("LOCAL")
     model_args = {
-        "hidden_sizes": [512, 256],
+        "hidden_sizes": [256, 128],
         "output_size": 1,
         "dropout": 0.1,
         "activation": "ReLU",
@@ -223,8 +225,8 @@ def train(args):
     }
 
     train_args = {
-        "batch_size": 4096,
-        "learning_rate": 8e-3,  # to try: lr_finder & lr_schedulers
+        "batch_size": 2048,
+        "learning_rate": 5e-3,  # to try: lr_finder & lr_schedulers
         "optimizer": "Adam",
         "epochs": 30,
         "early_stop": True,

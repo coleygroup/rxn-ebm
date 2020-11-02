@@ -58,7 +58,7 @@ class AugmentedData:
         currently supports 'count' & 'bit' fingerprints
     root : str (Default = None)
         full path to the folder containing all the cleaned, input data files, which includes
-        lookup_dict, sparse mol_fps, search_index, mut_prod_smis
+        smi_to_fp_dict, fp_to_smi_dict, sparse mol_fps, search_index, mut_prod_smis
         If not provided, aka None, it defaults to full/path/to/rxn-ebm/data/cleaned_data/
     seed : int (Default = 0)
         random seed to use. affects augmentations which do random selection e.g. Random sampling, Bit corruption,
@@ -68,7 +68,8 @@ class AugmentedData:
     def __init__(
         self,
         augmentations: dict,
-        lookup_dict_filename: str,
+        smi_to_fp_dict_filename: str,
+        fp_to_smi_dict_filename: str,
         mol_fps_filename: str,
         search_index_filename: Optional[str] = None,
         mut_smis_filename: Optional[str] = None,
@@ -82,17 +83,22 @@ class AugmentedData:
     ):
         model_utils.seed_everything(seed)
 
-        self.lookup_dict_filename = lookup_dict_filename
+        self.smi_to_fp_dict_filename = smi_to_fp_dict_filename
+        self.fp_to_smi_dict_filename = fp_to_smi_dict_filename
         self.mol_fps_filename = mol_fps_filename
         self.search_index_filename = search_index_filename
         self.mut_smis_filename = mut_smis_filename
-        if root is None:  # set root = path/to/rxn-ebm/
+
+        if root is None:  # set root = path/to/rxn/ebm/
             root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
         else:
             root = Path(root)
         self.root = root
-        with open(self.root / self.lookup_dict_filename, "rb") as handle:
-            self.lookup_dict = pickle.load(handle)
+
+        with open(self.root / self.smi_to_fp_dict_filename, "rb") as handle:
+            self.smi_to_fp_dict = pickle.load(handle)
+        with open(self.root / self.fp_to_smi_dict_filename, "rb") as handle:
+            self.fp_to_smi_dict = pickle.load(handle)
         self.mol_fps = sparse.load_npz(self.root / self.mol_fps_filename)
 
         self.rxn_smis = None
@@ -116,10 +122,9 @@ class AugmentedData:
                 self._init_mutate(**value)
 
     def _init_cosine(self, num_neg: int, query_params: Optional[dict] = None):
-        # NOTE: nmslib only accepts str for its filename, not Path objects
+        # NOTE: nmslib only accepts str as filename, not os.PathLike objects
         print("Initialising Cosine Augmentor...")
-        # loaded later by precompute_helper or
-        # expt_utils._worker_init_fn_nmslib_
+        # loaded later by precompute_helper / expt_utils._worker_init_fn_nmslib_
         search_index = None
         if query_params is not None:
             self.query_params = query_params
@@ -128,7 +133,8 @@ class AugmentedData:
 
         self.cosaugmentor = augmentors.Cosine(
             num_neg,
-            self.lookup_dict,
+            self.smi_to_fp_dict,
+            self.fp_to_smi_dict,
             self.mol_fps,
             search_index,
             self.rxn_type,
@@ -139,7 +145,7 @@ class AugmentedData:
     def _init_random(self, num_neg: int):
         print("Initialising Random Augmentor...")
         self.rdmaugmentor = augmentors.Random(
-            num_neg, self.lookup_dict, self.mol_fps, self.rxn_type, self.fp_type
+            num_neg, self.smi_to_fp_dict, self.mol_fps, self.rxn_type, self.fp_type
         )
         self.augs.append(self.rdmaugmentor.get_one_sample)
 
@@ -156,7 +162,7 @@ class AugmentedData:
             num_bits,
             increment_bits,
             strategy,
-            self.lookup_dict,
+            self.smi_to_fp_dict,
             self.mol_fps,
             self.rxn_type,
             self.fp_type,
@@ -175,7 +181,7 @@ class AugmentedData:
 
         self.mutaugmentor = augmentors.Mutate(
             num_neg,
-            self.lookup_dict,
+            self.smi_to_fp_dict,
             self.mol_fps,
             mut_smis,
             self.rxn_type,
@@ -191,7 +197,7 @@ class AugmentedData:
         where K is the sum of all of the num_neg for each active augmentation
         """
         rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(
-            rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps
+            rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
         )
         pos_rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, self.rxn_type)
 
@@ -396,14 +402,15 @@ if __name__ == "__main__":
         "mut": {"num_neg": 10},
     }
 
-    lookup_dict_filename = "50k_mol_smi_to_sparse_fp_idx.pickle"
+    smi_to_fp_dict_filename = "50k_mol_smi_to_sparse_fp_idx.pickle"
+    fp_to_smi_dict_filename = "50k_sparse_fp_idx_to_mol_smi.pickle"
     mol_fps_filename = "50k_count_mol_fps.npz"
     search_index_filename = "50k_cosine_count.bin"
     mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
 
     augmented_data = dataset.AugmentedData(
         augmentations,
-        lookup_dict_filename,
+        smi_to_fp_dict_filename,
         mol_fps_filename,
         search_index_filename,
         mut_smis_filename,

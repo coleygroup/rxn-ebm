@@ -22,10 +22,10 @@ separately stored .npz files will make it much easier.
 
 
 def rcts_prod_fps_from_rxn_smi(
-    rxn_smi: str, fp_type: str, lookup_dict: dict, mol_fps: sparse_fp
+    rxn_smi: str, fp_type: str, smi_to_fp_dict: dict, mol_fps: sparse_fp
 ) -> Tuple[sparse_fp, sparse_fp]:
     prod_smi = rxn_smi.split(">")[-1]
-    prod_idx = lookup_dict[prod_smi]
+    prod_idx = smi_to_fp_dict[prod_smi]
     prod_fp = mol_fps[prod_idx]
 
     if fp_type == "bit":
@@ -37,7 +37,7 @@ def rcts_prod_fps_from_rxn_smi(
 
     rcts_smis = rxn_smi.split(">")[0].split(".")
     for i, rct_smi in enumerate(rcts_smis):
-        rct_idx = lookup_dict[rct_smi]
+        rct_idx = smi_to_fp_dict[rct_smi]
         if i == 0:
             rcts_fp = mol_fps[rct_idx].astype(dtype)
         else:
@@ -68,14 +68,14 @@ class Augmentor(ABC):
     def __init__(
         self,
         num_neg: int,
-        lookup_dict: dict,
+        smi_to_fp_dict: dict,
         mol_fps: sparse_fp,
         rxn_type: str,
         fp_type: str,
         **kwargs
     ):
         self.num_neg = num_neg
-        self.lookup_dict = lookup_dict
+        self.smi_to_fp_dict = smi_to_fp_dict
         self.mol_fps = mol_fps
         self.rxn_type = rxn_type
         self.fp_type = fp_type
@@ -108,7 +108,7 @@ class Mutate(Augmentor):
     def __init__(
         self,
         num_neg: int,
-        lookup_dict: dict,
+        smi_to_fp_dict: dict, 
         mol_fps: sparse_fp,
         mut_smis: dict,
         rxn_type: Optional[str] = "diff",
@@ -117,7 +117,7 @@ class Mutate(Augmentor):
         fp_size: Optional[int] = 4096,
         dtype: Optional[str] = "int16",
     ):
-        super(Mutate, self).__init__(num_neg, lookup_dict, mol_fps, rxn_type, fp_type)
+        super(Mutate, self).__init__(num_neg, smi_to_fp_dict, mol_fps, rxn_type, fp_type)
         self.mut_smis = mut_smis
         self.radius = radius
         self.fp_size = fp_size
@@ -148,7 +148,7 @@ class Mutate(Augmentor):
             mut_prod_fps.append(prod_fp)
 
         rcts_fp, _ = rcts_prod_fps_from_rxn_smi(
-            rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps
+            rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
         )
 
         neg_rxn_fps = []
@@ -167,7 +167,7 @@ class Mutate(Augmentor):
 
     def get_idx(self, mut_prod_smis: List[str]) -> None:
         """Not applicable to CReM
-        Because need to expand lookup_dict to include the newly generated negative molecules, and
+        Because need to expand smi_to_fp_dict to include the newly generated negative molecules, and
         there are too many to keep track!
         """
         pass 
@@ -186,14 +186,17 @@ class Cosine(Augmentor):
     def __init__(
         self,
         num_neg: int,
-        lookup_dict: dict,
+        smi_to_fp_dict: dict,
+        fp_to_smi_dict: dict, 
         mol_fps: sparse_fp,
         search_index: nmslib.dist.FloatIndex,
         rxn_type: str = "diff",
         fp_type: str = "count",
         num_threads: int = 4,
     ):
-        super(Cosine, self).__init__(num_neg, lookup_dict, mol_fps, rxn_type, fp_type)
+        super(Cosine, self).__init__(num_neg, smi_to_fp_dict, mol_fps, rxn_type, fp_type)
+        self.fp_to_smi_dict = fp_to_smi_dict
+        
         # can be None, in which case it'll be initialised by _worker_init_fn_nmslib (see expt.utils)
         self.search_index = search_index
         self.num_threads = num_threads
@@ -203,32 +206,56 @@ class Cosine(Augmentor):
         Also see: rcts_prod_fps_from_rxn_smi, make_rxn_fp
         """
         rcts_fp, prod_fp = rcts_prod_fps_from_rxn_smi(
-            rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps
+            rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
         )
+        
+        nn_prod_idxs = self.get_idx(prod_fp=prod_fp, rxn_smi=rxn_smi)
+        nn_prod_fps = [self.mol_fps[idx] for idx in nn_prod_idxs[: self.num_neg]]
 
-        nn_prod_idxs = self.get_idx(prod_fp=prod_fp)
-        # first index is the original molecule!
-        nn_prod_fps = [self.mol_fps[idx] for idx in nn_prod_idxs[1 : self.num_neg + 1]]
         neg_rxn_fps = []
         for nn_prod_fp in nn_prod_fps:
             neg_rxn_fp = make_rxn_fp(rcts_fp, nn_prod_fp, self.rxn_type)
             neg_rxn_fps.append(neg_rxn_fp)
         return neg_rxn_fps
 
-    def get_idx(self, prod_fp: sparse_fp = None, rxn_smi: Optional[str] = None) -> int:
-        """if rxn_smi string is provided, then prod_fp is not needed.
-        otherwise, prod_fp is necessary
+    def get_idx(self, prod_fp: sparse_fp, rxn_smi: str) -> List[int]:
+        """ if prod_fp is None, will create it from rxn_smi 
         """
-        if rxn_smi:
+        if prod_fp is None:
             rcts_fp, prod_fp = rcts_prod_fps_from_rxn_smi(
-                rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps
+                rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
             )
+
         nn_prod_idxs_with_dist = self.search_index.knnQueryBatch(
-            prod_fp, k=self.num_neg + 1, num_threads=self.num_threads
+            prod_fp, k=self.num_neg + 3, num_threads=self.num_threads
         )
 
+        all_rct_smis = set(rxn_smi.split('>>')[0].split('.'))
         nn_prod_idxs = nn_prod_idxs_with_dist[0][0]
-        return nn_prod_idxs
+        nn_prod_idxs_clean = []
+        for prod_idx in nn_prod_idxs[1:]: # 0th element = orig prod; we don't want it as negative
+            new_prod_smi = self.fp_to_smi_dict[prod_idx]
+            if new_prod_smi in all_rct_smis: # prod == one of the rcts, do not use this prod!
+                continue
+            else:
+                nn_prod_idxs_clean.append(prod_idx)
+
+        return nn_prod_idxs_clean 
+
+    def get_smi(self, prod_fp: sparse_fp, rxn_smi: str) -> List[str]:
+        if prod_fp is None:
+            rcts_fp, prod_fp = rcts_prod_fps_from_rxn_smi(
+                rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
+            )
+        
+        nn_prod_idxs = self.get_idx(prod_fp, rxn_smi)
+
+        new_prod_smis = []
+        for prod_idx in nn_prod_idxs:  
+            new_prod_smi = self.fp_to_smi_dict[prod_idx]
+            new_prod_smis.append(new_prod_smi)
+
+        return new_prod_smis 
 
 
 class Random(Augmentor):
@@ -244,12 +271,12 @@ class Random(Augmentor):
     def __init__(
         self,
         num_neg: int,
-        lookup_dict: dict,
+        smi_to_fp_dict: dict,
         mol_fps: sparse_fp,
         rxn_type: str = "diff",
         fp_type: str = "count",
     ):
-        super(Random, self).__init__(num_neg, lookup_dict, mol_fps, rxn_type, fp_type)
+        super(Random, self).__init__(num_neg, smi_to_fp_dict, mol_fps, rxn_type, fp_type)
         self.orig_idxs = range(self.mol_fps.shape[0])
         self.rdm_idxs = random.sample(self.orig_idxs, k=len(self.orig_idxs))
         self.rdm_counter = -1 
@@ -259,7 +286,7 @@ class Random(Augmentor):
         Also see: rcts_prod_fps_from_rxn_smi, make_rxn_fp
         """
         rcts_fp, prod_fp = rcts_prod_fps_from_rxn_smi(
-            rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps
+            rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
         )
 
         neg_rxn_fps = []
@@ -299,12 +326,12 @@ class Bit(Augmentor):
         num_bits: int,
         increment_bits: int,
         strategy: str,
-        lookup_dict: dict,
+        smi_to_fp_dict: dict,
         mol_fps: sparse_fp,
         rxn_type: str = "diff",
         fp_type: str = "count",
     ):
-        super(Bit, self).__init__(num_neg, lookup_dict, mol_fps, rxn_type, fp_type)
+        super(Bit, self).__init__(num_neg, smi_to_fp_dict, mol_fps, rxn_type, fp_type)
         self.num_bits = num_bits
         self.increment_bits = increment_bits or 1  # default is 1
         self.strategy = strategy
@@ -316,7 +343,7 @@ class Bit(Augmentor):
         Also see: rcts_prod_fps_from_rxn_smi, make_rxn_fp
         """
         rcts_fp, prod_fp = rcts_prod_fps_from_rxn_smi(
-            rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps
+            rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
         )
         pos_rxn_fp = make_rxn_fp(rcts_fp, prod_fp, self.rxn_type)
 
@@ -334,7 +361,7 @@ class Bit(Augmentor):
         Also see: rcts_prod_fps_from_rxn_smi, make_rxn_fp
         """
         rcts_fp, prod_fp = rcts_prod_fps_from_rxn_smi(
-            rxn_smi, self.fp_type, self.lookup_dict, self.mol_fps
+            rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
         )
         pos_rxn_fp = make_rxn_fp(rcts_fp, prod_fp, self.rxn_type)
 
