@@ -18,7 +18,7 @@ from rxnebm.model import model_utils
 sparse_fp = scipy.sparse.csr_matrix
 Tensor = torch.Tensor
 
-class AugmentedData:
+class AugmentedDataFingerprints:
     """
     Parameters
     ----------
@@ -49,7 +49,7 @@ class AugmentedData:
                 num_bits : int
                     number of bits to corrupt
                 strategy : Optional[str]
-                    the strategy to corrupt the bits. TODO: implemented soon!!!
+                    the strategy to corrupt the bits. TODO: try this 
     rxn_type : str (Default = 'diff')
         the method to calculate reaction fingerprints
         currently supports 'diff' & 'sep' methods
@@ -77,7 +77,7 @@ class AugmentedData:
         fp_type: Optional[str] = "count",
         fp_size: Optional[int] = 4096,
         radius: Optional[int] = 3,
-        dtype: Optional[str] = "int16",
+        dtype: Optional[str] = "int32",
         root: Optional[str] = None,
         seed: Optional[int] = 0,
     ):
@@ -122,7 +122,6 @@ class AugmentedData:
                 self._init_mutate(**value)
 
     def _init_cosine(self, num_neg: int, query_params: Optional[dict] = None):
-        # NOTE: nmslib only accepts str as filename, not os.PathLike objects
         print("Initialising Cosine Augmentor...")
         # loaded later by precompute_helper / expt_utils._worker_init_fn_nmslib_
         search_index = None
@@ -132,22 +131,27 @@ class AugmentedData:
             self.query_params = None
 
         self.cosaugmentor = augmentors.Cosine(
-            num_neg,
-            self.smi_to_fp_dict,
-            self.fp_to_smi_dict,
-            self.mol_fps,
-            search_index,
-            self.rxn_type,
-            self.fp_type,
+            num_neg=num_neg, 
+            search_index=search_index,
+            smi_to_fp_dict=self.smi_to_fp_dict,
+            fp_to_smi_dict=self.fp_to_smi_dict,
+            mol_fps=self.mol_fps,
+            rxn_type=self.rxn_type,
+            fp_type=self.fp_type, 
         )
-        self.augs.append(self.cosaugmentor.get_one_sample)
+        self.augs.append(self.cosaugmentor.get_one_sample_fp)
 
     def _init_random(self, num_neg: int):
         print("Initialising Random Augmentor...")
         self.rdmaugmentor = augmentors.Random(
-            num_neg, self.smi_to_fp_dict, self.mol_fps, self.rxn_type, self.fp_type
+            num_neg=num_neg, 
+            smi_to_fp_dict=self.smi_to_fp_dict,
+            fp_to_smi_dict=self.fp_to_smi_dict,
+            mol_fps=self.mol_fps,
+            rxn_type=self.rxn_type,
+            fp_type=self.fp_type,    
         )
-        self.augs.append(self.rdmaugmentor.get_one_sample)
+        self.augs.append(self.rdmaugmentor.get_one_sample_fp)
 
     def _init_bit(
         self,
@@ -158,19 +162,16 @@ class AugmentedData:
     ):
         print("Initialising Bit Augmentor...")
         self.bitaugmentor = augmentors.Bit(
-            num_neg,
-            num_bits,
-            increment_bits,
-            strategy,
-            self.smi_to_fp_dict,
-            self.mol_fps,
-            self.rxn_type,
-            self.fp_type,
-        )
-        if self.fp_type == "count":
-            self.augs.append(self.bitaugmentor.get_one_sample_count)
-        elif self.fp_type == "bit":
-            self.augs.append(self.bitaugmentor.get_one_sample_bit)
+            num_neg=num_neg, 
+            num_bits=num_bits,
+            increment_bits=increment_bits,
+            strategy=strategy,
+            smi_to_fp_dict=self.smi_to_fp_dict,
+            mol_fps=self.mol_fps,
+            rxn_type=self.rxn_type,
+            fp_type=self.fp_type,    
+        ) 
+        self.augs.append(self.bitaugmentor.get_one_sample_fp) 
 
     def _init_mutate(self, num_neg: int):
         print("Initialising Mutate Augmentor...")
@@ -180,38 +181,41 @@ class AugmentedData:
             mut_smis = pickle.load(handle)
 
         self.mutaugmentor = augmentors.Mutate(
-            num_neg,
-            self.smi_to_fp_dict,
-            self.mol_fps,
-            mut_smis,
-            self.rxn_type,
-            self.fp_type,
-            self.radius,
-            self.fp_size,
-            self.dtype,
+            num_neg=num_neg,
+            mut_smis=mut_smis,
+            smi_to_fp_dict=self.smi_to_fp_dict,
+            mol_fps=self.mol_fps,
+            rxn_type=self.rxn_type,
+            fp_type=self.fp_type,
+            radius=self.radius,
+            fp_size=self.fp_size,
+            dtype=self.dtype,
         )
-        self.augs.append(self.mutaugmentor.get_one_sample)
+        self.augs.append(self.mutaugmentor.get_one_sample_fp)
 
     def get_one_minibatch(self, rxn_smi: str) -> sparse_fp:
-        """prepares one minibatch, which is 1 pos_rxn + K neg_rxns
-        where K is the sum of all of the num_neg for each active augmentation
+        """prepares one minibatch of fingerprints: 1 pos_rxn + K neg_rxns
+        where K is the sum of all the num_neg for each active augmentation
         """
         rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(
             rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
         )
         pos_rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, self.rxn_type)
 
-        neg_rxn_fps = []
+        minibatch_neg_rxn_fps = []
         for aug in self.augs:
-            negs = aug(rxn_smi)
-            neg_rxn_fps.extend(negs)
+            neg_rxn_fps = aug(rxn_smi)  
+            minibatch_neg_rxn_fps.extend(neg_rxn_fps)
 
-        out = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
+        # TODO: try creating empty sparse vector then allocate elements, see if faster than sparse.hstack
+        out = sparse.hstack([pos_rxn_fp, *minibatch_neg_rxn_fps])
         return out  # spy_sparse2torch_sparse(out)
 
+
     def __getitem__(self, idx: int) -> sparse_fp:
-        """Called by ReactionDataset.__getitem__(idx)"""
+        """Called by ReactionDatasetFingerprints.__getitem__(idx)"""
         return self.get_one_minibatch(self.rxn_smis[idx])
+
 
     def precompute_helper(self):
         if hasattr(self, "cosaugmentor"):
@@ -252,7 +256,8 @@ class AugmentedData:
         if distributed:
             print("distributed computing is not supported now!")
             return
-            # TODO: add support & documentation for distributed processing
+            '''TODO: add support & documentation for distributed processing
+            '''
             # from mpi4py import MPI
             # from mpi4py.futures import MPIPoolExecutor as Pool
 
@@ -300,7 +305,7 @@ class AugmentedData:
             raise ValueError("Error! No reaction SMILES provided.")
         self.shape = (len(self.rxn_smis), self.mol_fps[0].shape[-1])
         # e.g. (40004, 4096) for train, needed to allow .shape[0] attribute
-        # from ReactionDataset.__len__()
+        # from ReactionDatasetFingerprints.__len__()
 
 
 def spy_sparse2torch_sparse(data: scipy.sparse.csr_matrix) -> Tensor:
@@ -319,9 +324,11 @@ def spy_sparse2torch_sparse(data: scipy.sparse.csr_matrix) -> Tensor:
     return tensor
 
 
-class ReactionDataset(Dataset):
+class ReactionDatasetFingerprints(Dataset):
     """
-    NOTE: ReactionDataset assumes that rxn_fp already exists,
+    Dataset class for fingerprint representation of reactions
+
+    NOTE: ReactionDatasetFingerprints assumes that rxn_fp already exists,
     unless onthefly = True, in which case, an already initialised augmentor object must be passed.
     Otherwise, a RuntimeError is raised and training is interrupted.
     TODO: viz_neg: visualise cosine negatives (trace index back to CosineAugmentor & 50k_rxnsmi)
@@ -339,13 +346,13 @@ class ReactionDataset(Dataset):
         precomp_rxnfp_filename: str = None,
         rxn_smis_filename: Optional[str] = None,
         onthefly: bool = False,
-        augmented_data: Optional[AugmentedData] = None,
+        augmented_data: Optional[AugmentedDataFingerprints] = None,
         query_params: Optional[dict] = None,
         search_index_filename: Optional[str] = None,
         root: Optional[str] = None,
         viz_neg: Optional[bool] = False,
     ):
-        self.input_dim = input_dim
+        self.input_dim = input_dim # needed to reshape row vector in self.__getitem__()
         self.onthefly = onthefly  # needed by worker_init_fn
         self.viz_neg = viz_neg  # TODO
 
@@ -408,7 +415,7 @@ if __name__ == "__main__":
     search_index_filename = "50k_cosine_count.bin"
     mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
 
-    augmented_data = dataset.AugmentedData(
+    augmented_data = dataset.AugmentedDataFingerprints(
         augmentations,
         smi_to_fp_dict_filename,
         mol_fps_filename,
@@ -424,11 +431,4 @@ if __name__ == "__main__":
             rxn_smis=rxn_smis_file_prefix + f"_{phase}.pickle",
             distributed=False,
             parallel=False,
-        )
-
-    # from tqdm import tqdm
-    # with open('data/cleaned_data/50k_clean_rxnsmi_noreagent_train.pickle', 'rb') as handle:
-    #     rxnsmi_train = pickle.load(handle)
-    # samples = []
-    # for i in tqdm(range(len(rxnsmi_train))):
-    #     samples.append(augmentor.get_one_sample(rxnsmi_train[i]))
+        ) 

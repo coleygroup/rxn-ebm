@@ -22,7 +22,7 @@ NOTE: the way python's imports work, is that I cannot run scripts on their own f
 (e.g. I cannot do python FF.py because FF.py imports functions from model.model_utils, and at the time of
 executing FF.py, python has no knowledge of this package level information (i.e. __package__ is None))
 therefore, I have to run/import all these files/functions from a script in the main directory,
-i.e. same folder as trainEBM.py by doing: from model.FF import *; from experiment.expt import * etc
+i.e. same folder as trainEBM.py by doing: from model import FF; from experiment import expt etc
 
 To run this script from terminal/interpreter, go to rxnebm/ then execute python -m experiment.expt
 """
@@ -30,11 +30,16 @@ To run this script from terminal/interpreter, go to rxnebm/ then execute python 
 
 class Experiment:
     """
-    NOTE: currently assumes pre-computed file already exists --> trainEBM.py handles the pre-computation
+    NOTE: assumes pre-computed file already exists --> trainEBM.py handles the pre-computation
+    TODO: representation: ['graph', 'string'] 
     TODO: wandb/tensorboard for hyperparameter tuning
 
     Parameters
     ----------
+    representation : str ['fingerprint']
+        which representation to use. affects which version of AugmentedData & ReactionDataset gets called.
+        if not using 'fingerprint', cannot use Bit Augmentor. 
+
     device : Optional[str] (Default = None) [torch.device('cuda'), torch.device('cpu')]
         device to do training, testing & inference on.
         If None, automatically detects if GPU is available, else uses CPU.
@@ -47,6 +52,7 @@ class Experiment:
         self,
         model: nn.Module,
         model_args: dict,
+        optimizer: str,
         batch_size: int,
         learning_rate: float,
         epochs: int,
@@ -59,19 +65,19 @@ class Experiment:
         precomp_file_prefix: str,
         checkpoint_folder: Union[str, bytes, os.PathLike],
         expt_name: str,
-        rxn_type: str,
-        fp_type: str,
-        rctfp_size: int,
-        prodfp_size: int,
+        representation: str, 
         augmentations: dict,
         onthefly: Optional[bool] = False,
+        rxn_type: Optional[str] = None,
+        fp_type: Optional[str] = None,
+        rctfp_size: Optional[int] = None,
+        prodfp_size: Optional[int] = None,
         smi_to_fp_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         fp_to_smi_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         mol_fps_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         search_index_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         device: Optional[str] = None,
         distributed: Optional[bool] = False,
-        optimizer: Optional[Union[torch.optim.Optimizer, str]] = None,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
         load_checkpoint: Optional[bool] = False,
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
@@ -89,11 +95,15 @@ class Experiment:
         self.checkpoint = checkpoint
         self.random_seed = random_seed
 
-        self.rxn_type = rxn_type
-        self.fp_type = fp_type
-        self.rctfp_size = rctfp_size
-        self.prodfp_size = prodfp_size
-        self.fp_radius = kwargs["fp_radius"]
+        self.representation = representation
+
+        ### fingerprint arguments ###
+        if self.representation == 'fingerprint':
+            self.rxn_type = rxn_type
+            self.fp_type = fp_type
+            self.rctfp_size = rctfp_size
+            self.prodfp_size = prodfp_size
+            self.fp_radius = kwargs["fp_radius"]
 
         if root:
             self.root = Path(root)
@@ -124,14 +134,15 @@ class Experiment:
 
         # if onthefly is True, need smi_to_fp_dict_filename, 
         # mol_fps_filename, (if cos: search_index_filename, fp_to_smi_dict_filename)
-        self._init_dataloaders(
-            precomp_file_prefix,
-            onthefly,
-            smi_to_fp_dict_filename,
-            fp_to_smi_dict_filename,
-            mol_fps_filename,
-            search_index_filename,
-        )
+        if self.representation == 'fingerprint':
+            self._init_fp_dataloaders(
+                precomp_file_prefix=precomp_file_prefix,
+                onthefly=onthefly,
+                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+                mol_fps_filename=mol_fps_filename,
+                search_index_filename=search_index_filename,
+            )
 
         model_utils.seed_everything(random_seed)
 
@@ -145,13 +156,14 @@ class Experiment:
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
     ):
         self.model_args = model_args
-        self.fp_args = {
-            "rxn_type": self.rxn_type,
-            "fp_type": self.fp_type,
-            "rctfp_size": self.rctfp_size,
-            "prodfp_size": self.prodfp_size,
-            "fp_radius": self.fp_radius,
-        }
+        if self.representation == 'fingerprint':
+            self.fp_args = {
+                "rxn_type": self.rxn_type,
+                "fp_type": self.fp_type,
+                "rctfp_size": self.rctfp_size,
+                "prodfp_size": self.prodfp_size,
+                "fp_radius": self.fp_radius,
+            }
         self.train_args = {
             "batch_size": self.batch_size,
             "learning_rate": self.learning_rate,
@@ -205,14 +217,10 @@ class Experiment:
             raise ValueError("load_checkpoint requires begin_epoch!")
         self.begin_epoch = begin_epoch
 
-    def _init_opt_and_stats(self, optimizer: torch.optim.Optimizer):
-        # to store training statistics
-        print("Initialising optimizer & stats...")
-        if isinstance(optimizer, str):
-            optimizer = model_utils.get_optimizer(optimizer)
-            self.optimizer = optimizer(self.model.parameters(), lr=self.learning_rate)
-        else: 
-            self.optimizer = optimizer(self.model.parameters(), lr=self.learning_rate)
+    def _init_opt_and_stats(self, optimizer: str): 
+        print("Initialising optimizer & stats...") 
+        optimizer = model_utils.get_optimizer(optimizer)
+        self.optimizer = optimizer(self.model.parameters(), lr=self.learning_rate) 
 
         self.train_losses = []
         self.train_accs = []
@@ -233,7 +241,7 @@ class Experiment:
             self.checkpoint_folder / f"{self.model_name}_{self.expt_name}_stats.pkl"
         )
 
-    def _init_dataloaders(
+    def _init_fp_dataloaders(
         self,
         precomp_file_prefix: str,
         onthefly: bool,
@@ -244,7 +252,7 @@ class Experiment:
         rxn_smis_file_prefix: Optional[str] = None,
     ):
         print("Initialising dataloaders...")
-        if "cos" in self.augmentations or "cosine" in self.augmentations:
+        if "cos" in self.augmentations:
             worker_init_fn = expt_utils._worker_init_fn_nmslib
         else:
             worker_init_fn = expt_utils._worker_init_fn_default
@@ -252,7 +260,7 @@ class Experiment:
         rxn_smis_filenames = defaultdict(str)
         precomp_filenames = defaultdict(str)
         if onthefly:
-            augmented_data = dataset.AugmentedData(
+            augmented_data = dataset.AugmentedDataFingerprints(
                 self.augmentations,
                 smi_to_fp_dict_filename,
                 fp_to_smi_dict_filename,
@@ -280,7 +288,7 @@ class Experiment:
             input_dim = self.rctfp_size
 
         pin_memory = True if torch.cuda.is_available() else False
-        train_dataset = dataset.ReactionDataset(
+        train_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
             precomp_rxnfp_filename=precomp_filenames["train"],
             rxn_smis_filename=rxn_smis_filenames["train"],
@@ -297,7 +305,7 @@ class Experiment:
         )
         self.train_size = len(train_dataset)
 
-        val_dataset = dataset.ReactionDataset(
+        val_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
             precomp_rxnfp_filename=precomp_filenames["valid"],
             rxn_smis_filename=rxn_smis_filenames["valid"],
@@ -314,7 +322,7 @@ class Experiment:
         )
         self.val_size = len(val_dataset)
 
-        test_dataset = dataset.ReactionDataset(
+        test_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
             precomp_rxnfp_filename=precomp_filenames["test"],
             rxn_smis_filename=rxn_smis_filenames["test"],

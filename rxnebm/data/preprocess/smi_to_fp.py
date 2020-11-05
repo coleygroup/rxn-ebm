@@ -105,7 +105,7 @@ def gen_lookup_dicts_from_file(
 ############# COUNT MOLECULAR FINGERPRINTS #############
 ########################################################
 def mol_smi_to_count_fp(
-    mol_smi: str, radius: int = 3, fp_size: int = 4096, dtype: str = "int16"
+    mol_smi: str, radius: int = 3, fp_size: int = 4096, dtype: str = "int32"
 ) -> scipy.sparse.csr_matrix:
     fp_gen = GetMorganGenerator(
         radius=radius, useCountSimulation=True, includeChirality=True, fpSize=fp_size
@@ -133,7 +133,7 @@ def gen_count_mol_fps_from_file(
     output_filename: Union[str, bytes, os.PathLike] = "50k_count_mol_fps.npz",
     radius: int = 3,
     fp_size: int = 4096,
-    dtype: str = "int16",
+    dtype: str = "int32",
     root: Optional[Union[str, bytes, os.PathLike]] = None,
 ) -> Tuple[Union[str, bytes, os.PathLike], Union[str, bytes, os.PathLike]]:
     """TODO: add docstring"""
@@ -198,7 +198,7 @@ def gen_count_mol_fps_from_file(
 ############### BIT MOLECULAR FINGERPRINTS #############
 ########################################################
 def mol_smi_to_bit_fp(
-    mol_smi: str, radius: int = 3, fp_size: int = 4096, dtype: str = "int8"
+    mol_smi: str, radius: int = 3, fp_size: int = 4096, dtype: str = "int32"
 ) -> sparse_fp:
     mol = Chem.MolFromSmiles(mol_smi)
     bitvect_fp = AllChem.GetMorganFingerprintAsBitVect(
@@ -214,7 +214,7 @@ def gen_bit_mol_fps_from_file(
     output_filename: Union[str, bytes, os.PathLike],
     radius: int = 3,
     fp_size: int = 4096,
-    dtype: str = "int8",
+    dtype: str = "int32",
     root: Optional[Union[str, bytes, os.PathLike]] = None,
 ) -> Union[str, bytes, os.PathLike]:
     """

@@ -98,7 +98,7 @@ def parse_args():
         "--remove_all_mapping",
         help="Whether to remove all atom map",
         type=bool,
-        default=True,
+        default=False,
     )
     parser.add_argument(
         "--save_idxs",
@@ -224,9 +224,8 @@ def move_reagents(
                 if a.GetProp("molAtomMapNumber") in prod_maps:
                     used = True
 
-                elif (
-                    remove_rct_mapping
-                ):  # removes atom mapping if atom in reactant is not in product
+                # removes atom mapping if atom in reactant is not in product
+                elif remove_rct_mapping:  
                     a.ClearProp("molAtomMapNumber")
 
         if keep_all_rcts: # keep all rcts rgdless of contribution to prod atoms
@@ -255,12 +254,11 @@ def move_reagents(
 def clean_rxn_smis_50k_one_phase(
     path_to_rxn_smis: Union[str, bytes, os.PathLike],
     lines_to_skip: int = 1,
-    dataset_name: str = "50k",
-    split_mode: str = "multi",
+    dataset_name: str = "50k", 
     keep_reagents: bool = False,
     keep_all_rcts: bool = False,
     remove_rct_mapping: bool = True,
-    remove_all_mapping: bool = True,
+    remove_all_mapping: bool = False,
 ):
     """
     Adapted function from Hanjun Dai's GLN: gln/data_process/clean_uspto.py --> main()
@@ -297,7 +295,7 @@ def clean_rxn_smis_50k_one_phase(
     remove_rct_mapping : bool (Default = True)
         whether to remove atom mapping if atom in reactant is not in product (i.e. leaving groups)
         NOTE: GLN removes these atom mapping in their clean_uspto.py's get_rxn_smiles()
-    remove_all_mapping : bool (Default = True)
+    remove_all_mapping : bool (Default = False)
         whether to remove all atom mapping from the reaction SMILES,
         if True, remove_rct_mapping will be automatically set to True
 
@@ -429,7 +427,7 @@ def clean_rxn_smis_50k_all_phases(
     keep_all_rcts: bool = False,
     remove_dup_rxns: bool = True,
     remove_rct_mapping: bool = True,
-    remove_all_mapping: bool = True,
+    remove_all_mapping: bool = False,
     save_idxs: bool = True,
     parallelize: bool = True,
     **kwargs 
@@ -466,7 +464,7 @@ def clean_rxn_smis_50k_all_phases(
     remove_rct_mapping : bool (Default = True)
         whether to remove atom mapping if atom in reactant is not in product (i.e. leaving groups)
         NOTE: GLN removes these atom mapping in their clean_uspto.py's get_rxn_smiles()
-    remove_all_mapping : bool (Default = True)
+    remove_all_mapping : bool (Default = False)
         whether to remove all atom mapping from the reaction SMILES,
         if True, remove_rct_mapping will be automatically set to True
     save_idxs : bool (Default = True)
@@ -581,7 +579,7 @@ def clean_rxn_smis_FULL_one_phase(
     keep_reagents: bool = False,
     keep_all_rcts: bool = False,
     remove_rct_mapping: bool = True,
-    remove_all_mapping: bool = True,
+    remove_all_mapping: bool = False,
 ):
     """
     Adapted function from Hanjun Dai's GLN: gln/data_process/clean_uspto.py --> main()
@@ -770,7 +768,7 @@ def clean_rxn_smis_FULL_all_phases(
     keep_all_rcts: bool = False,
     remove_dup_rxns: bool = True,
     remove_rct_mapping: bool = True,
-    remove_all_mapping: bool = True,
+    remove_all_mapping: bool = False,
     save_idxs: bool = True,
     parallelize: bool = True,
 ):
@@ -807,7 +805,7 @@ def clean_rxn_smis_FULL_all_phases(
     remove_rct_mapping : bool (Default = True)
         whether to remove atom mapping if atom in reactant is not in product (i.e. leaving groups)
         NOTE: GLN removes these atom mapping in their clean_uspto.py's get_rxn_smiles()
-    remove_all_mapping : bool (Default = True)
+    remove_all_mapping : bool (Default = False)
         whether to remove all atom mapping from the reaction SMILES,
         if True, remove_rct_mapping will be automatically set to True
     save_idxs : bool (Default = True)
@@ -1046,17 +1044,17 @@ if __name__ == "__main__":
             args.raw_smi_pre,
             args.clean_smi_pre, # '50k_clean_rxnsmi_noreagent_allmapped',   
             lines_to_skip=args.lines_to_skip,   
-            keep_all_rcts=args.keep_all_rcts,   
-            remove_dup_rxns=args.remove_dup_rxns,   
-            remove_rct_mapping=args.remove_rct_mapping, 
-            remove_all_mapping=args.remove_all_mapping 
+            keep_all_rcts=args.keep_all_rcts,  #  
+            remove_dup_rxns=args.remove_dup_rxns,   # 
+            remove_rct_mapping=args.remove_rct_mapping, # 
+            remove_all_mapping=args.remove_all_mapping #
         )  
         remove_overlapping_rxn_smis(
-            rxn_smi_file_prefix=args.clean_smi_pre, # '50k_clean_rxnsmi_noreagent_allmapped',  
+            rxn_smi_file_prefix=args.clean_smi_pre, #'50k_clean_rxnsmi_noreagent_allmapped', 
             root=args.clean_smi_root,
         )
         get_uniq_mol_smis_all_phases(
-            rxn_smi_file_prefix=args.clean_smi_pre,
+            rxn_smi_file_prefix=args.clean_smi_pre, #'50k_clean_rxnsmi_noreagent_allmapped',
             root=args.clean_smi_root,
             output_filename=args.mol_smi_filename,
             save_reagents=args.save_reags,

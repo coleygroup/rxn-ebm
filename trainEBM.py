@@ -159,7 +159,8 @@ def prepare_data(args):
         num_neg=150, max_size=3, radius=2, frag_db_filename="replacements02_sa2.db"
     )
 
-    print("Successfully prepared required data!\n\n")
+    print("\nSuccessfully prepared required data!")
+    print("#" * 50 + "\n\n")
 
 
 def train(args):
@@ -186,13 +187,13 @@ def train(args):
     mol_fps_filename = "50k_count_mol_fps.npz"
     search_index_filename = "50k_cosine_count.bin"
     mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
-    augmented_data = dataset.AugmentedData(
-        augmentations,
-        smi_to_fp_dict_filename,
-        fp_to_smi_dict_filename,
-        mol_fps_filename,
-        search_index_filename,
-        mut_smis_filename,
+    augmented_data = dataset.AugmentedDataFingerprints(
+        augmentations=augmentations,
+        smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+        fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+        mol_fps_filename=mol_fps_filename,
+        search_index_filename=search_index_filename,
+        mut_smis_filename=mut_smis_filename,
         seed=random_seed,
     )
 
@@ -217,6 +218,7 @@ def train(args):
     }
 
     fp_args = {
+        "representation": "fingerprint",
         "rctfp_size": 4096,
         "prodfp_size": 4096,
         "fp_radius": 3,
@@ -290,7 +292,7 @@ def resume(args):
     mol_fps_filename = "50k_count_mol_fps.npz"
     search_index_filename = "50k_cosine_count.bin"
     mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
-    augmented_data = dataset.AugmentedData(
+    augmented_data = dataset.AugmentedDataFingerprints(
         augmentations,
         lookup_dict_filename,
         mol_fps_filename,
@@ -331,7 +333,7 @@ def resume(args):
     train_args = {
         "batch_size": 4096,
         "learning_rate": 5e-3,
-        "optimizer": torch.optim.Adam,
+        "optimizer": None, # load saved_optimizer
         "epochs": 5,
         "early_stop": True,
         "min_delta": 1e-4,
