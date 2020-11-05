@@ -22,62 +22,90 @@ from tqdm import tqdm
 sparse_fp = scipy.sparse.csr_matrix
 
 
-def gen_lookup_dict_from_file(
+def gen_lookup_dicts_from_file(
     mol_smis_filename: Union[str, bytes, os.PathLike] = "50k_mol_smis.pickle",
-    output_filename: Union[
+    mol_smi_to_fp_dict_filename: Union[
         str, bytes, os.PathLike
     ] = "50k_mol_smi_to_sparse_fp_idx.pickle",
+    fp_to_mol_smi_dict_filename: Union[
+        str, bytes, os.PathLike
+    ] = "50k_sparse_fp_idx_to_mol_smi.pickle",
     bad_smis_filename: Optional[Union[str, bytes, os.PathLike]] = None,
     root: Optional[Union[str, bytes, os.PathLike]] = None,
-) -> dict:
+):
     """
-    Generates a lookup dictionary mapping each molecular SMILES string in the given
-    mol_smis .pickle file to its index. ENSURE that the order of elements in
-    the mol_smis .pickle file (and ALL its derivatives, like mol_fp .npz file) are ALL identical.
+    Generates two lookup dictionaries:
+        1) maps each molecular SMILES string (key) in the 
+        given mol_smis .pickle file to its index in the sparse_fp file (value)
+        2) maps each molecule's index in the sparse_fp file (key) to its 
+        moleculear SMILES string (value, aka reverse of 1)
+    
+    ENSURE that the order of elements in the mol_smis .pickle file 
+    (and ALL its derivatives, like mol_fp .npz file) are ALL identical.
     Any shuffling will render this dictionary useless!
     """
-    if root is None:  # if not provided, goes up 2 levels to get to 'rxn-ebm/'
+    if root is None:  
         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
     else:
         root = Path(root)
-    if Path(output_filename).suffix != ".pickle":
-        output_filename = str(output_filename) + ".pickle"
-    if (root / output_filename).exists():
-        print(f"At: {root / output_filename}")
-        print("The lookup_dict file already exists!")
+
+    if Path(mol_smi_to_fp_dict_filename).suffix != ".pickle":
+        mol_smi_to_fp_dict_filename = str(mol_smi_to_fp_dict_filename) + ".pickle"
+    if Path(fp_to_mol_smi_dict_filename).suffix != ".pickle":
+        fp_to_mol_smi_dict_filename = str(fp_to_mol_smi_dict_filename) + ".pickle"   
+
+    dicts_to_compute = set(['smi_to_fp', 'fp_to_smi'])
+    if (root / mol_smi_to_fp_dict_filename).exists():
+        print(f"At: {root / mol_smi_to_fp_dict_filename}")
+        print("The mol_smi_to_fp lookup dict already exists!")
+        dicts_to_compute.remove('smi_to_fp')
+    if (root / fp_to_mol_smi_dict_filename).exists():
+        print(f"At: {root / fp_to_mol_smi_dict_filename}")
+        print("The fp_to_mol_smi lookup dict already exists!")
+        dicts_to_compute.remove('fp_to_smi') 
+    if len(dicts_to_compute) == 0:
         return
+
     if Path(mol_smis_filename).suffix != ".pickle":
         mol_smis_filename = str(mol_smis_filename) + ".pickle"
     with open(root / mol_smis_filename, "rb") as handle:
         mol_smis = pickle.load(handle)
 
-    mol_smi_to_fp = {}
-    for i, mol_smi in enumerate(tqdm(mol_smis)):
-        mol_smi_to_fp[mol_smi] = i
+    if 'smi_to_fp' in dicts_to_compute:
+        mol_smi_to_fp = {} 
+        for i, mol_smi in enumerate(tqdm(mol_smis)):
+            mol_smi_to_fp[mol_smi] = i
 
-    # gen_count_mol_fps_from_file --> returns bad_smis, if not empty list -->
-    # provide bad_smis_filename
-    if bad_smis_filename:
-        if Path(bad_smis_filename).suffix != ".pickle":
-            bad_smis_filename = str(bad_smis_filename) + ".pickle"
-        with open(root / bad_smis_filename, "rb") as handle:
-            bad_smis = pickle.load(handle)
-        for bad_smi in bad_smis:
-            mol_smi_to_fp[bad_smi] = -1  # bad_smi's all point to index -1
+        with open(root / mol_smi_to_fp_dict_filename, "wb") as handle:
+            pickle.dump(mol_smi_to_fp, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        print("Successfully generated smi_to_fp lookup dict!")
+        print(f"Saved at {root / mol_smi_to_fp_dict_filename}")
+    
+    if 'fp_to_smi' in dicts_to_compute:
+        fp_to_mol_smi = {} 
+        for i, mol_smi in enumerate(tqdm(mol_smis)):
+            fp_to_mol_smi[i] = mol_smi
 
-    with open(root / output_filename, "wb") as handle:
-        pickle.dump(mol_smi_to_fp, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(root / fp_to_mol_smi_dict_filename, "wb") as handle:
+            pickle.dump(fp_to_mol_smi, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        print("Successfully generated fp_to_smi lookup dict!")
+        print(f"Saved at {root / fp_to_mol_smi_dict_filename}")
 
-    print("Successfully generated lookup_dict!")
-    print(f"Saved at {root / output_filename}")
-    return mol_smi_to_fp
+    # gen_count_mol_fps_from_file --> returns bad_smis, if not empty list --> will return bad_smis_filename
+    # if bad_smis_filename:
+    #     if Path(bad_smis_filename).suffix != ".pickle":
+    #         bad_smis_filename = str(bad_smis_filename) + ".pickle"
+    #     with open(root / bad_smis_filename, "rb") as handle:
+    #         bad_smis = pickle.load(handle)
+    #     for bad_smi in bad_smis:
+    #         mol_smi_to_fp[bad_smi] = -1  # bad_smi's all point to index -1
 
 
 ########################################################
 ############# COUNT MOLECULAR FINGERPRINTS #############
 ########################################################
 def mol_smi_to_count_fp(
-    mol_smi: str, radius: int = 3, fp_size: int = 4096, dtype: str = "int16"
+    mol_smi: str, radius: int = 3, fp_size: int = 4096, dtype: str = "int32"
 ) -> scipy.sparse.csr_matrix:
     fp_gen = GetMorganGenerator(
         radius=radius, useCountSimulation=True, includeChirality=True, fpSize=fp_size
@@ -105,7 +133,7 @@ def gen_count_mol_fps_from_file(
     output_filename: Union[str, bytes, os.PathLike] = "50k_count_mol_fps.npz",
     radius: int = 3,
     fp_size: int = 4096,
-    dtype: str = "int16",
+    dtype: str = "int32",
     root: Optional[Union[str, bytes, os.PathLike]] = None,
 ) -> Tuple[Union[str, bytes, os.PathLike], Union[str, bytes, os.PathLike]]:
     """TODO: add docstring"""
@@ -131,41 +159,46 @@ def gen_count_mol_fps_from_file(
     for i, mol_smi in enumerate(tqdm(mol_smis, total=len(mol_smis))):
         cand_mol_fp = mol_smi_to_count_fp(mol_smi, radius, fp_size, dtype)
         if cand_mol_fp.nnz == 0:
-            bad_idx.append(i)
-            # don't add, and keep track of index  
-            continue
+            raise ValueError('Error, one of the mol_smi gave all-zero count fingerprint. Debug clean_smiles.py!')
+            # bad_idx.append(i) 
+            # continue
         else:  # sparsify then append to list
             count_mol_fps.append(cand_mol_fp)
 
-    bad_smis = []
-    if bad_idx:  
-        # to catch small molecules like 'O', 'Cl', 'N' that give count vector of all 0 values
-        # add empty sparse vector at the end as dummy vector
-        count_mol_fps.append(sparse.csr_matrix((1, fp_size), dtype=dtype))
-        idx_offset = 0  # offset is needed as the indices will dynamically change after popping each bad_smi
-        for idx in bad_idx:
-            bad_smis.append(mol_smis[idx - idx_offset])
-            mol_smis.pop(idx - idx_offset)
-            idx_offset += 1
-        print(f"The bad SMILES are {bad_smis}")
-        print(f"Saving bad_mol_smis at {bad_mol_smis_path}")
-        with open(bad_mol_smis_path, "wb") as handle:
-            pickle.dump(bad_smis, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        print(f"Resaving mol_smis as {cleaned_mol_smis_path}")
-        with open(cleaned_mol_smis_path, "wb") as handle:
-            pickle.dump(mol_smis, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    else:  # bad_smis = []
-        print("No bad SMILES detected!")
+    # bad_smis = []
+    # if bad_idx:  
+    #     # to catch small molecules like 'O', 'Cl', 'N' that give count vector of all 0 values
+    #     # add empty sparse vector at the end as dummy vector
+    #     count_mol_fps.append(sparse.csr_matrix((1, fp_size), dtype=dtype))
+    #     idx_offset = 0  # offset is needed as the indices will dynamically change after popping each bad_smi
+    #     for idx in bad_idx:
+    #         bad_smis.append(mol_smis[idx - idx_offset])
+    #         mol_smis.pop(idx - idx_offset)
+    #         idx_offset += 1
+    #     print(f"The bad SMILES are {bad_smis}")
+    #     print(f"Saving bad_mol_smis at {bad_mol_smis_path}")
+    #     with open(bad_mol_smis_path, "wb") as handle:
+    #         pickle.dump(bad_smis, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    #     print(f"Resaving mol_smis as {cleaned_mol_smis_path}")
+    #     with open(cleaned_mol_smis_path, "wb") as handle:
+    #         pickle.dump(mol_smis, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # else:  # bad_smis = []
+    #     print("No bad SMILES detected!")
 
     count_mol_fps = sparse.vstack(count_mol_fps)
     sparse.save_npz(root / output_filename, count_mol_fps)
+
+    # if bad_smis:
+    #     return str(Path(mol_smis_filename).stem + "_bad.pickle")
+    # else:
+    #     return None
 
 
 ########################################################
 ############### BIT MOLECULAR FINGERPRINTS #############
 ########################################################
 def mol_smi_to_bit_fp(
-    mol_smi: str, radius: int = 3, fp_size: int = 4096, dtype: str = "int8"
+    mol_smi: str, radius: int = 3, fp_size: int = 4096, dtype: str = "int32"
 ) -> sparse_fp:
     mol = Chem.MolFromSmiles(mol_smi)
     bitvect_fp = AllChem.GetMorganFingerprintAsBitVect(
@@ -181,7 +214,7 @@ def gen_bit_mol_fps_from_file(
     output_filename: Union[str, bytes, os.PathLike],
     radius: int = 3,
     fp_size: int = 4096,
-    dtype: str = "int8",
+    dtype: str = "int32",
     root: Optional[Union[str, bytes, os.PathLike]] = None,
 ) -> Union[str, bytes, os.PathLike]:
     """
@@ -215,18 +248,19 @@ def gen_bit_mol_fps_from_file(
     return root / output_filename
 
 if __name__ == "__main__":
-    dataset_name = 'FULL'
+    dataset_name = '50k'
     if dataset_name == '50k': #args.dataset_name
         gen_count_mol_fps_from_file()
-        gen_lookup_dict_from_file()
+        gen_lookup_dicts_from_file()
     else:
         gen_count_mol_fps_from_file(
             mol_smis_filename='FULL_mol_smis',
             output_filename='FULL_count_mol_fps'
         )
-        gen_lookup_dict_from_file(
+        gen_lookup_dicts_from_file(
             mol_smis_filename='FULL_mol_smis',
-            output_filename='FULL_mol_smi_to_sparse_fp_idx'
+            mol_smi_to_fp_dict_filename='FULL_mol_smi_to_sparse_fp_idx',
+            fp_to_mol_smi_dict_filename='FULL_sparse_fp_idx_to_mol_smi',
         )
     # gen_diff_fps_from_file()
 

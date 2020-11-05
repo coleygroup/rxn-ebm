@@ -4,17 +4,17 @@ from datetime import date
 from pathlib import Path
 from typing import Optional, Union
 
+import nmslib
 import numpy as np
 import torch
 from torch.utils.data import get_worker_info
+
+from rxnebm.model import FF, model_utils
 
 # import logging
 # logging.basicConfig(level=logging.DEBUG)
 # logging.getLogger('nmslib').setLevel(logging.WARNING) # Only log WARNING
 # messages and above from nmslib
-import nmslib
-from rxnebm.model import FF
-
 
 def setup_paths(
     location: str = "LOCAL",
@@ -43,6 +43,7 @@ def setup_paths(
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f"created checkpoint_folder: {checkpoint_folder}")
+        # scores_folder, cleaned_data_folder, raw_data_folder = None, None, None
 
     elif location.upper() == "COLAB":
         if root is None:
@@ -122,10 +123,8 @@ def load_model_opt_and_stats(
             print("Only FeedforwardFingerprint is supported currently!")
             return
 
-        if (
-            optimizer_name == "Adam"
-        ):  # override bug in name of optimizer when saving checkpoint
-            saved_stats["train_args"]["optimizer"] = torch.optim.Adam
+        # override bug in name of optimizer when saving checkpoint
+        saved_stats["train_args"]["optimizer"] = model_utils.get_optimizer(optimizer_name)
         saved_optimizer = saved_stats["train_args"]["optimizer"](
             saved_model.parameters(), lr=saved_stats["train_args"]["learning_rate"]
         )
