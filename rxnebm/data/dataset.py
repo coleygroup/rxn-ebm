@@ -24,16 +24,15 @@ class AugmentedDataFingerprints:
     ----------
     augmentations : dict
         key : str
-            name of augmentation
-            choose from 'random', 'cosine', 'bit'
+            name of augmentation ['rdm', 'cos', 'bit', 'mut'/'crem']
         value : dict
             augmentation parameters, where
             key = name of parameter, value = value of that parameter
             e.g. augmentations['bit'] = {'num_neg': 5, 'num_bits': 5, 'strategy': 'default'}
-            'random':
-                num_neg : int
+            'rdm': (random)
+                 num_neg : int
                     number of negative reactions to generate
-            'cosine':
+            'cos': (cosine nearest neighbor search)
                 num_neg : int
                     number of negative reactions to generate
                 query_params : dict
@@ -43,13 +42,17 @@ class AugmentedDataFingerprints:
                         100 is the recommended value to get high recall (96%)
                     **kwargs :
                         see nmslib's setQueryTimeParams documentation for other possible kwargs
-            'bit':
+            'bit': (fingerprint bit corruption)
                 num_neg : int
                     number of negative reactions to generate
                 num_bits : int
                     number of bits to corrupt
                 strategy : Optional[str]
                     the strategy to corrupt the bits. TODO: try this 
+            'mut' or 'crem': (CReM aka ContRolled Mutation of Molecules)
+                num_neg : int
+                    number of negative reactions to generate
+
     rxn_type : str (Default = 'diff')
         the method to calculate reaction fingerprints
         currently supports 'diff' & 'sep' methods
@@ -112,14 +115,16 @@ class AugmentedDataFingerprints:
         for key, value in augmentations.items():
             if value["num_neg"] == 0:
                 continue
-            elif key == "cosine" or key == "cos" or key == "neighbor":
+            elif key == "cos":
                 self._init_cosine(**value)
-            elif key == "random" or key == "rdm":
+            elif key == "rdm":
                 self._init_random(**value)
-            elif key == "bit" or key == "bits" or key == "fingerprint":
+            elif key == "bit":
                 self._init_bit(**value)
-            elif key == "mutate" or key == "mut" or key == "crem":
+            elif key == "mut" or key == "crem":
                 self._init_mutate(**value)
+            else:
+                raise ValueError('Invalid augmentation!')
 
     def _init_cosine(self, num_neg: int, query_params: Optional[dict] = None):
         print("Initialising Cosine Augmentor...")
@@ -204,7 +209,15 @@ class AugmentedDataFingerprints:
 
         minibatch_neg_rxn_fps = []
         for aug in self.augs:
-            neg_rxn_fps = aug(rxn_smi)  
+            neg_rxn_fps = aug(rxn_smi)
+            # aug_neg_rxn_smis = aug(rxn_smi)
+            # aug_neg_rxn_fps = []
+            # for neg_rxn_smi in aug_neg_rxn_smis:
+            #     rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(
+            #         neg_rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
+            #     )
+            #     neg_rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, self.rxn_type)
+            #     aug_neg_rxn_fps.append(neg_rxn_fp)
             minibatch_neg_rxn_fps.extend(neg_rxn_fps)
 
         # TODO: try creating empty sparse vector then allocate elements, see if faster than sparse.hstack
@@ -416,11 +429,11 @@ if __name__ == "__main__":
     mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
 
     augmented_data = dataset.AugmentedDataFingerprints(
-        augmentations,
-        smi_to_fp_dict_filename,
-        mol_fps_filename,
-        search_index_filename,
-        mut_smis_filename,
+        augmentations=augmentations,
+        smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+        mol_fps_filename=mol_fps_filename,
+        search_index_filename=search_index_filename,
+        mut_smis_filename=mut_smis_filename,
         seed=random_seed,
     )
 

@@ -4,13 +4,14 @@ import torch
 import torch.nn as nn
 
 from rxnebm.model import model_utils
+from rxnebm.model import base
 
 Tensor = torch.Tensor
 
-
-class FeedforwardFingerprint(nn.Module):
+class FeedforwardFingerprint(base.Feedforward):
+# class FeedforwardFingerprint(nn.Module):
     """
-    Currently supports 2 feedforward models:
+    Currently supports 2 feedforward variants:
         diff: takes as input a difference FP of fp_size & fp_radius
         sep: takes as input a concatenation of [reactants FP, product FP]
 
@@ -34,7 +35,7 @@ class FeedforwardFingerprint(nn.Module):
         rxn_type: Optional[str] = "diff",
         **kwargs
     ):
-        super(FeedforwardFingerprint, self).__init__()
+        super(FeedforwardFingerprint, self).__init__(hidden_sizes, dropout, activation, output_size, rctfp_size, prodfp_size, rxn_type)
         if rxn_type == "sep":
             input_dim = rctfp_size + prodfp_size
         elif rxn_type == "diff":

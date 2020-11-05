@@ -113,6 +113,8 @@ class Experiment:
 
         self.expt_name = expt_name
         self.augmentations = augmentations
+        if self.representation != 'fingerprint' and 'bit' in augmentations.keys():
+            raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
         print("\nInitialising experiment: ", self.expt_name)
         print("Augmentations: ", self.augmentations)
         if device:

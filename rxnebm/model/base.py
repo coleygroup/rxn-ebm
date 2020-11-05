@@ -1,4 +1,4 @@
-from collections import ABC
+from abc import ABC
 from typing import List, Optional
 
 import torch
@@ -7,7 +7,6 @@ import torch.nn as nn
 from rxnebm.model import model_utils
 
 Tensor = torch.Tensor
-
 
 class Feedforward(nn.Module):
     """Abstract base class for feedforward neural networks"""
@@ -42,18 +41,20 @@ class Feedforward(nn.Module):
         model_utils.initialize_weights(self)
 
     def __repr__(self):
-        return "NN"  # needed by experiment.py for saving model details
+        raise NotImplementedError  # needed by experiment.py for saving model details
 
     def build(
         self,
         dropout: nn.Dropout,
         activation: nn.Module,
-        hidden_sizes: List,
+        hidden_sizes: List[int],
         input_dim: int,
         output_size: int,
         num_layers: int,
     ):
         """"""
+        raise NotImplementedError
 
     def forward(self, batch: Tensor) -> Tensor:
         """"""
+        raise NotImplementedError

@@ -89,6 +89,7 @@ class Augmentor(ABC):
     def get_one_sample_fp(self, rxn_smi: str) -> List[sparse_fp]:
         """ Generate self.num_neg * negative_rxn_fp from a given rxn_smi
         """
+        pass
 
     @abstractmethod
     def get_idx(self, rxn_smi: Optional[str] = None) -> int:
@@ -200,7 +201,7 @@ class Mutate(Augmentor):
         Because need to expand smi_to_fp_dict to include the newly generated negative molecules, and
         there are too many to keep track!
         """
-        pass 
+        raise NotImplementedError('Mutate Augmentor does not support get_idx() method!') 
 
 class Cosine(Augmentor):
     """
