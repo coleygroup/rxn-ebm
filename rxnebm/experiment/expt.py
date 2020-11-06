@@ -24,7 +24,7 @@ executing FF.py, python has no knowledge of this package level information (i.e.
 therefore, I have to run/import all these files/functions from a script in the main directory,
 i.e. same folder as trainEBM.py by doing: from model import FF; from experiment import expt etc
 
-To run this script from terminal/interpreter, go to rxnebm/ then execute python -m experiment.expt
+To run this script from terminal/interpreter, go to root/of/rxnebm/ then execute python -m rxnebm.experiment.expt
 """
 
 
