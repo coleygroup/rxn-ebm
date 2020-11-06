@@ -1,6 +1,6 @@
 retrosim_config = {
     "topk": 200,
-    "max_templates": 200,
+    "max_prec": 200,
     "similarity_type": 'Tanimoto',
     "fp_type": "Morgan2Feat",
     # try to use absolute path if possible
