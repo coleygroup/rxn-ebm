@@ -9,4 +9,3 @@ retrosim_config = {
     "output_folder": None,
     "parallelize": False,
 }
- 

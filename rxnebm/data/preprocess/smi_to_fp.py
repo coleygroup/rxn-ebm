@@ -15,7 +15,8 @@ import rdkit
 import scipy
 from rdkit import Chem, DataStructs
 from rdkit.Chem import AllChem
-from rdkit.Chem.rdFingerprintGenerator import GetMorganGenerator, GetRDKitFPGenerator
+from rdkit.Chem.rdFingerprintGenerator import (GetMorganGenerator,
+                                               GetRDKitFPGenerator)
 from scipy import sparse
 from tqdm import tqdm
 

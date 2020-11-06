@@ -7,5 +7,3 @@ def get_batch_idx(N, batch_size):
         idx = slice(start, end)
 
         yield idx
-
-

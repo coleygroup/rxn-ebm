@@ -1,25 +1,27 @@
+import os
+import pickle
+import sys
+import time
+from collections import Counter
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+
+import numpy as np
+import pandas as pd
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
-from rdkit import DataStructs
-import pandas as pd
-import numpy as np
-from tqdm import tqdm 
-import sys
-import os
-import time 
-
-from rxnebm.proposer.Retrosim_modified.retrosim.utils.draw import ReactionStringToImage, TransformStringToImage
-from rxnebm.proposer.Retrosim_modified.retrosim.utils.generate_retro_templates import process_an_example
-from rxnebm.proposer.Retrosim_modified.retrosim.data.get_data import get_data_df, split_data_df
-from rxnebm.proposer.Retrosim_modified.retrosim.utils.generate_retro_templates import process_an_example 
-
-from rdchiral.main import rdchiralRun, rdchiralReaction, rdchiralReactants
-
 from joblib import Parallel, delayed
-from pathlib import Path
-import pickle
-from collections import Counter
-from typing import Union, List, Optional, Dict
+from rdkit import DataStructs
+from tqdm import tqdm
+
+from rdchiral.main import rdchiralReactants, rdchiralReaction, rdchiralRun
+from rxnebm.proposer.Retrosim_modified.retrosim.data.get_data import (
+    get_data_df, split_data_df)
+from rxnebm.proposer.Retrosim_modified.retrosim.utils.draw import (
+    ReactionStringToImage, TransformStringToImage)
+from rxnebm.proposer.Retrosim_modified.retrosim.utils.generate_retro_templates import \
+    process_an_example
+
 
 # wrappers for multiprocessing
 def mol_from_smiles(smiles):

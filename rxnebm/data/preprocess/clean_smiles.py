@@ -8,14 +8,14 @@ import argparse
 import csv
 import os
 import pickle
+import random
 import re
 import sys
 from concurrent.futures import ProcessPoolExecutor as Pool
 from pathlib import Path
-from typing import List, Optional, Union, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
-import random
 import rdkit
 from rdkit import Chem
 from rdkit.Chem import rdChemReactions

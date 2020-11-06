@@ -1,12 +1,14 @@
+import numpy as np
 import torch
+from torch.autograd import Function
+from torch.nn import Module
+
 import extlib
+
 try:
     import extlib_cuda
 except:
     print('not loading cuda jagged ops')
-from torch.autograd import Function
-from torch.nn import Module
-import numpy as np
 
 #----------------------
 #   jagged_log_softmax
@@ -38,4 +40,3 @@ class JaggedLogSoftmax(Module):
         return JaggedLogSoftmaxFunc.apply(logits, prefix_sum)
 
 jagged_log_softmax = JaggedLogSoftmax()
-

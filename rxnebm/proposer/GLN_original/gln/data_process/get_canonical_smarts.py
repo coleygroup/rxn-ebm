@@ -1,17 +1,18 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
+
+import csv
+import os
+import pickle as cp
+from collections import defaultdict
 
 import numpy as np
 import rdkit
 from rdkit import Chem
-import csv
-import os
 from tqdm import tqdm
-import pickle as cp
-from collections import defaultdict
+
 from gln.common.cmd_args import cmd_args
-from gln.common.mol_utils import cano_smarts, cano_smiles, smarts_has_useless_parentheses
+from gln.common.mol_utils import (cano_smarts, cano_smiles,
+                                  smarts_has_useless_parentheses)
 
 
 def process_centers():

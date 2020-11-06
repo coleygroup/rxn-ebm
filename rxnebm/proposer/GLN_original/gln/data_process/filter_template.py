@@ -1,14 +1,13 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
+import csv
 import os
 import sys
-import csv
-from tqdm import tqdm
-from gln.common.cmd_args import cmd_args
 from collections import Counter, defaultdict
 
+from tqdm import tqdm
+
+from gln.common.cmd_args import cmd_args
 
 if __name__ == '__main__':
     proc_file = os.path.join(cmd_args.save_dir, '../proc_train_singleprod.csv')

@@ -1,12 +1,15 @@
+# from rdkit.Chem.Draw.cairoCanvas import Canvas
+import os
+import re
+from collections import defaultdict
+
+import numpy as np
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
 import rdkit.Chem.Draw as Draw
 from PIL import Image, ImageOps
-from collections import defaultdict
-# from rdkit.Chem.Draw.cairoCanvas import Canvas
-import os
-import numpy as np
-import re
+
+
 '''
 Many of these functions are taken from RDKit.
 '''

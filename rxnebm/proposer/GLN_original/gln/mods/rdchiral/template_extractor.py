@@ -1,6 +1,7 @@
 import re
-from numpy.random import shuffle
 from copy import deepcopy
+
+from numpy.random import shuffle
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem.rdchem import ChiralType

@@ -1,11 +1,12 @@
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
-from rdkit.Chem.rdchem import ChiralType, BondType, BondDir, BondStereo
+from rdkit.Chem.rdchem import BondDir, BondStereo, BondType, ChiralType
 
+from gln.mods.rdchiral.bonds import (bond_dirs_by_mapnum,
+                                     enumerate_possible_cistrans_defs,
+                                     get_atoms_across_double_bonds)
 from gln.mods.rdchiral.chiral import template_atom_could_have_been_tetra
-from gln.mods.rdchiral.utils import vprint, PLEVEL
-from gln.mods.rdchiral.bonds import enumerate_possible_cistrans_defs, bond_dirs_by_mapnum, \
-    get_atoms_across_double_bonds
+from gln.mods.rdchiral.utils import PLEVEL, vprint
 
 BondDirOpposite = {AllChem.BondDir.ENDUPRIGHT: AllChem.BondDir.ENDDOWNRIGHT,
                    AllChem.BondDir.ENDDOWNRIGHT: AllChem.BondDir.ENDUPRIGHT}

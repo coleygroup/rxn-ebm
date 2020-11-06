@@ -1,7 +1,8 @@
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
-from rdkit.Chem.rdchem import ChiralType, BondType, BondDir, BondStereo
-from gln.mods.rdchiral.utils import vprint, PLEVEL
+from rdkit.Chem.rdchem import BondDir, BondStereo, BondType, ChiralType
+
+from gln.mods.rdchiral.utils import PLEVEL, vprint
 
 BondDirOpposite = {AllChem.BondDir.ENDUPRIGHT: AllChem.BondDir.ENDDOWNRIGHT,
                    AllChem.BondDir.ENDDOWNRIGHT: AllChem.BondDir.ENDUPRIGHT,

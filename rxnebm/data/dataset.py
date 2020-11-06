@@ -2,11 +2,11 @@ import os
 import pickle
 from concurrent.futures import ProcessPoolExecutor as Pool
 from pathlib import Path
-from typing import List, Optional, Union, Tuple
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import scipy
-import torch 
+import torch
 from scipy import sparse
 from torch.utils.data import Dataset
 from tqdm import tqdm

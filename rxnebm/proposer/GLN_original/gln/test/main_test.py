@@ -1,27 +1,25 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
+
+import argparse
+import csv
+import os
+import random
+import sys
 
 import numpy as np
-import os
-import sys
 import rdkit
-from rdkit import Chem
-import random
-import csv
+import torch
+from rdkit import Chem, rdBase
+from tqdm import tqdm
+
 from gln.common.cmd_args import cmd_args
+from gln.common.evaluate import canonicalize, get_score
 from gln.data_process.data_info import DataInfo, load_center_maps
 from gln.test.model_inference import RetroGLN
-from gln.common.evaluate import get_score, canonicalize
 
-from tqdm import tqdm
-import torch
-
-from rdkit import rdBase
 rdBase.DisableLog('rdApp.error')
 rdBase.DisableLog('rdApp.warning')
 
-import argparse
 cmd_opt = argparse.ArgumentParser(description='Argparser for test only')
 cmd_opt.add_argument('-model_for_test', default=None, help='model for test')
 local_args, _ = cmd_opt.parse_known_args()

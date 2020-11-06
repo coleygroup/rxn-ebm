@@ -1,6 +1,7 @@
 from rxnebm.proposer.retrosim_config import retrosim_config
 from rxnebm.proposer.retrosim_proposer import RetrosimProposer
 
+
 def test():
     proposer = RetrosimProposer(retrosim_config)
     product_smiles = [

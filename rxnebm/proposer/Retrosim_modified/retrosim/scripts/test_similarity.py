@@ -1,20 +1,22 @@
 from __future__ import print_function
-import os
-from rdchiral.main import rdchiralRun, rdchiralReaction, rdchiralReactants
-import multiprocessing
-from joblib import Parallel, delayed
-from retrosim.data.get_data import get_data_df, split_data_df
-from retrosim.utils.generate_retro_templates import process_an_example
-import sys
+
 import json
-from tqdm import tqdm
+import multiprocessing
+import os
+import sys
+
 import numpy as np
 import pandas as pd
-from rdkit import DataStructs
-import rdkit.Chem.AllChem as AllChem
 import rdkit.Chem as Chem
+import rdkit.Chem.AllChem as AllChem
+from joblib import Parallel, delayed
+from rdkit import DataStructs, RDLogger
+from tqdm import tqdm
 
-from rdkit import RDLogger
+from rdchiral.main import rdchiralReactants, rdchiralReaction, rdchiralRun
+from retrosim.data.get_data import get_data_df, split_data_df
+from retrosim.utils.generate_retro_templates import process_an_example
+
 lg = RDLogger.logger()
 lg.setLevel(4)
 

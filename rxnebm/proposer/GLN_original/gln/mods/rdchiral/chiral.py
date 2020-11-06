@@ -1,7 +1,9 @@
 from __future__ import print_function
-from rdkit.Chem.rdchem import ChiralType, BondType, BondDir
 
-from gln.mods.rdchiral.utils import vprint, parity4, PLEVEL
+from rdkit.Chem.rdchem import BondDir, BondType, ChiralType
+
+from gln.mods.rdchiral.utils import PLEVEL, parity4, vprint
+
 
 def template_atom_could_have_been_tetra(a, strip_if_spec=False, cache=True):
     '''

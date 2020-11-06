@@ -5,7 +5,8 @@ import torch
 import torch.nn as nn
 
 from rxnebm.data import dataset
-from rxnebm.data.preprocess import clean_smiles, smi_to_fp, prep_nmslib, prep_crem
+from rxnebm.data.preprocess import (clean_smiles, prep_crem, prep_nmslib,
+                                    smi_to_fp)
 from rxnebm.experiment import expt, expt_utils
 from rxnebm.model import FF
 

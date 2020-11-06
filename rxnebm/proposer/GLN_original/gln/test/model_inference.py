@@ -1,20 +1,19 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
-
-import rdkit
-from rdkit import Chem
-import os
-import numpy as np
-import torch
-import pickle as cp
 import math
+import os
+import pickle as cp
+
+import numpy as np
+import rdkit
+import torch
+from rdkit import Chem
 from scipy.special import softmax
-from gln.data_process.data_info import DataInfo, load_bin_feats
-from gln.mods.mol_gnn.mol_utils import SmartsMols, SmilesMols
+
 from gln.common.reactor import Reactor
+from gln.data_process.data_info import DataInfo, load_bin_feats
 from gln.graph_logic.logic_net import GraphPath
+from gln.mods.mol_gnn.mol_utils import SmartsMols, SmilesMols
 
 
 class RetroGLN(object):

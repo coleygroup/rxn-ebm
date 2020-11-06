@@ -1,15 +1,13 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_scatter import scatter_add
+from torch_sparse import spmm
 
 from gln.mods.mol_gnn.gnn_family.utils import GNNEmbedding
 from gln.mods.mol_gnn.torch_util import MLP, NONLINEARITIES
-from torch_scatter import scatter_add
-from torch_sparse import spmm
 
 
 class MorganFp(GNNEmbedding):

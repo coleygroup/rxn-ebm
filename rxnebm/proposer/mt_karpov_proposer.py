@@ -1,7 +1,9 @@
+from typing import Dict, List
+
+from tensorflow.compat.v1.keras import backend as K
+
 from MT_karpov.transformer import buildNetwork, gen_beam
 from proposer_base import Proposer
-from tensorflow.compat.v1.keras import backend as K
-from typing import Dict, List
 
 
 class MTKarpovProposer(Proposer):

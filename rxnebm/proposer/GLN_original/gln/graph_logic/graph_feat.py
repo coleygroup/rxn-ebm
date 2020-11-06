@@ -1,27 +1,25 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
+
+import csv
+import os
 
 import numpy as np
-import os
 import rdkit
-from rdkit import Chem
-import csv
-from gln.mods.mol_gnn.torch_util import MLP
-from gln.mods.mol_gnn.gnn_family.utils import get_agg
-from gln.mods.mol_gnn.mol_utils import SmartsMols, SmilesMols
-from gln.common.consts import DEVICE
-from gln.data_process.data_info import DataInfo
-from gln.mods.mol_gnn.mg_clib import NUM_NODE_FEATS, NUM_EDGE_FEATS
-
-from gln.graph_logic import get_gnn
-
 import torch
-from torch.autograd import Variable
-from torch.nn.parameter import Parameter
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from rdkit import Chem
+from torch.autograd import Variable
+from torch.nn.parameter import Parameter
+
+from gln.common.consts import DEVICE
+from gln.data_process.data_info import DataInfo
+from gln.graph_logic import get_gnn
+from gln.mods.mol_gnn.gnn_family.utils import get_agg
+from gln.mods.mol_gnn.mg_clib import NUM_EDGE_FEATS, NUM_NODE_FEATS
+from gln.mods.mol_gnn.mol_utils import SmartsMols, SmilesMols
+from gln.mods.mol_gnn.torch_util import MLP
 
 
 class TempFeaturizer(nn.Module):

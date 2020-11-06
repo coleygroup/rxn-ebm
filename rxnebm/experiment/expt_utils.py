@@ -4,11 +4,11 @@ from datetime import date
 from pathlib import Path
 from typing import Optional, Union
 
-import nmslib
 import numpy as np
 import torch
 from torch.utils.data import get_worker_info
 
+import nmslib
 from rxnebm.model import FF, model_utils
 
 # import logging

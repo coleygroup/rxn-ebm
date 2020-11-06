@@ -1,19 +1,18 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
+
+import csv
+import os
+import pickle as cp
+import sys
+from collections import defaultdict
 
 import numpy as np
 import rdkit
 from rdkit import Chem
-import csv
-import sys
-import os
 from tqdm import tqdm
-import pickle as cp
-from collections import defaultdict
+
 from gln.common.cmd_args import cmd_args
 from gln.mods.mol_gnn.mol_utils import SmartsMols, SmilesMols
-
 
 if __name__ == '__main__':
     file_root = os.path.join(cmd_args.dropbox, 'cooked_' + cmd_args.data_name, 'tpl-%s' % cmd_args.tpl_name)

@@ -1,9 +1,11 @@
 from __future__ import print_function
-import rdkit.Chem as Chem 
+
 import re
 from itertools import chain
 
-from gln.mods.rdchiral.utils import vprint, PLEVEL
+import rdkit.Chem as Chem
+
+from gln.mods.rdchiral.utils import PLEVEL, vprint
 
 
 def canonicalize_outcome_smiles(smiles, ensure=True):

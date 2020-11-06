@@ -1,4 +1,5 @@
 import sys
+
 import h5py
 import numpy as np
 
@@ -24,5 +25,3 @@ for key in keys:
 
 for fp in f:
    fp.close();
-
-

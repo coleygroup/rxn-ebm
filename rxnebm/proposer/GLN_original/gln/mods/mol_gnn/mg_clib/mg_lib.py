@@ -1,8 +1,11 @@
 import ctypes
-import numpy as np
 import os
 import sys
+
+import numpy as np
+
 from gln_config import gln_config
+
 try:
     import torch
 except:

@@ -1,16 +1,15 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
-import numpy as np
-import random
 import csv
 import os
-import sys
-import re
-from tqdm import tqdm
-from rdkit import Chem
 import pickle as cp
+import random
+import re
+import sys
+
+import numpy as np
+from rdkit import Chem
+from tqdm import tqdm
 
 
 def get_rxn_smiles(prod, reactants):

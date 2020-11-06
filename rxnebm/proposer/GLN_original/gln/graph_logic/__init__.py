@@ -1,9 +1,8 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
-from gln.mods.mol_gnn.gnn_family import EmbedMeanField, GGNN, MPNN, MorganFp, S2vMeanFieldV2
-from gln.mods.mol_gnn.mg_clib import NUM_NODE_FEATS, NUM_EDGE_FEATS
+from gln.mods.mol_gnn.gnn_family import (GGNN, MPNN, EmbedMeanField, MorganFp,
+                                         S2vMeanFieldV2)
+from gln.mods.mol_gnn.mg_clib import NUM_EDGE_FEATS, NUM_NODE_FEATS
 
 
 def get_gnn(args, gm=None):

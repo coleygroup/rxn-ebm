@@ -3,8 +3,7 @@ from typing import List, Optional
 import torch
 import torch.nn as nn
 
-from rxnebm.model import model_utils
-from rxnebm.model import base
+from rxnebm.model import base, model_utils
 
 Tensor = torch.Tensor
 

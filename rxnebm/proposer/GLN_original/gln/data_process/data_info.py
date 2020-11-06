@@ -1,19 +1,18 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
-from tqdm import tqdm
 import csv
 import os
 import pickle as cp
 from collections import defaultdict
-import numpy as np
 
-from gln.common.mol_utils import cano_smarts, cano_smiles
+import numpy as np
+from tqdm import tqdm
+
 from gln.common.cmd_args import cmd_args
 from gln.common.evaluate import canonicalize
-from gln.common.mol_utils import smarts_has_useless_parentheses
-from gln.mods.mol_gnn.mol_utils import SmilesMols, SmartsMols
+from gln.common.mol_utils import (cano_smarts, cano_smiles,
+                                  smarts_has_useless_parentheses)
+from gln.mods.mol_gnn.mol_utils import SmartsMols, SmilesMols
 
 
 def load_bin_feats(dropbox, args):

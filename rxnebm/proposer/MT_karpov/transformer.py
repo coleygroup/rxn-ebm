@@ -1,29 +1,30 @@
 
-import sys
+import argparse
 import datetime
 import math
 import os
 import re
+import sys
+
 import h5py
 import numpy as np
-
+import tensorflow.compat.v1 as tf
 from rdkit import Chem
+from tensorflow.keras import backend as K
+from tensorflow.keras import layers
+from tensorflow.keras.utils import plot_model
+from tqdm import tqdm
+
+#custom layers
+from MT_karpov.layers import (LayerNormalization, MaskLayerLeft,
+                              MaskLayerRight, MaskLayerTriangular,
+                              PositionLayer, SelfLayer)
 
 #suppress INFO, WARNING, and ERROR messages of Tensorflow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-import tensorflow.compat.v1 as tf
-from tensorflow.keras import layers
-from tensorflow.keras import backend as K
-from tensorflow.keras.utils import plot_model
 
-import argparse
-from tqdm import tqdm
 
-#custom layers
-from MT_karpov.layers import PositionLayer, MaskLayerLeft, \
-                   MaskLayerRight, MaskLayerTriangular, \
-                   SelfLayer, LayerNormalization
 
 #seed = 0;
 #tf.random.set_random_seed(seed);

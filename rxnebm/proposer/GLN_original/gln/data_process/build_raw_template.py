@@ -1,15 +1,16 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
+
+import csv
+import multiprocessing
+import os
+import pickle as cp
 
 import numpy as np
-import csv
-import os
 from tqdm import tqdm
-import pickle as cp
-import multiprocessing
+
 from gln.common.cmd_args import cmd_args
 from gln.mods.rdchiral.template_extractor import extract_from_reaction
+
 
 def get_writer(fname, header):
     output_name = os.path.join(cmd_args.save_dir, fname)

@@ -34,20 +34,23 @@ v5  - requires that instance references be single-step, but they
 '''
 
 from __future__ import print_function
-from tqdm import tqdm
-import re
-import itertools
-import os   # for file paths
-import sys  # for commanad line
-import json  # for dumping
-import datetime  # for info files
-from rdkit import RDLogger
-import rdkit.Chem.Draw as Draw
-from collections import defaultdict
-from rdkit.Chem import AllChem
-import rdkit.Chem as Chem          # molecule building
-from numpy.random import shuffle  # for random selection
+
 import argparse
+import datetime  # for info files
+import itertools
+import json  # for dumping
+import os  # for file paths
+import re
+import sys  # for commanad line
+from collections import defaultdict
+
+import rdkit.Chem as Chem  # molecule building
+import rdkit.Chem.Draw as Draw
+from numpy.random import shuffle  # for random selection
+from rdkit import RDLogger
+from rdkit.Chem import AllChem
+from tqdm import tqdm
+
 USE_STEREOCHEMISTRY = True
 v = False
 

@@ -1,13 +1,15 @@
 import ctypes
-import numpy as np
 import os
+import pickle as cp
+import struct
 import sys
-from tqdm import tqdm
+
+import numpy as np
 import rdkit
 from rdkit import Chem
 from rdkit.Chem import AllChem
-import struct
-import pickle as cp
+from tqdm import tqdm
+
 from gln.mods.mol_gnn.mg_clib.mg_lib import MGLIB
 
 

@@ -1,27 +1,26 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
+
+import csv
+import os
 
 import numpy as np
-import os
 import rdkit
-from rdkit import Chem
-import csv
-from gln.mods.mol_gnn.mol_utils import SmartsMols, SmilesMols
-from gln.common.consts import DEVICE, t_float
-from torch_scatter import scatter_max, scatter_add, scatter_mean
-from gln.graph_logic.graph_feat import get_gnn
-from gln.graph_logic.soft_logic import OnehotEmbedder, CenterProbCalc, ActiveProbCalc, ReactionProbCalc
-
 import torch
-from gln.mods.torchext import jagged_log_softmax
-
-from torch.autograd import Variable
-from torch.nn.parameter import Parameter
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from rdkit import Chem
+from torch.autograd import Variable
+from torch.nn.parameter import Parameter
+from torch_scatter import scatter_add, scatter_max, scatter_mean
+
+from gln.common.consts import DEVICE, t_float
 from gln.data_process.data_info import DataInfo
+from gln.graph_logic.graph_feat import get_gnn
+from gln.graph_logic.soft_logic import (ActiveProbCalc, CenterProbCalc,
+                                        OnehotEmbedder, ReactionProbCalc)
+from gln.mods.mol_gnn.mol_utils import SmartsMols, SmilesMols
+from gln.mods.torchext import jagged_log_softmax
 
 
 class GraphPath(nn.Module):

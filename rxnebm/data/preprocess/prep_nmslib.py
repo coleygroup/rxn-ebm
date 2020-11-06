@@ -22,7 +22,6 @@ from tqdm import tqdm
 
 import nmslib
 
-
 # def validate_sparse_matrix(
 #         sparse_matrix: scipy.sparse.csr_matrix) -> scipy.sparse.csr_matrix:
 #     ''' only needed for RDKit CountFingerprints (now no longer using!)
@@ -144,4 +143,3 @@ if __name__ == "__main__":
             mol_fps_filename='FULL_count_mol_fps',
             output_filename='FULL_cosine_count'
         )   
-    

@@ -1,27 +1,26 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
+
+import csv
+import os
+import pickle as cp
+import random
+import sys
 
 import numpy as np
-import os
-import sys
 import rdkit
-from rdkit import Chem
-import random
-import pickle as cp
-import csv
-from gln.common.cmd_args import cmd_args
-from gln.common.consts import t_float, DEVICE
-from gln.data_process.data_info import load_bin_feats, DataInfo
-from gln.graph_logic.logic_net import GraphPath
-from gln.training.data_gen import data_gen, worker_softmax
-from tqdm import tqdm
 import torch
 import torch.optim as optim
+from rdkit import Chem, rdBase
+from tqdm import tqdm
 
+from gln.common.cmd_args import cmd_args
+from gln.common.consts import DEVICE, t_float
+from gln.common.evaluate import canonicalize, get_score
 from gln.common.reactor import Reactor
-from gln.common.evaluate import get_score, canonicalize
-from rdkit import rdBase
+from gln.data_process.data_info import DataInfo, load_bin_feats
+from gln.graph_logic.logic_net import GraphPath
+from gln.training.data_gen import data_gen, worker_softmax
+
 rdBase.DisableLog('rdApp.error')
 rdBase.DisableLog('rdApp.warning')
 

@@ -1,6 +1,8 @@
-from rxnebm.proposer.retrosim_model import Retrosim
-from rxnebm.proposer.proposer_base import Proposer
 from typing import Dict, List
+
+from rxnebm.proposer.proposer_base import Proposer
+from rxnebm.proposer.retrosim_model import Retrosim
+
 
 class RetrosimProposer(Proposer):
     """ Retrosim proposer """

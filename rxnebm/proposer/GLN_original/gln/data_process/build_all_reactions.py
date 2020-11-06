@@ -1,24 +1,22 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
+
+import csv
+import multiprocessing
+import os
+import random
+import sys
+from collections import Counter, defaultdict
+from itertools import chain
 
 import numpy as np
-import os
 import rdkit
-from rdkit import Chem
-import random
-import csv
-import sys
-from itertools import chain
-from collections import defaultdict
-from gln.common.cmd_args import cmd_args
-from gln.data_process.data_info import DataInfo, load_train_reactions
+from rdkit import Chem, rdBase
 from tqdm import tqdm
-from gln.common.reactor import Reactor
-from collections import Counter
 
-import multiprocessing
-from rdkit import rdBase
+from gln.common.cmd_args import cmd_args
+from gln.common.reactor import Reactor
+from gln.data_process.data_info import DataInfo, load_train_reactions
+
 rdBase.DisableLog('rdApp.error')
 rdBase.DisableLog('rdApp.warning')
 

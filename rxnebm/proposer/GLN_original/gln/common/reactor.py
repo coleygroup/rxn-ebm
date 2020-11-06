@@ -1,11 +1,11 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
-
+from __future__ import absolute_import, division, print_function
 
 import rdkit
 from rdkit import Chem
-from gln.common.cmd_args import rdchiralReaction, rdchiralReactants, rdchiralRun
+
+from gln.common.cmd_args import (rdchiralReactants, rdchiralReaction,
+                                 rdchiralRun)
+
 
 class _Reactor(object):
 

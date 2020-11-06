@@ -1,19 +1,18 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
+
+import csv
+import os
+import random
+import time
+from multiprocessing import Process, Queue
 
 import numpy as np
-import random
-import os
 import rdkit
 from rdkit import Chem
-import csv
-from gln.mods.mol_gnn.mol_utils import SmartsMols, SmilesMols
-from multiprocessing import Process, Queue
-import time
 
-from gln.data_process.data_info import DataInfo, load_train_reactions
 from gln.common.reactor import Reactor
+from gln.data_process.data_info import DataInfo, load_train_reactions
+from gln.mods.mol_gnn.mol_utils import SmartsMols, SmilesMols
 
 
 class DataSample(object):

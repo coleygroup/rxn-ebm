@@ -1,14 +1,16 @@
-from setuptools import setup
-from torch.utils.cpp_extension import CppExtension, BuildExtension, CUDAExtension
-
-from distutils.command.build import build
-from setuptools.command.install import install
-
-from setuptools.command.develop import develop
-
 import os
-import subprocess
 import platform
+import subprocess
+from distutils.command.build import build
+
+# build cuda lib
+import torch
+from setuptools import setup
+from setuptools.command.develop import develop
+from setuptools.command.install import install
+from torch.utils.cpp_extension import (BuildExtension, CppExtension,
+                                       CUDAExtension)
+
 BASEPATH = os.path.dirname(os.path.abspath(__file__))
 
 compile_args = []
@@ -23,8 +25,6 @@ ext_modules=[CppExtension('extlib',
                           extra_compile_args=compile_args,
                           extra_link_args=link_args)]
 
-# build cuda lib
-import torch
 if torch.cuda.is_available():
     ext_modules.append(CUDAExtension('extlib_cuda',
                                     ['gln/mods/torchext/src/extlib_cuda.cpp', 'gln/mods/torchext/src/extlib_cuda_kernels.cu']))

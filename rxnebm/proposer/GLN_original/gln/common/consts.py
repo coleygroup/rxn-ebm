@@ -1,10 +1,8 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
-
+from __future__ import absolute_import, division, print_function
 
 import argparse
 import logging
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -23,4 +21,3 @@ if torch.cuda.is_available() and args.gpu >= 0:
 else:
     DEVICE = torch.device('cpu')
     print('use cpu')
-

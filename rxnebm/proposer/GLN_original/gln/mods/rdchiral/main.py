@@ -1,19 +1,24 @@
 from __future__ import print_function
-import sys 
+
+import copy
 import os
 import re
-import copy
+import sys
 
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
-from rdkit.Chem.rdchem import ChiralType, BondType, BondDir
+from rdkit.Chem.rdchem import BondDir, BondType, ChiralType
 
-from gln.mods.rdchiral.utils import vprint, PLEVEL, atoms_are_different
-from gln.mods.rdchiral.initialization import rdchiralReaction, rdchiralReactants
-from gln.mods.rdchiral.chiral import template_atom_could_have_been_tetra, copy_chirality,\
-    atom_chirality_matches
-from gln.mods.rdchiral.clean import canonicalize_outcome_smiles, combine_enantiomers_into_racemic
-from gln.mods.rdchiral.bonds import BondDirOpposite, restore_bond_stereo_to_sp2_atom
+from gln.mods.rdchiral.bonds import (BondDirOpposite,
+                                     restore_bond_stereo_to_sp2_atom)
+from gln.mods.rdchiral.chiral import (atom_chirality_matches, copy_chirality,
+                                      template_atom_could_have_been_tetra)
+from gln.mods.rdchiral.clean import (canonicalize_outcome_smiles,
+                                     combine_enantiomers_into_racemic)
+from gln.mods.rdchiral.initialization import (rdchiralReactants,
+                                              rdchiralReaction)
+from gln.mods.rdchiral.utils import PLEVEL, atoms_are_different, vprint
+
 
 '''
 This file contains the main functions for running reactions. 

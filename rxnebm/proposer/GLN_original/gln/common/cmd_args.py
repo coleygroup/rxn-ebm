@@ -1,10 +1,11 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
 import argparse
 import os
 import pickle as cp
+
+from gln.mods.rdchiral.main import (rdchiralReactants, rdchiralReaction,
+                                    rdchiralRun)
 
 cmd_opt = argparse.ArgumentParser(description='Argparser for retrosyn_graph')
 cmd_opt.add_argument('-save_dir', default='.', help='result output root')
@@ -86,6 +87,5 @@ if cmd_args.save_dir is not None:
     if not os.path.isdir(cmd_args.save_dir):
         os.makedirs(cmd_args.save_dir)
 
-from gln.mods.rdchiral.main import rdchiralReaction, rdchiralReactants, rdchiralRun
 
 print(cmd_args)

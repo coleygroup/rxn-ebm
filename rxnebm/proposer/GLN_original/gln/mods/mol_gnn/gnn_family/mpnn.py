@@ -1,13 +1,11 @@
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import division
+from __future__ import absolute_import, division, print_function
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.nn import NNConv, Set2Set
 
 from gln.mods.mol_gnn.gnn_family.utils import GNNEmbedding, prepare_gnn
-from torch_geometric.nn import NNConv, Set2Set
 from gln.mods.mol_gnn.torch_util import MLP, NONLINEARITIES
 
 

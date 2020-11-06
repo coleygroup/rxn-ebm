@@ -1,22 +1,23 @@
 from __future__ import print_function
 
 import os
+import random
 import sys
+from functools import partial
+
 import numpy as np
 import torch
-import random
-from functools import partial
-from torch.autograd import Variable
-from torch.nn.parameter import Parameter
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from tqdm import tqdm
+from torch.autograd import Variable
+from torch.nn.parameter import Parameter
 from torch_geometric.nn.conv import MessagePassing
-
-from torch_scatter import scatter_add, scatter_mean
+from torch_scatter import scatter_add
 from torch_scatter import scatter_max as orig_smax
+from torch_scatter import scatter_mean
 from torch_scatter import scatter_min as orig_smin
+from tqdm import tqdm
 
 from gln.mods.mol_gnn.mg_clib.mg_lib import MGLIB
 from gln.mods.mol_gnn.torch_util import MLP, NONLINEARITIES

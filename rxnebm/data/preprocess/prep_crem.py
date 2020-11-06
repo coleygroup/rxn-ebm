@@ -1,14 +1,13 @@
 # try:
 #     from crem_updated import crem # has SQL hack, but it doesn't really boost performance
 # except ImportError:
-from crem import crem
-
 import os
 import pickle
 import sqlite3
 from pathlib import Path
 from typing import List, Optional, Union
 
+from crem import crem
 from rdkit import Chem
 from rdkit.Chem.rdmolfiles import SmilesWriter
 from tqdm import tqdm
