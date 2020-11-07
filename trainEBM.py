@@ -59,6 +59,7 @@ def parse_args():
 
 
 def args_to_dict(args, args_type: str) -> dict:
+    """parse args into dict, mainly for compatibility with Min Htoo's code"""
     parsed_dict = {}
     if args_type == "fp_args":
         keys = ["representation",
@@ -154,8 +155,8 @@ if __name__ == "__main__":
 
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    logger.propagate = False
-    fh = logging.FileHandler(f"{args.log_file}.{dt}")
+    # logger.propagate = False
+    fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
     fh.setLevel(logging.INFO)
     logger.addHandler(fh)
 
