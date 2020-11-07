@@ -407,8 +407,8 @@ class Experiment:
             p.grad = None  # faster, equivalent to self.model.zero_grad()
         scores = self.model(batch)  # size N x K
 
-        # replace all-zero vectors with float('inf'), making those gradients 0 on backprop 
-        scores = torch.where(mask, scores, torch.Tensor([float('inf')]))
+        # replace all-zero vectors with float('inf'), making those gradients 0 on backprop
+        scores = torch.where(mask, scores, torch.tensor([float('inf')], device=mask.device))
  
         # positives are the 0-th index of each sample
         loss = (scores[:, 0] + torch.logsumexp(-scores, dim=1)).sum()
@@ -551,7 +551,8 @@ class Experiment:
                 batch_mask = batch[1].to(self.device)
                 
                 scores = self.model(batch_data)
-                scores = torch.where(batch_mask, scores, torch.Tensor([float('inf')]))
+                scores = torch.where(batch_mask, scores,
+                                     torch.tensor([float('inf')], device=batch_mask.device))
                 scores_combined.append(scores.cpu())
 
             scores_combined = torch.cat(scores_combined, dim=0).squeeze(dim=-1)
