@@ -1,6 +1,10 @@
 import argparse
+import logging
+import os
 import torch
 
+from datetime import datetime
+from rdkit import RDLogger
 from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_utils
 from rxnebm.model import FF
@@ -12,6 +16,7 @@ torch.backends.cudnn.benchmark = True
 def parse_args():
     parser = argparse.ArgumentParser("trainEBM.py")
     # file names
+    parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--smi_to_fp_dict_filename", help="do not change", type=str,
                         default="50k_mol_smi_to_sparse_fp_idx.pickle")
     parser.add_argument("--fp_to_smi_dict_filename", help="do not change", type=str,
@@ -96,7 +101,7 @@ def train(args):
         "mut": {"num_neg": 10},
     }
 
-    # precompute augmentation
+    logging.info("Precomputing augmentation")
     augmented_data = dataset.AugmentedDataFingerprints(
         augmentations=augmentations,
         smi_to_fp_dict_filename=args.smi_to_fp_dict_filename,
@@ -115,7 +120,7 @@ def train(args):
             parallel=False,
         )
 
-    # training
+    logging.info("Setting up model and experiment")
     model_args = FF_args
     fp_args = args_to_dict(args, "fp_args")
     train_args = args_to_dict(args, "train_args")
@@ -131,14 +136,28 @@ def train(args):
         distributed=False,
     )
 
+    logging.info("Start training")
     experiment.train()
     experiment.test()
-    scores_test = experiment.get_topk_acc(phase="test", k=1)
     scores_train = experiment.get_topk_acc(phase="train", k=1)
+    scores_test = experiment.get_topk_acc(phase="test", k=1)
 
 
 if __name__ == "__main__":
     args = parse_args()
+
+    # logger setup
+    RDLogger.DisableLog("rdApp.warning")
+
+    os.makedirs("./logs", exist_ok=True)
+    dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    fh = logging.FileHandler(f"{args.log_file}.{dt}")
+    fh.setLevel(logging.INFO)
+    logger.addHandler(fh)
 
     if not args.resume:
         train(args)

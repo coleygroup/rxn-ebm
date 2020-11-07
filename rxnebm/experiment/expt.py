@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 import time
@@ -115,8 +116,8 @@ class Experiment:
         self.augmentations = augmentations
         if self.representation != 'fingerprint' and 'bit' in augmentations.keys():
             raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
-        print("\nInitialising experiment: ", self.expt_name)
-        print("Augmentations: ", self.augmentations)
+        logging.info("\nInitialising experiment: ", self.expt_name)
+        logging.info("Augmentations: ", self.augmentations)
         if device:
             self.device = device
         else:
@@ -190,7 +191,7 @@ class Experiment:
         saved_stats: dict,
         begin_epoch: int,
     ):
-        print("Loading checkpoint...")
+        logging.info("Loading checkpoint...")
 
         if saved_optimizer is None:
             raise ValueError("load_checkpoint requires saved_optimizer!")
@@ -220,7 +221,7 @@ class Experiment:
         self.begin_epoch = begin_epoch
 
     def _init_opt_and_stats(self, optimizer: str): 
-        print("Initialising optimizer & stats...") 
+        logging.info("Initialising optimizer & stats...")
         optimizer = model_utils.get_optimizer(optimizer)
         self.optimizer = optimizer(self.model.parameters(), lr=self.learning_rate) 
 
@@ -253,7 +254,7 @@ class Experiment:
         search_index_filename: str,
         rxn_smis_file_prefix: Optional[str] = None,
     ):
-        print("Initialising dataloaders...")
+        logging.info("Initialising dataloaders...")
         if "cos" in self.augmentations:
             worker_init_fn = expt_utils._worker_init_fn_nmslib
         else:
@@ -346,7 +347,7 @@ class Experiment:
         self.to_break = 0
         if self.min_val_loss - self.val_losses[-1] < self.min_delta:
             if self.patience <= self.wait:
-                print(
+                logging.info(
                     f"\nEarly stopped at the end of epoch: {current_epoch}, \
                 train loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_accs[-1]:.4f}, \
                 \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_accs[-1]:.4f}"
@@ -355,7 +356,7 @@ class Experiment:
                 self.to_break = 1  # will break loop
             else:
                 self.wait += 1
-                print("Decrease in val loss < min_delta, patience count: ", self.wait)
+                logging.info("Decrease in val loss < min_delta, patience count: ", self.wait)
         else:
             self.wait = 0
             self.min_val_loss = min(self.min_val_loss, self.val_losses[-1])
@@ -434,7 +435,7 @@ class Experiment:
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(
                     batch_data, batch_mask, backprop=True
                 )
-                # print('curr_batch_loss:', curr_batch_loss)
+                # logging.info('curr_batch_loss:', curr_batch_loss)
                 train_loss += curr_batch_loss 
                 train_correct_preds += curr_batch_correct_preds
             self.train_accs.append(train_correct_preds / self.train_size)
@@ -464,13 +465,13 @@ class Experiment:
                 if self.to_break:  # is it time to early stop?
                     break
 
-            print(
+            logging.info(
                 f"\nEnd of epoch: {epoch}, \
                 \ntrain loss: {self.train_losses[-1]:.6f}, top-1 train acc: {self.train_accs[-1]:.4f}, \
                 \nval loss: {self.val_losses[-1]: .6f}, top-1 val acc: {self.val_accs[-1]:.4f}"
             )
 
-        print(f'Total training time: {self.stats["train_time"]}')
+        logging.info(f'Total training time: {self.stats["train_time"]}')
 
     def test(self, saved_stats: Optional[dict] = None):
         """
@@ -501,8 +502,8 @@ class Experiment:
 
         self.stats["test_loss"] = test_loss / self.test_size
         self.stats["test_acc"] = test_correct_preds / self.test_size
-        print(f'Test loss: {self.stats["test_loss"]}')
-        print(f'Test top-1 accuracy: {self.stats["test_acc"]}')
+        logging.info(f'Test loss: {self.stats["test_loss"]}')
+        logging.info(f'Test top-1 accuracy: {self.stats["test_acc"]}')
         # overrides existing training stats w/ training + test stats
         torch.save(self.stats, self.stats_filename)
 
@@ -564,7 +565,7 @@ class Experiment:
                 loss /= self.train_size
             elif phase == "val":
                 loss /= self.val_size
-            print(f"Loss on {phase} : {loss.item():.6f}")
+            logging.info(f"Loss on {phase} : {loss.item():.6f}")
 
             return scores, loss
 
@@ -618,7 +619,7 @@ class Experiment:
         if name_scores is None:
             name_scores = f"scores_{phase}_{self.expt_name}.pkl"
         if save_scores:
-            print("Saving scores at: ", Path(path_scores / name_scores))
+            logging.info("Saving scores at: ", Path(path_scores / name_scores))
             torch.save(scores, Path(path_scores / name_scores))
 
         if phase == "train":
@@ -626,7 +627,7 @@ class Experiment:
             self.stats["train_acc_nodropout"] = accs
             torch.save(self.stats, self.stats_filename)
 
-        print("Top-1 accuracies: ", accs)
-        print("Avg top-1 accuracy: ", accs.mean())
-        print("Variance: ", accs.var())
+        logging.info("Top-1 accuracies: ", accs)
+        logging.info("Avg top-1 accuracy: ", accs.mean())
+        logging.info("Variance: ", accs.var())
         return scores
