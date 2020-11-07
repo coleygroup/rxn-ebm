@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import sys
 import torch
 
 from datetime import datetime
@@ -17,14 +18,16 @@ def parse_args():
     parser = argparse.ArgumentParser("trainEBM.py")
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
+    parser.add_argument("--mol_smi_filename", help="do not change", type=str,
+                        default="50k_mol_smis.pickle")
     parser.add_argument("--smi_to_fp_dict_filename", help="do not change", type=str,
                         default="50k_mol_smi_to_sparse_fp_idx.pickle")
     parser.add_argument("--fp_to_smi_dict_filename", help="do not change", type=str,
                         default="50k_sparse_fp_idx_to_mol_smi.pickle")
-    parser.add_argument("--smi_to_fp_dict_filename", help="do not change", type=str,
-                        default="50k_mol_smi_to_sparse_fp_idx.pickle")
     parser.add_argument("--mol_fps_filename", help="do not change", type=str,
                         default="50k_count_mol_fps.npz")
+    parser.add_argument("--search_index_filename", help="do not change", type=str,
+                        default="50k_cosine_count.bin")
     parser.add_argument("--mut_smis_filename", help="do not change", type=str,
                         default="50k_neg150_rad2_maxsize3_mutprodsmis.pickle")
     parser.add_argument("--rxn_smis_file_prefix", help="do not change", type=str,
@@ -45,7 +48,7 @@ def parse_args():
     parser.add_argument("--checkpoint_folder", help="checkpoint folder",
                         type=str, default=expt_utils.setup_paths("LOCAL"))
     parser.add_argument("--batch_size", help="batch_size", type=int, default=2048)
-    parser.add_argument("--learning_rate", help="learning rate", type=int, default=5e-3)
+    parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true")
@@ -53,6 +56,7 @@ def parse_args():
     parser.add_argument("--patience", help="what is this", type=int, default=2)
     parser.add_argument("--num_workers", help="number of workers (0 to 8)", type=int, default=0)
     parser.add_argument("--checkpoint", help="what is this", action="store_true")
+    parser.add_argument("--random_seed", help="random seed", type=int, default=0)
     # model params, for now just use model_args with different models
 
     return parser.parse_args()
@@ -158,7 +162,10 @@ if __name__ == "__main__":
     # logger.propagate = False
     fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
     fh.setLevel(logging.INFO)
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setLevel(logging.INFO)
     logger.addHandler(fh)
+    logger.addHandler(sh)
 
     if not args.resume:
         train(args)

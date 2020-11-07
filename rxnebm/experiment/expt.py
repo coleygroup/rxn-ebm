@@ -116,8 +116,8 @@ class Experiment:
         self.augmentations = augmentations
         if self.representation != 'fingerprint' and 'bit' in augmentations.keys():
             raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
-        logging.info("\nInitialising experiment: ", self.expt_name)
-        logging.info("Augmentations: ", self.augmentations)
+        logging.info(f"\nInitialising experiment: {self.expt_name}")
+        logging.info(f"Augmentations: {self.augmentations}")
         if device:
             self.device = device
         else:
@@ -356,7 +356,7 @@ class Experiment:
                 self.to_break = 1  # will break loop
             else:
                 self.wait += 1
-                logging.info("Decrease in val loss < min_delta, patience count: ", self.wait)
+                logging.info(f"Decrease in val loss < min_delta, patience count: {self.wait}")
         else:
             self.wait = 0
             self.min_val_loss = min(self.min_val_loss, self.val_losses[-1])
@@ -619,7 +619,7 @@ class Experiment:
         if name_scores is None:
             name_scores = f"scores_{phase}_{self.expt_name}.pkl"
         if save_scores:
-            logging.info("Saving scores at: ", Path(path_scores / name_scores))
+            logging.info(f"Saving scores at: {Path(path_scores / name_scores)}")
             torch.save(scores, Path(path_scores / name_scores))
 
         if phase == "train":
@@ -627,7 +627,7 @@ class Experiment:
             self.stats["train_acc_nodropout"] = accs
             torch.save(self.stats, self.stats_filename)
 
-        logging.info("Top-1 accuracies: ", accs)
-        logging.info("Avg top-1 accuracy: ", accs.mean())
-        logging.info("Variance: ", accs.var())
+        logging.info(f"Top-1 accuracies: {accs}")
+        logging.info(f"Avg top-1 accuracy: {accs.mean()}")
+        logging.info(f"Variance: {accs.var()}")
         return scores
