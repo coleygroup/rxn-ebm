@@ -38,7 +38,7 @@ Energy-based modeling of chemical reactions
     cd ./rxnebm/proposer/GLN_original
     pip install -e .
     
-   # install tensorflow # TODO: add cpu-only version 
+    # install tensorflow # TODO: add cpu-only version 
     pip install tensorflow-gpu==1.14 gast==0.2.2
 
 
@@ -47,7 +47,7 @@ Energy-based modeling of chemical reactions
 The data was obtained from [the dropbox folder](https://www.dropbox.com/sh/6ideflxcakrak10/AADN-TNZnuGjvwZYiLk7zvwra/schneider50k?dl=0&subfolder_nav_tracking=1) provided by the authors of [GLN](https://github.com/Hanjun-Dai/GLN). 
 We rename these 3 csv files from ```raw_{phase}.csv``` to ```'schneider50k_train.csv'```, ```'schneider50k_test.csv'``` and ```'schneider50k_valid.csv'```, and save them to ```rxnebm/data/original_data``` <br>
 
-#### Data preprocessing
+### Data preprocessing
 The entire data preprocessing pipeline can be run from ```trainEBM.prepare_data()```, which performs a series of data cleaning & preprocessing steps, in the following order:
 1. Cleans the raw SMILES strings
 2. Extracts all unique molecule SMILES strings as a list
