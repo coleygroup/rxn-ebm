@@ -7,7 +7,8 @@ conda activate rxnebm
 conda install -y pytorch=${TORCH_VER} torchvision cudatoolkit=10.2 torchtext -c pytorch
 conda install -y -c conda-forge rdkit
 
-pip install nmslib crem gdown
+pip install --no-binary :all: nmslib
+pip install crem gdown
 
 # install rdchiral (needed by retrosim)
 pip install -e "git://github.com/connorcoley/rdchiral.git#egg=rdchiral"

@@ -11,4 +11,5 @@ python trainEBM.py \
   --min_delta=1e-4 \
   --patience=2 \
   --num_workers=0 \
-  --checkpoint
+  --checkpoint \
+  --random_seed=0
