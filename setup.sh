@@ -5,15 +5,9 @@ conda create -n rxnebm python=3.6 tqdm pathlib typing scipy pandas joblib -y
 conda activate rxnebm
 
 conda install -y pytorch=${TORCH_VER} torchvision cudatoolkit=10.2 torchtext -c pytorch
-
-# install latest version of rdkit
 conda install -y -c conda-forge rdkit
 
-# install nmslib
-pip install nmslib
-
-# install crem
-pip install crem
+pip install nmslib crem gdown
 
 # install rdchiral (needed by retrosim)
 pip install -e "git://github.com/connorcoley/rdchiral.git#egg=rdchiral"
