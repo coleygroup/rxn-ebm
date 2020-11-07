@@ -3,44 +3,7 @@ Energy-based modeling of chemical reactions
 
 ## Environmental setup
 ### Using Conda
-    TORCH_VER=1.6.0
-    CUDA_VER=cu102
-    
-    conda create -n rxnebm python=3.8 tqdm pathlib typing scipy pandas joblib 
-    conda activate rxnebm
-    
-    conda install pytorch=${TORCH_VER} torchvision cudatoolkit=10.2 torchtext -c pytorch 
-    # to install cpuonly build of pytorch
-    # conda install pytorch=${TORCH_VER} torchvision cpuonly -c pytorch
-    
-    # install latest version of rdkit 
-    conda install -c conda-forge rdkit 
-    
-    # install nmslib
-    pip install nmslib
-    
-    # install crem
-    pip install crem
-    
-    # install rdchiral (needed by retrosim) 
-    pip install -e "git://github.com/connorcoley/rdchiral.git#egg=rdchiral"
-    
-    # TODO: confirm with Zhengkai about package requirements from README_proposer.md 
-    # https://pytorch-geometric.readthedocs.io/en/latest/notes/installation.html
-    # install torch geometric
-    pip install torch-scatter==latest+${CUDA_VER} -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}.html
-    pip install torch-sparse==latest+${CUDA_VER} -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}.html
-    pip install torch-cluster==latest+${CUDA_VER} -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}.html
-    pip install torch-spline-conv==latest+${CUDA_VER} -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}.html
-    pip install torch-geometric
-    
-    # install gln as a package
-    cd ./rxnebm/proposer/GLN_original
-    pip install -e .
-    
-    # install tensorflow # TODO: add cpu-only version 
-    pip install tensorflow-gpu==1.14 gast==0.2.2
-
+    bash -i setup.sh
 
 ## Data setup
 ### Data source
