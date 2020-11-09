@@ -1,0 +1,15 @@
+python trainEBM.py \
+  --log_file=rdm_5_cos_5_bit_5_1_1_mut_10.log \
+  --expt_name=rdm_5_cos_5_bit_5_1_1_mut_10 \
+  --precomp_file_prefix=50k_rdm_5_cos_5_bit_5_1_1_mut_10 \
+  --random_seed=0 \
+  --batch_size=2048 \
+  --learning_rate=5e-3 \
+  --optimizer="Adam" \
+  --epochs=30 \
+  --early_stop \
+  --min_delta=1e-4 \
+  --patience=2 \
+  --num_workers=0 \
+  --checkpoint \
+  --random_seed=0

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
+import logging
 import scipy
 import torch
 from scipy import sparse
@@ -147,7 +148,7 @@ class AugmentedDataFingerprints:
         self.augs.append(self.cosaugmentor.get_one_sample_fp)
 
     def _init_random(self, num_neg: int):
-        print("Initialising Random Augmentor...")
+        logging.info("Initialising Random Augmentor...")
         self.rdmaugmentor = augmentors.Random(
             num_neg=num_neg, 
             smi_to_fp_dict=self.smi_to_fp_dict,
@@ -165,7 +166,7 @@ class AugmentedDataFingerprints:
         strategy: Optional[str] = None,
         increment_bits: Optional[int] = 1,
     ):
-        print("Initialising Bit Augmentor...")
+        logging.info("Initialising Bit Augmentor...")
         self.bitaugmentor = augmentors.Bit(
             num_neg=num_neg, 
             num_bits=num_bits,
@@ -179,7 +180,7 @@ class AugmentedDataFingerprints:
         self.augs.append(self.bitaugmentor.get_one_sample_fp) 
 
     def _init_mutate(self, num_neg: int):
-        print("Initialising Mutate Augmentor...")
+        logging.info("Initialising Mutate Augmentor...")
         if Path(self.mut_smis_filename).suffix != ".pickle":
             self.mut_smis_filename = str(self.mut_smis_filename) + ".pickle"
         with open(self.root / self.mut_smis_filename, "rb") as handle:
@@ -261,13 +262,13 @@ class AugmentedDataFingerprints:
         self.load_smis(rxn_smis)
 
         if (self.root / output_filename).exists():
-            print(self.root / output_filename, "already exists!")
+            logging.info(f"{self.root / output_filename} already exists!")
             return
         else:
-            print("Precomputing...")
+            logging.info("Precomputing...")
 
         if distributed:
-            print("distributed computing is not supported now!")
+            logging.info("distributed computing is not supported now!")
             return
             '''TODO: add support & documentation for distributed processing
             '''
@@ -275,7 +276,7 @@ class AugmentedDataFingerprints:
             # from mpi4py.futures import MPIPoolExecutor as Pool
 
             # num_workers = MPI.COMM_WORLD.size
-            # print(f'Distributing over {num_workers} total workers')
+            # logging.info(f'Distributing over {num_workers} total workers')
 
             # with Pool(max_workers=num_workers) as client:
                 # future = client.submit(self.precompute_helper)
@@ -287,14 +288,14 @@ class AugmentedDataFingerprints:
                 num_workers = len(os.sched_getaffinity(0))
             except AttributeError:
                 num_workers = os.cpu_count()
-            print(f"Parallelizing over {num_workers} cores")
+            logging.info(f"Parallelizing over {num_workers} cores")
 
             with Pool(max_workers=num_workers) as client:
                 future = client.submit(self.precompute_helper)
                 diff_fps = future.result()
         
         else:
-            print("Not parallelizing!")
+            logging.info("Not parallelizing!")
             
             diff_fps = self.precompute_helper()
 
@@ -302,16 +303,16 @@ class AugmentedDataFingerprints:
         try:
             diff_fps = diff_fps.tocsr(copy=False)
         except:
-            print('Could not convert to csr format')
+            logging.info('Could not convert to csr format')
         sparse.save_npz(self.root / output_filename, diff_fps)
         return
 
     def load_smis(self, rxn_smis: Union[List[str], Union[str, bytes, os.PathLike]]):
         if isinstance(rxn_smis, list) and isinstance(rxn_smis[0], str):
-            print("List of reaction SMILES strings detected.\n")
+            logging.info("List of reaction SMILES strings detected.\n")
             self.rxn_smis = rxn_smis
         elif isinstance(rxn_smis, str):
-            print("Loading reaction SMILES from filename provided.\n")
+            logging.info("Loading reaction SMILES from filename provided.\n")
             with open(self.root / rxn_smis, "rb") as handle:
                 self.rxn_smis = pickle.load(handle)
         else:
@@ -374,12 +375,12 @@ class ReactionDatasetFingerprints(Dataset):
         else:
             root = Path(root)
         if (root / precomp_rxnfp_filename).exists():
-            print("Loading pre-computed reaction fingerprints...")
+            logging.info("Loading pre-computed reaction fingerprints...")
             self.data = sparse.load_npz(root / precomp_rxnfp_filename)
             self.data = self.data.tocsr()
 
         elif self.onthefly:
-            print("Generating augmentations on the fly...")
+            logging.info("Generating augmentations on the fly...")
             self.data = augmented_data
             self.data.load_smis(rxn_smis_filename)
             # will be used by expt_utils._worker_init_fn_nmslib_
