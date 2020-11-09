@@ -144,12 +144,8 @@ def train(args):
     logging.info("Start training")
     experiment.train()
     experiment.test()
-    scores_train = experiment.get_topk_acc(phase="train", k=1)
-    scores_test = experiment.get_topk_acc(phase="test", k=1)
-
-    logging.info(f"Final train score: {scores_train}")
-    logging.info(f"Final test score: {scores_test}")
-
+    experiment.get_topk_acc(phase="train", k=1)
+    experiment.get_topk_acc(phase="test", k=1)
 
 if __name__ == "__main__":
     args = parse_args()
