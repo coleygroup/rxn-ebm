@@ -3,6 +3,12 @@ import os
 
 urls_fns = [
     # for generating negative examples
+    ("https://drive.google.com/uc?id=1zIN0T0tG-F1QDwb6QM7EJpUMl1Bw899f",
+     "50k_clean_rxnsmi_noreagent_train.pickle"),
+    ("https://drive.google.com/uc?id=1fxKp92MzsTha4Gd2wt721ZSakylKy70o",
+     "50k_clean_rxnsmi_noreagent_valid.pickle"),
+    ("https://drive.google.com/uc?id=1jcVgfSP_kG7DrNjyIJNOcH_MPkjWtAJR",
+     "50k_clean_rxnsmi_noreagent_test.pickle"),
     ("https://drive.google.com/uc?id=1tyXIa_f20jzA8J5pvudSdwZ-t3dRnP8V",
      "50k_mol_smis.pickle"),
     ("https://drive.google.com/uc?id=1hSaXJB97YypV7Pav1qB0ovh1_oQLZs3t",
