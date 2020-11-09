@@ -631,4 +631,3 @@ class Experiment:
         logging.info(f"Top-1 accuracies: {accs}")
         logging.info(f"Avg top-1 accuracy: {accs.mean()}")
         logging.info(f"Variance: {accs.var()}")
-        return scores
