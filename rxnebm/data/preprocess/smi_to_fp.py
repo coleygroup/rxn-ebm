@@ -156,7 +156,7 @@ def gen_count_mol_fps_from_file(
     with open(root / mol_smis_filename, "rb") as handle:
         mol_smis = pickle.load(handle)
 
-    count_mol_fps, bad_idx = [], []
+    count_mol_fps = [] # bad_idx = []
     for i, mol_smi in enumerate(tqdm(mol_smis, total=len(mol_smis))):
         cand_mol_fp = mol_smi_to_count_fp(mol_smi, radius, fp_size, dtype)
         if cand_mol_fp.nnz == 0:

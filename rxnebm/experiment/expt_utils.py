@@ -11,11 +11,6 @@ from torch.utils.data import get_worker_info
 import nmslib
 from rxnebm.model import FF, model_utils
 
-# import logging
-# logging.basicConfig(level=logging.DEBUG)
-# logging.getLogger('nmslib').setLevel(logging.WARNING) # Only log WARNING
-# messages and above from nmslib
-
 def setup_paths(
     location: str = "LOCAL",
     load_trained: Optional[bool] = False,

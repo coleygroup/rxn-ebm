@@ -112,9 +112,9 @@ class Retrosim:
             self.output_folder = Path(output_folder)
 
         self.parallelize = parallelize
-        self.prep_all_data()
+        self._prep_all_data()
 
-    def prep_all_data(self) -> None:
+    def _prep_all_data(self) -> None:
         '''
         Sets:
             self.clean_50k, self.clean_50k_remove_atom_map, 
@@ -298,7 +298,10 @@ class Retrosim:
 
         self.all_proposed_smiles = all_proposed_smiles
 
-    def compile_into_csv(self):
+        self._compile_into_csv()
+        self._calc_accs()
+
+    def _compile_into_csv(self):
         '''
         Sets self.proposed_precursors 
         '''
@@ -325,7 +328,7 @@ class Retrosim:
         self.proposed_precursors = proposed_precursors
         print('Compiled proposed_precursors by rxn_smi!')
 
-        self.calc_accs()
+        self._calc_accs()
 
         combined = {}
         for phase in self.phases:
@@ -372,7 +375,7 @@ class Retrosim:
             )
         print(f'Saved all proposals as 3 dataframes in {self.output_folder}!')
     
-    def calc_accs(self):
+    def _calc_accs(self):
         '''
         Sets: 
             self.ranks, self.accs 
