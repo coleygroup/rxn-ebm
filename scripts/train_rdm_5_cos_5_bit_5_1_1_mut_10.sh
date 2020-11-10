@@ -5,7 +5,7 @@ python trainEBM.py \
 	--expt_name=rdm_5_cos_5_bit_5_1_1_mut_10 \
 	--precomp_file_prefix=50k_rdm_5_cos_5_bit_5_1_1_mut_10 \
 	--random_seed=0 \
-	--batch_size=512 \
+	--batch_size=2048 \
 	--learning_rate=5e-3 \
 	--optimizer="Adam" \
 	--epochs=30 \

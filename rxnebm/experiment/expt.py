@@ -645,7 +645,7 @@ class Experiment:
 
         Also see: self.get_scores_and_loss()
         """ 
-        if self.scores[phase] is None:
+        if phase not in self.scores:
             scores, loss = self.get_scores_and_loss(
                 phase=phase, custom_dataloader=custom_dataloader
             )
@@ -654,7 +654,7 @@ class Experiment:
                 self.stats["train_loss_nodropout"] = loss
         pred_labels = torch.topk(self.scores[phase], k, dim=1, largest=False)[1]
         topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0]
-        
+
         self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
         torch.save(self.stats, self.stats_filename)
 
