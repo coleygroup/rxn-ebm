@@ -613,7 +613,11 @@ class Experiment:
         if save_scores:
             logging.info(f"Saving scores at: {Path(path_scores / name_scores)}")
             torch.save(scores, Path(path_scores / name_scores))
-
+            
+        if phase not in self.scores:
+            self.scores[phase] = scores
+            if phase == 'train':
+                self.stats["train_loss_nodropout"] = loss
         return scores_combined, loss
 
     def get_topk_acc(
@@ -658,4 +662,4 @@ class Experiment:
         self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
         torch.save(self.stats, self.stats_filename)
 
-        logging.info(f"Top-{k} accuracy: {topk_accuracy}") 
+        logging.info(f"Top-{k} accuracy on {phase}: {topk_accuracy}") 

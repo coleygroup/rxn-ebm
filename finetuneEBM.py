@@ -108,8 +108,13 @@ def finetune(args):
     logging.info("Start finetuning")
     experiment.train()
     experiment.test()
-    experiment.get_topk_acc(phase="train", k=1)
-    experiment.get_topk_acc(phase="test", k=1)
+
+    for k in [2, 3, 5, 10, 20, 50, 100]:
+        experiment.get_topk_acc(phase="train", k=1)
+    for k in [2, 3, 5, 10, 20, 50, 100]:
+        experiment.get_topk_acc(phase="val", k=1)
+    for k in [2, 3, 5, 10, 20, 50, 100]:
+        experiment.get_topk_acc(phase="test", k=1)
 
 if __name__ == "__main__":
     args = parse_args()
