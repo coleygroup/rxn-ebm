@@ -1,5 +1,6 @@
 #!/bin/sh 
-python ../finetuneEBM.py \
+cd ..
+python finetuneEBM.py \
 	--log_file=rdm_5_cos_5_bit_5_1_1_mut_10_FINETUNE.log \
 	--model_name=FeedforwardEBM \
 	--old_expt_name=rdm_5_cos_5_bit_5_1_1_mut_10 \

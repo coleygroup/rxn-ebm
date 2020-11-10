@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
+from tqdm import tqdm 
 
 from rxnebm.data import dataset
 from rxnebm.experiment import expt_utils
@@ -205,6 +205,7 @@ class Experiment:
             raise ValueError("load_checkpoint requires saved_optimizer!")
         self.optimizer = saved_optimizer  # load optimizer w/ state dict from checkpoint
         if self.lr_scheduler_name is not None:
+            logging.info(f'Initialising {self.lr_scheduler_name}')
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
                 optimizer=self.optimizer, mode='min', 
                 factor=self.lr_scheduler_factor, patience=self.lr_scheduler_patience, verbose=True
@@ -445,20 +446,21 @@ class Experiment:
         # 0-th index should have the lowest energy
         pred_correct = torch.where(pred_labels == 0)[0].shape[0]
         return loss.item(), pred_correct
-
+ 
     def train(self):
         self.start = time.time()  # timeit.default_timer()
         for epoch in range(self.begin_epoch, self.epochs):
             self.model.train()
             train_loss, train_correct_preds = 0, 0
-            for i, batch in enumerate(tqdm(self.train_loader, desc='training...')):
+            train_loader = tqdm(self.train_loader, desc='training...')
+            for batch in train_loader:
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device) 
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(
                     batch_data, batch_mask, backprop=True
-                )
-                # if i % 5 == 0:
-                #     logging.info('curr_batch_loss:', curr_batch_loss)
+                ) 
+                train_loader.set_description(f"training...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
+                train_loader.refresh()  
                 train_loss += curr_batch_loss 
                 train_correct_preds += curr_batch_correct_preds
             self.train_accs.append(train_correct_preds / self.train_size)
@@ -466,12 +468,15 @@ class Experiment:
 
             self.model.eval()
             val_loss, val_correct_preds = 0, 0
-            for batch in tqdm(self.val_loader, desc='validating...'):
+            val_loader = tqdm(self.val_loader, desc='validating...')
+            for batch in val_loader:
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device)
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(
                     batch_data, batch_mask, backprop=False
                 )
+                val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
+                val_loader.refresh()  
                 val_loss += curr_batch_loss
                 val_correct_preds += curr_batch_correct_preds
             self.val_accs.append(val_correct_preds / self.val_size)
@@ -511,7 +516,8 @@ class Experiment:
         """
         self.model.eval()
         test_loss, test_correct_preds = 0, 0
-        for batch in tqdm(self.test_loader, desc='testing...'):
+        test_loader = tqdm(self.test_loader, desc='testing...')
+        for batch in test_loader:
             batch_data = batch[0].to(self.device)
             batch_mask = batch[1].to(self.device)
             curr_batch_loss, curr_batch_correct_preds = self._one_batch(
@@ -519,6 +525,8 @@ class Experiment:
             )
             test_loss += curr_batch_loss
             test_correct_preds += curr_batch_correct_preds
+            test_loader.set_description(f"testing...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
+            test_loader.refresh() 
 
         if saved_stats:
             self.stats = saved_stats
@@ -646,8 +654,8 @@ class Experiment:
                 self.stats["train_loss_nodropout"] = loss
         pred_labels = torch.topk(self.scores[phase], k, dim=1, largest=False)[1]
         topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0]
-        if phase == "train":
-            self.stats["train_acc_nodropout"] = topk_accuracy
-            torch.save(self.stats, self.stats_filename)
+        
+        self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
+        torch.save(self.stats, self.stats_filename)
 
         logging.info(f"Top-{k} accuracy: {topk_accuracy}") 
