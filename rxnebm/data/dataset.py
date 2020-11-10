@@ -321,21 +321,21 @@ class AugmentedDataFingerprints:
         # e.g. (40004, 4096) for train, needed to allow .shape[0] attribute
         # from ReactionDatasetFingerprints.__len__()
 
-
-def spy_sparse2torch_sparse(data: scipy.sparse.csr_matrix) -> Tensor:
-    """
-    :param data: a scipy sparse csr matrix
-    :return: a sparse torch tensor
-    """
-    samples = data.shape[0]
-    features = data.shape[1]
-    values = data.data
-    coo_data = data.tocoo()
-    indices = torch.LongTensor([coo_data.row, coo_data.col])
-    tensor = torch.sparse.IntTensor(
-        indices, torch.from_numpy(values), [samples, features]
-    )
-    return tensor
+# do not use, is very slow 
+# def spy_sparse2torch_sparse(data: scipy.sparse.csr_matrix) -> Tensor:
+#     """
+#     :param data: a scipy sparse csr matrix
+#     :return: a sparse torch tensor
+#     """
+#     samples = data.shape[0]
+#     features = data.shape[1]
+#     values = data.data
+#     coo_data = data.tocoo()
+#     indices = torch.LongTensor([coo_data.row, coo_data.col])
+#     tensor = torch.sparse.IntTensor(
+#         indices, torch.from_numpy(values), [samples, features]
+#     )
+#     return tensor
 
 
 class ReactionDatasetFingerprints(Dataset):

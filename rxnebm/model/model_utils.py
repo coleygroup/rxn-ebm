@@ -51,6 +51,12 @@ def get_optimizer(optimizer: str) -> torch.optim.Optimizer:
     else:
         raise ValueError(f'Optimizer "{optimizer}" not supported.')
 
+def get_lr_scheduler(scheduler: str) -> nn.Module:
+    if scheduler == 'ReduceLROnPlateau':
+        return torch.optim.lr_scheduler.ReduceLROnPlateau
+    else:
+        raise ValueError(f'Scheduler "{scheduler}" not supported.')
+
 def initialize_weights(model: nn.Module) -> None:
     """
     Initializes the weights of a model in place.

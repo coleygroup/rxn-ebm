@@ -48,14 +48,17 @@ def parse_args():
     parser.add_argument("--checkpoint_folder", help="checkpoint folder",
                         type=str, default=expt_utils.setup_paths("LOCAL"))
     parser.add_argument("--batch_size", help="batch_size", type=int, default=2048)
-    parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
-    parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true")
-    parser.add_argument("--min_delta", help="what is this", type=float, default=1e-4)
-    parser.add_argument("--patience", help="what is this", type=int, default=2)
-    parser.add_argument("--num_workers", help="number of workers (0 to 8)", type=int, default=0)
-    parser.add_argument("--checkpoint", help="what is this", action="store_true")
+    parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
+    parser.add_argument("--lr_scheduler", help="learning rate schedule", type=str, default="ReduceLROnPlateau")
+    parser.add_argument("--lr_scheduler_factor", help="factor by which learning rate will be reduced", type=float, default=0.3)
+    parser.add_argument("--lr_scheduler_patience", help="num. of epochs with no improvement after which learning rate will be reduced", type=int, default=1)
+    parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") # type=bool, default=True) 
+    parser.add_argument("--early_stop_patience", help="num. of epochs tolerated without improvement in val loss before early stop", type=int, default=2)
+    parser.add_argument("--early_stop_min_delta", help="min. improvement in val loss needed to not early stop", type=float, default=1e-4) 
+    parser.add_argument("--num_workers", help="num. of workers (0 to 8)", type=int, default=0)
+    parser.add_argument("--checkpoint", help="whether to save model checkpoints", action="store_true") # type=bool, default=True) 
     parser.add_argument("--random_seed", help="random seed", type=int, default=0)
     # model params, for now just use model_args with different models
 
@@ -74,12 +77,15 @@ def args_to_dict(args, args_type: str) -> dict:
                 "fp_type"]
     elif args_type == "train_args":
         keys = ["batch_size",
-                "learning_rate",
                 "optimizer",
                 "epochs",
+                "learning_rate",
+                "lr_scheduler",
+                "lr_scheduler_factor",
+                "lr_scheduler_patience",
                 "early_stop",
-                "min_delta",
-                "patience",
+                "early_stop_patience",
+                "early_stop_min_delta",
                 "num_workers",
                 "checkpoint",
                 "random_seed",
@@ -120,8 +126,7 @@ def train(args):
     for phase in ["train", "valid", "test"]:
         augmented_data.precompute(
             output_filename=f"{args.precomp_file_prefix}_{phase}.npz",
-            rxn_smis=f"{args.rxn_smis_file_prefix}_{phase}.pickle",
-            distributed=False,
+            rxn_smis=f"{args.rxn_smis_file_prefix}_{phase}.pickle", 
             parallel=False,
         )
 
@@ -133,12 +138,11 @@ def train(args):
     model = FF.FeedforwardFingerprint(**model_args, **fp_args)
 
     experiment = expt.Experiment(
-        model,
-        model_args,
+        model=model,
+        model_args=model_args,
         augmentations=augmentations,
         **train_args,
-        **fp_args,
-        distributed=False,
+        **fp_args
     )
 
     logging.info("Start training")
