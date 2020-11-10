@@ -4,13 +4,14 @@ import os
 import sys
 import torch
 
+import gc
+gc.enable() 
+
 from datetime import datetime
 from rdkit import RDLogger
 from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_utils
-from rxnebm.model import FF
-# from rxnebm.model.FF_args import FF_args
-
+from rxnebm.model import FF 
 torch.backends.cudnn.benchmark = True
 
 def parse_args():

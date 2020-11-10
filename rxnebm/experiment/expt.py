@@ -122,7 +122,7 @@ class Experiment:
         logging.info(f"\nInitialising experiment: {self.expt_name}")
         logging.info(f"Augmentations: {self.augmentations}")
 
-        if device:
+        if device is not None:
             self.device = device
         else:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -228,7 +228,7 @@ class Experiment:
         self.train_accs = self.stats["train_accs"]
         self.val_losses = self.stats["val_losses"]
         self.val_accs = self.stats["val_accs"]
-        self.min_val_loss = self.stats["min_val_loss"]
+        self.min_val_loss = float("+inf") # need to reset to +inf for _check_earlystop() 
         self.wait = 0  # counter for _check_earlystop()
 
         if begin_epoch is None:
