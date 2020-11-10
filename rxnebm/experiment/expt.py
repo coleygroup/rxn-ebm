@@ -157,6 +157,7 @@ class Experiment:
                 mol_fps_filename=mol_fps_filename,
                 search_index_filename=search_index_filename,
             )
+        self.scores = {} # for self.get_topk_acc
 
         model_utils.seed_everything(random_seed)
 
@@ -605,7 +606,7 @@ class Experiment:
             logging.info(f"Saving scores at: {Path(path_scores / name_scores)}")
             torch.save(scores, Path(path_scores / name_scores))
 
-        return scores, loss
+        return scores_combined, loss
 
     def get_topk_acc(
         self,
@@ -636,14 +637,16 @@ class Experiment:
 
         Also see: self.get_scores_and_loss()
         """ 
-        scores, loss = self.get_scores_and_loss(
-            phase=phase, custom_dataloader=custom_dataloader
-        )
-        pred_labels = torch.topk(scores, k, dim=1, largest=False)[1]
+        if self.scores[phase] is None:
+            scores, loss = self.get_scores_and_loss(
+                phase=phase, custom_dataloader=custom_dataloader
+            )
+            self.scores[phase] = scores
+            if phase == 'train':
+                self.stats["train_loss_nodropout"] = loss
+        pred_labels = torch.topk(self.scores[phase], k, dim=1, largest=False)[1]
         topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0]
-
         if phase == "train":
-            self.stats["train_loss_nodropout"] = loss
             self.stats["train_acc_nodropout"] = topk_accuracy
             torch.save(self.stats, self.stats_filename)
 
