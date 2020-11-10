@@ -1,5 +1,4 @@
 #!/bin/sh 
-cd .. 
 python trainEBM.py \
 	--log_file=rdm_5_cos_5_bit_5_1_1_mut_10.log \
 	--expt_name=rdm_5_cos_5_bit_5_1_1_mut_10 \
