@@ -95,5 +95,5 @@ class FeedforwardFingerprint(base.Feedforward):
             each sample contains a positive rxn on the first column,
             and K-1 negative rxns on all subsequent columns
         """
-        energy_scores = self.ffn(batch)  # tensor of size N x K x 1
-        return energy_scores.squeeze(dim=-1)  # scores: N x K after squeezing
+        energies = self.ffn(batch)  # tensor of size N x K x 1
+        return energies.squeeze(dim=-1)  # scores: N x K after squeezing

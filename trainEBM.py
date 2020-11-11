@@ -3,6 +3,8 @@ import logging
 import os
 import sys
 import torch
+import gc
+gc.enable() 
 
 from datetime import datetime
 from rdkit import RDLogger
@@ -32,6 +34,7 @@ def parse_args():
                         default="50k_neg150_rad2_maxsize3_mutprodsmis.pickle")
     parser.add_argument("--rxn_smis_file_prefix", help="do not change", type=str,
                         default="50k_clean_rxnsmi_noreagent")
+    parser.add_argument("--path_to_energies", help="do not change (folder to store array of energy values for train & test data)", type=str)
     # fingerprint params
     parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
     parser.add_argument("--rctfp_size", help="reactant fp size", type=int, default=4096)
@@ -52,7 +55,7 @@ def parse_args():
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
     parser.add_argument("--lr_scheduler", help="learning rate schedule", type=str, default="ReduceLROnPlateau")
-    parser.add_argument("--lr_scheduler_factor", help="factor by which learning rate will be reduced", type=float, default=0.3)
+    parser.add_argument("--lr_scheduler_factor", help="factor by which learning rate will be reduced", type=float, default=0.2)
     parser.add_argument("--lr_scheduler_patience", help="num. of epochs with no improvement after which learning rate will be reduced", type=int, default=1)
     parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") # type=bool, default=True) 
     parser.add_argument("--early_stop_patience", help="num. of epochs tolerated without improvement in val loss before early stop", type=int, default=2)
@@ -106,10 +109,10 @@ def train(args):
 
     # hard-coded
     augmentations = {
-        "rdm": {"num_neg": 5},  
-        "cos": {"num_neg": 5, "query_params": None},
-        "bit": {"num_neg": 5, "num_bits": 1, "increment_bits": 1},
-        "mut": {"num_neg": 10},
+        "rdm": {"num_neg": 1},  
+        "cos": {"num_neg": 1, "query_params": None},
+        "bit": {"num_neg": 1, "num_bits": 1, "increment_bits": 1},
+        "mut": {"num_neg": 1},
     }
 
     logging.info("Precomputing augmentation")
@@ -148,8 +151,16 @@ def train(args):
     logging.info("Start training")
     experiment.train()
     experiment.test()
-    experiment.get_topk_acc(phase="train", k=1)
-    experiment.get_topk_acc(phase="test", k=1)
+    
+    _, _ = experiment.get_energies_and_loss(phase="train", save_energies=True, path_to_energies=args.path_to_energies)
+    _, _ = experiment.get_energies_and_loss(phase="val", save_energies=True, path_to_energies=args.path_to_energies)
+    _, _ = experiment.get_energies_and_loss(phase="test", save_energies=True, path_to_energies=args.path_to_energies)
+    for k in [1, 2, 3, 5, 10, 20, 50, 100]:
+        experiment.get_topk_acc(phase="train", k=k)
+    for k in [1, 2, 3, 5, 10, 20, 50, 100]:
+        experiment.get_topk_acc(phase="val", k=k)
+    for k in [1, 2, 3, 5, 10, 20, 50, 100]:
+        experiment.get_topk_acc(phase="test", k=k)
 
 if __name__ == "__main__":
     args = parse_args()

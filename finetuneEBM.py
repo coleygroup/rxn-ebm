@@ -19,6 +19,7 @@ def parse_args():
     parser = argparse.ArgumentParser("finetuneEBM.py")
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
+    parser.add_argument("--path_to_energies", help="do not change (folder to store array of energy values for train & test data)", type=str)
     # fingerprint params
     parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
     # training params 
@@ -109,12 +110,15 @@ def finetune(args):
     experiment.train()
     experiment.test()
 
-    for k in [2, 3, 5, 10, 20, 50, 100]:
-        experiment.get_topk_acc(phase="train", k=1)
-    for k in [2, 3, 5, 10, 20, 50, 100]:
-        experiment.get_topk_acc(phase="val", k=1)
-    for k in [2, 3, 5, 10, 20, 50, 100]:
-        experiment.get_topk_acc(phase="test", k=1)
+    _, _ = experiment.get_energies_and_loss(phase="train", save_energies=True, path_to_energies=args.path_to_energies)
+    _, _ = experiment.get_energies_and_loss(phase="val", save_energies=True, path_to_energies=args.path_to_energies)
+    _, _ = experiment.get_energies_and_loss(phase="test", save_energies=True, path_to_energies=args.path_to_energies)
+    for k in [1, 2, 3, 5, 10, 20, 50, 100]:
+        experiment.get_topk_acc(phase="train", k=k)
+    for k in [1, 2, 3, 5, 10, 20, 50, 100]:
+        experiment.get_topk_acc(phase="val", k=k)
+    for k in [1, 2, 3, 5, 10, 20, 50, 100]:
+        experiment.get_topk_acc(phase="test", k=k)
 
 if __name__ == "__main__":
     args = parse_args()

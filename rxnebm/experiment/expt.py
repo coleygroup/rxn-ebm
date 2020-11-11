@@ -157,7 +157,7 @@ class Experiment:
                 mol_fps_filename=mol_fps_filename,
                 search_index_filename=search_index_filename,
             )
-        self.scores = {} # for self.get_topk_acc
+        self.energies = {} # for self.get_topk_acc
 
         model_utils.seed_everything(random_seed)
 
@@ -423,18 +423,18 @@ class Experiment:
 
     def _one_batch(self, batch: Tensor, mask: Tensor, backprop: bool = True):
         """
-        Passes one batch of samples through model to get scores & loss
+        Passes one batch of samples through model to get energies & loss
         Does backprop if training 
         """
         for p in self.model.parameters():
             p.grad = None  # faster, equivalent to self.model.zero_grad()
-        scores = self.model(batch)  # size N x K
+        energies = self.model(batch)  # size N x K
 
         # replace all-zero vectors with float('inf'), making those gradients 0 on backprop
-        scores = torch.where(mask, scores, torch.tensor([float('inf')], device=mask.device))
+        energies = torch.where(mask, energies, torch.tensor([float('inf')], device=mask.device))
  
         # positives are the 0-th index of each sample
-        loss = (scores[:, 0] + torch.logsumexp(-scores, dim=1)).sum()
+        loss = (energies[:, 0] + torch.logsumexp(-energies, dim=1)).sum()
 
         if backprop:
             self.optimizer.zero_grad()
@@ -442,7 +442,7 @@ class Experiment:
             self.optimizer.step()
 
         # index with lowest energy is the most feasible rxn
-        pred_labels = torch.topk(scores, 1, dim=1, largest=False)[1]
+        pred_labels = torch.topk(energies, 1, dim=1, largest=False)[1]
         # 0-th index should have the lowest energy
         pred_correct = torch.where(pred_labels == 0)[0].shape[0]
         return loss.item(), pred_correct
@@ -541,28 +541,36 @@ class Experiment:
         logging.info(f'Test top-1 accuracy: {self.stats["test_acc"]}')
         torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
-    def get_scores_and_loss(
+    def get_energies_and_loss(
         self,
         phase: Optional[str] = "test",
         custom_dataloader: Optional[torch.utils.data.DataLoader] = None,
-        save_scores: Optional[bool] = True,
-        name_scores: Optional[Union[str, bytes, os.PathLike]] = None,
-        path_scores: Optional[Union[str, bytes, os.PathLike]] = None,
+        save_energies: Optional[bool] = True,
+        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
     ) -> Tuple[Tensor, float]:
         """
-        Gets raw energy values (scores) from a trained model on a given dataloader 
+        Gets raw energy values from a trained model on a given dataloader 
 
         Parameters
         ----------
-        phase : str (Default = 'test') [train', 'test', 'valid', 'custom']
-            whether to get scores from train/test/valid phases or a custom_dataloader
+        phase : str (Default = 'test') [train', 'test', 'val', 'custom']
+            whether to get energies from train/test/val phases or a custom_dataloader
         custom_dataloader : Optional[Dataloader] (Default = None)
             custom dataloader that loops through dataset that is not the original train, test or val
+        save_energies : Optional[bool] (Default = True)
+            whether to save the energy values to disk
+        name_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
+            name of the energy file to be saved
+            if None, defaults to f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
+        path_to_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
+            path to folder in which to save the energy outputs
+            if None, defaults to path/to/rxnebm/energies 
 
         Returns
         -------
-        scores : Tensor
-            scores of shape (# rxns, 1 + # neg rxns)
+        energies : Tensor
+            energies of shape (# rxns, 1 + # neg rxns)
         loss : float
             the loss value on the provided dataset
 
@@ -577,23 +585,23 @@ class Experiment:
         elif phase == "train":
             dataloader = self.train_loader
         elif phase == "val":
-            dataloader == self.val_loader
+            dataloader = self.val_loader
 
         self.model.eval()
-        scores_combined = []
+        energies_combined = []
         with torch.no_grad():
             for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device)
                 
-                scores = self.model(batch_data)
-                scores = torch.where(batch_mask, scores,
+                energies = self.model(batch_data)
+                energies = torch.where(batch_mask, energies,
                                      torch.tensor([float('inf')], device=batch_mask.device))
-                scores_combined.append(scores.cpu())
+                energies_combined.append(energies)
 
-            scores_combined = torch.cat(scores_combined, dim=0).squeeze(dim=-1)
+            energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).to(torch.device('cpu'))
 
-            loss = (scores_combined[:, 0] + torch.logsumexp(-1 * scores_combined, dim=1)).sum()
+            loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum()
             if phase == "custom":
                 loss /= custom_dataset_len
             elif phase == "test":
@@ -604,21 +612,21 @@ class Experiment:
                 loss /= self.val_size
             logging.info(f"Loss on {phase} : {loss.item():.6f}")
 
-        if path_scores is None:
-            path_scores = Path(__file__).resolve().parents[1] / "scores"
+        if path_to_energies is None:
+            path_to_energies = Path(__file__).resolve().parents[1] / "energies"
         else:
-            path_scores = Path(path_scores)
-        if name_scores is None:
-            name_scores = f"scores_{phase}_{self.expt_name}.pkl"
-        if save_scores:
-            logging.info(f"Saving scores at: {Path(path_scores / name_scores)}")
-            torch.save(scores, Path(path_scores / name_scores))
-            
-        if phase not in self.scores:
-            self.scores[phase] = scores
+            path_to_energies = Path(path_to_energies)
+        if name_energies is None:
+            name_energies = f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
+        if save_energies:
+            logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
+            torch.save(energies_combined, Path(path_to_energies / name_energies))
+
+        if phase not in self.energies:
+            self.energies[phase] = energies
             if phase == 'train':
                 self.stats["train_loss_nodropout"] = loss
-        return scores_combined, loss
+        return energies_combined, loss
 
     def get_topk_acc(
         self,
@@ -632,34 +640,40 @@ class Experiment:
 
         Parameters
         ----------
-        phase : str (Default = 'test') [train', 'test', 'valid', 'custom']
-            whether to get scores from train/test/valid phases or a custom_dataloader
+        phase : str (Default = 'test') [train', 'test', 'val', 'custom']
+            whether to get energies from train/test/valid phases or a custom_dataloader
         custom_dataloader : Optional[Dataloader] (Default = None)
             custom dataloader that loops through dataset that is not the original train, test or val
-        save_scores: bool (Default = True)
-            whether to save the generated scores tensor to disk
-        name_scores: Union[str, bytes, os.PathLike] (Default = None)
-            filename of scores to save as a .pkl file
-            If None, automatically set to 'scores_<phase>_<self.expt_name>'
+        save_energies: bool (Default = True)
+            whether to save the generated energies tensor to disk
+        name_energies: Union[str, bytes, os.PathLike] (Default = None)
+            filename of energies to save as a .pkl file
+            If None, automatically set to 'energies_<phase>_<self.expt_name>'
 
         Returns
         -------
-        scores: tensor
-            scores of shape (# rxns, 1 + # neg rxns)
+        energies: tensor
+            energies of shape (# rxns, 1 + # neg rxns)
 
-        Also see: self.get_scores_and_loss()
+        Also see: self.get_energies_and_loss()
         """ 
-        if phase not in self.scores:
-            scores, loss = self.get_scores_and_loss(
+        if custom_dataloader is not None:
+            phase = 'custom'
+        if phase not in self.energies:
+            energies, loss = self.get_energies_and_loss(
                 phase=phase, custom_dataloader=custom_dataloader
             )
-            self.scores[phase] = scores
+            self.energies[phase] = energies
             if phase == 'train':
                 self.stats["train_loss_nodropout"] = loss
-        pred_labels = torch.topk(self.scores[phase], k, dim=1, largest=False)[1]
-        topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0]
+        
+        if self.energies[phase].shape[1] > k: 
+            pred_labels = torch.topk(self.energies[phase], k, dim=1, largest=False)[1]
+            topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0]
 
-        self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
-        torch.save(self.stats, self.stats_filename)
+            self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
+            torch.save(self.stats, self.stats_filename)
 
-        logging.info(f"Top-{k} accuracy on {phase}: {topk_accuracy}") 
+            logging.info(f"Top-{k} accuracy on {phase}: {topk_accuracy}") 
+        else:
+            logging.info(f'{k} out of range for dimension 1 on {phase}')
