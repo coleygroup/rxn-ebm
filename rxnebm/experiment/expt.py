@@ -623,7 +623,7 @@ class Experiment:
             torch.save(energies_combined, Path(path_to_energies / name_energies))
 
         if phase not in self.energies:
-            self.energies[phase] = energies
+            self.energies[phase] = energies_combined
             if phase == 'train':
                 self.stats["train_loss_nodropout"] = loss
         return energies_combined, loss
