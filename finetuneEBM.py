@@ -107,8 +107,8 @@ def finetune(args):
     )
 
     logging.info("Start finetuning")
-    experiment.train()
-    experiment.test()
+    # experiment.train()
+    # experiment.test()
 
     _, _ = experiment.get_energies_and_loss(phase="train", save_energies=True, path_to_energies=args.path_to_energies)
     _, _ = experiment.get_energies_and_loss(phase="val", save_energies=True, path_to_energies=args.path_to_energies)

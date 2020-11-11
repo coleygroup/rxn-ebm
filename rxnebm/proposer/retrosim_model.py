@@ -37,7 +37,7 @@ def similarity_metric(fp, list_fps):
     return result
 
 class Retrosim:
-    ''' 
+    ''' TODO: test & valid files should be passed in as arguments into self.propose_all(), not initialised with Retrosim object! 
     Wrapper over retrosim for preparing training corpus + fingerprints, 
     and generating one-step precursor proposals for EBM re-ranking task
     Called by rxnebm.proposer.retrosim_proposer (self.build_model & self.propose methods)
