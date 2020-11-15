@@ -118,7 +118,7 @@ class Mutate(Augmentor):
         elif return_type == "fp":
             for key in ["rxn_type", "fp_type"]:
                 if key not in kwargs:
-                    raise KeyError(f"Missing search param {key}")
+                    raise KeyError(f"Missing aug param {key}")
             rxn_type = kwargs["rxn_type"]       # required
             fp_type = kwargs["fp_type"]
             radius = kwargs.get("radius", 3)    # optional
@@ -272,7 +272,7 @@ class Random(Augmentor):
         elif return_type == "fp":
             for key in ["rxn_type", "fp_type"]:
                 if key not in kwargs:
-                    raise KeyError(f"Missing search param {key}")
+                    raise KeyError(f"Missing aug param {key}")
             rxn_type = kwargs["rxn_type"]
             fp_type = kwargs["fp_type"]
 
@@ -323,7 +323,7 @@ class Bit(Augmentor):
         if return_type == "fp":
             for key in ["rxn_type", "fp_type", "num_bits", "increment_bits"]:
                 if key not in kwargs:
-                    raise KeyError(f"Missing search param {key}")
+                    raise KeyError(f"Missing aug param {key}")
             rxn_type = kwargs["rxn_type"]
             fp_type = kwargs["fp_type"]
             num_bits = kwargs["num_bits"]

@@ -77,6 +77,7 @@ class AugmentedDataFingerprints:
         mol_fps_filename: str,
         search_index_filename: Optional[str] = None,
         mut_smis_filename: Optional[str] = None,
+        representation: str = "fingerprint",
         rxn_type: Optional[str] = "diff",
         fp_type: Optional[str] = "count",
         fp_size: Optional[int] = 4096,
@@ -92,6 +93,7 @@ class AugmentedDataFingerprints:
         self.mol_fps_filename = mol_fps_filename
         self.search_index_filename = search_index_filename
         self.mut_smis_filename = mut_smis_filename
+        self.representation = representation
 
         if root is None:  # set root = path/to/rxn/ebm/
             root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
@@ -137,27 +139,33 @@ class AugmentedDataFingerprints:
             self.query_params = None
 
         self.cosaugmentor = augmentors.Cosine(
-            num_neg=num_neg, 
             search_index=search_index,
             smi_to_fp_dict=self.smi_to_fp_dict,
             fp_to_smi_dict=self.fp_to_smi_dict,
-            mol_fps=self.mol_fps,
-            rxn_type=self.rxn_type,
-            fp_type=self.fp_type, 
+            mol_fps=self.mol_fps
         )
-        self.augs.append(self.cosaugmentor.get_one_sample_fp)
+        aug_params = {
+            "num_neg": num_neg,
+            "return_type": "fp" if self.representation == "fingerprint" else "smi",
+            "rxn_type": self.rxn_type,
+            "fp_type": self.fp_type
+        }
+        self.augs.append((self.cosaugmentor.get_one_sample, aug_params))
 
     def _init_random(self, num_neg: int):
         logging.info("Initialising Random Augmentor...")
         self.rdmaugmentor = augmentors.Random(
-            num_neg=num_neg, 
             smi_to_fp_dict=self.smi_to_fp_dict,
             fp_to_smi_dict=self.fp_to_smi_dict,
-            mol_fps=self.mol_fps,
-            rxn_type=self.rxn_type,
-            fp_type=self.fp_type,    
+            mol_fps=self.mol_fps
         )
-        self.augs.append(self.rdmaugmentor.get_one_sample_fp)
+        aug_params = {
+            "num_neg": num_neg,
+            "return_type": "fp" if self.representation == "fingerprint" else "smi",
+            "rxn_type": self.rxn_type,
+            "fp_type": self.fp_type
+        }
+        self.augs.append((self.rdmaugmentor.get_one_sample, aug_params))
 
     def _init_bit(
         self,
@@ -168,16 +176,19 @@ class AugmentedDataFingerprints:
     ):
         logging.info("Initialising Bit Augmentor...")
         self.bitaugmentor = augmentors.Bit(
-            num_neg=num_neg, 
-            num_bits=num_bits,
-            increment_bits=increment_bits,
-            strategy=strategy,
             smi_to_fp_dict=self.smi_to_fp_dict,
-            mol_fps=self.mol_fps,
-            rxn_type=self.rxn_type,
-            fp_type=self.fp_type,    
-        ) 
-        self.augs.append(self.bitaugmentor.get_one_sample_fp) 
+            mol_fps=self.mol_fps
+        )
+        aug_params = {
+            "num_neg": num_neg,
+            "return_type": "fp" if self.representation == "fingerprint" else "smi",
+            "num_bits": num_bits,
+            "increment_bits": increment_bits,
+            "strategy": strategy,
+            "rxn_type": self.rxn_type,
+            "fp_type": self.fp_type
+        }
+        self.augs.append((self.bitaugmentor.get_one_sample, aug_params))
 
     def _init_mutate(self, num_neg: int):
         logging.info("Initialising Mutate Augmentor...")
@@ -187,17 +198,20 @@ class AugmentedDataFingerprints:
             mut_smis = pickle.load(handle)
 
         self.mutaugmentor = augmentors.Mutate(
-            num_neg=num_neg,
             mut_smis=mut_smis,
             smi_to_fp_dict=self.smi_to_fp_dict,
-            mol_fps=self.mol_fps,
-            rxn_type=self.rxn_type,
-            fp_type=self.fp_type,
-            radius=self.radius,
-            fp_size=self.fp_size,
-            dtype=self.dtype,
+            mol_fps=self.mol_fps
         )
-        self.augs.append(self.mutaugmentor.get_one_sample_fp)
+        aug_params = {
+            "num_neg": num_neg,
+            "return_type": "fp" if self.representation == "fingerprint" else "smi",
+            "radius": self.radius,
+            "fp_size": self.fp_size,
+            "dtype": self.dtype,
+            "rxn_type": self.rxn_type,
+            "fp_type": self.fp_type
+        }
+        self.augs.append((self.mutaugmentor.get_one_sample, aug_params))
 
     def get_one_minibatch(self, rxn_smi: str) -> sparse_fp:
         """prepares one minibatch of fingerprints: 1 pos_rxn + K neg_rxns
@@ -209,8 +223,8 @@ class AugmentedDataFingerprints:
         pos_rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, self.rxn_type)
 
         minibatch_neg_rxn_fps = []
-        for aug in self.augs:
-            neg_rxn_fps = aug(rxn_smi)
+        for aug, aug_params in self.augs:
+            neg_rxn_fps = aug(rxn_smi, **aug_params)
             # aug_neg_rxn_smis = aug(rxn_smi)
             # aug_neg_rxn_fps = []
             # for neg_rxn_smi in aug_neg_rxn_smis:
@@ -225,11 +239,9 @@ class AugmentedDataFingerprints:
         out = sparse.hstack([pos_rxn_fp, *minibatch_neg_rxn_fps])
         return out  # spy_sparse2torch_sparse(out)
 
-
     def __getitem__(self, idx: int) -> sparse_fp:
         """Called by ReactionDatasetFingerprints.__getitem__(idx)"""
         return self.get_one_minibatch(self.rxn_smis[idx])
-
 
     def precompute_helper(self):
         if hasattr(self, "cosaugmentor"):
@@ -415,12 +427,138 @@ class ReactionDatasetFingerprints(Dataset):
         return self.data.shape[0]
 
 
+class ReactionDatasetSMILES(Dataset):
+    """Dataset class for SMILES representation of reactions"""
+    def __init__(
+        self,
+        augmentations: dict,
+        precomp_rxnsmi_filename: str,
+        fp_to_smi_dict_filename: str,
+        smi_to_fp_dict_filename: str,
+        mol_fps_filename: str,
+        rxn_smis_filename: Optional[str] = None,
+        mut_smis_filename: Optional[str] = None,
+        onthefly: bool = False,
+        rxn_type: Optional[str] = "diff",
+        fp_type: Optional[str] = "count",
+        fp_size: Optional[int] = 4096,
+        radius: Optional[int] = 3,
+        dtype: Optional[str] = "int32",
+        seed: Optional[int] = 0,
+    ):
+        model_utils.seed_everything(seed)
+
+        self.precomp_rxnsmi_filename = precomp_rxnsmi_filename
+        self.fp_to_smi_dict_filename = fp_to_smi_dict_filename
+        self.smi_to_fp_dict_filename = smi_to_fp_dict_filename
+        self.mol_fps_filename = mol_fps_filename
+        self.mut_smis_filename = mut_smis_filename
+
+        self.rxn_type = rxn_type
+        self.fp_type = fp_type
+        self.fp_size = fp_size
+        self.radius = radius
+        self.dtype = dtype
+
+        if onthefly:
+            logging.info("Generating augmentations on the fly...")
+            self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
+
+            with open(self.root / rxn_smis_filename, "rb") as handle:
+                self.rxn_smis = pickle.load(handle)
+            with open(self.root / self.smi_to_fp_dict_filename, "rb") as handle:
+                self.smi_to_fp_dict = pickle.load(handle)
+            with open(self.root / self.fp_to_smi_dict_filename, "rb") as handle:
+                self.fp_to_smi_dict = pickle.load(handle)
+            self.mol_fps = sparse.load_npz(self.root / self.mol_fps_filename)
+
+            self.augs = []  # list of callables: Augmentor.get_one_sample
+            for key, value in augmentations.items():
+                if value["num_neg"] == 0:
+                    continue
+                elif key == "cos":
+                    self._init_cosine(**value)
+                elif key == "rdm":
+                    self._init_random(**value)
+                elif key == "bit":
+                    self._init_bit(**value)
+                elif key == "mut" or key == "crem":
+                    self._init_mutate(**value)
+                else:
+                    raise ValueError('Invalid augmentation!')
+
+            self._augmented_rxn_smiles = []
+            self.precompute()
+
+        else:
+            raise NotImplementedError
+
+    def _init_random(self, num_neg: int):
+        logging.info("Initialising Random Augmentor...")
+        self.rdmaugmentor = augmentors.Random(
+            smi_to_fp_dict=self.smi_to_fp_dict,
+            fp_to_smi_dict=self.fp_to_smi_dict,
+            mol_fps=self.mol_fps
+        )
+        aug_params = {
+            "num_neg": num_neg,
+            "return_type": "smi",
+            "rxn_type": self.rxn_type,
+            "fp_type": self.fp_type
+        }
+        self.augs.append((self.rdmaugmentor.get_one_sample, aug_params))
+
+    def _init_mutate(self, num_neg: int):
+        logging.info("Initialising Mutate Augmentor...")
+        if Path(self.mut_smis_filename).suffix != ".pickle":
+            self.mut_smis_filename = str(self.mut_smis_filename) + ".pickle"
+        with open(self.root / self.mut_smis_filename, "rb") as handle:
+            mut_smis = pickle.load(handle)
+
+        self.mutaugmentor = augmentors.Mutate(
+            mut_smis=mut_smis,
+            smi_to_fp_dict=self.smi_to_fp_dict,
+            mol_fps=self.mol_fps
+        )
+        aug_params = {
+            "num_neg": num_neg,
+            "return_type": "smi",
+            "radius": self.radius,
+            "fp_size": self.fp_size,
+            "dtype": self.dtype,
+            "rxn_type": self.rxn_type,
+            "fp_type": self.fp_type
+        }
+        self.augs.append((self.mutaugmentor.get_one_sample, aug_params))
+
+    def precompute(self):
+        for rxn_smi in self.rxn_smis:
+            minibatch_smiles = [rxn_smi]
+            for aug, aug_params in self.augs:
+                neg_rxn_smiles = aug(rxn_smi, **aug_params)
+                minibatch_smiles.extend(neg_rxn_smiles)
+
+            self._augmented_rxn_smiles.append(minibatch_smiles)
+
+    def __getitem__(self, index) -> List[str]:
+        return self._augmented_rxn_smiles[index]
+
+    def __len__(self):
+        return len(self._augmented_rxn_smiles)
+
+
 if __name__ == "__main__":
+    # augmentations = {
+    #     "rdm": {"num_neg": 2},
+    #     "cos": {"num_neg": 2, "query_params": None},
+    #     "bit": {"num_neg": 2, "num_bits": 3, "increment_bits": 1},
+    #     "mut": {"num_neg": 10},
+    # }
     augmentations = {
         "rdm": {"num_neg": 2},
-        "cos": {"num_neg": 2, "query_params": None},
-        "bit": {"num_neg": 2, "num_bits": 3, "increment_bits": 1},
-        "mut": {"num_neg": 10},
+        "cos": {"num_neg": 0, "query_params": None},
+        "bit": {"num_neg": 0, "num_bits": 3, "increment_bits": 1},
+        "mut": {"num_neg": 10}
     }
 
     smi_to_fp_dict_filename = "50k_mol_smi_to_sparse_fp_idx.pickle"
@@ -429,15 +567,20 @@ if __name__ == "__main__":
     search_index_filename = "50k_cosine_count.bin"
     mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
 
-    augmented_data = dataset.AugmentedDataFingerprints(
+    rxn_smis_filename = "50k_clean_rxnsmi_noreagent_train.pickle"
+    augmented_data = dataset.ReactionDatasetSMILES(
         augmentations=augmentations,
+        fp_to_smi_dict_filename=fp_to_smi_dict_filename,
         smi_to_fp_dict_filename=smi_to_fp_dict_filename,
         mol_fps_filename=mol_fps_filename,
         search_index_filename=search_index_filename,
+        rxn_smis_filename=rxn_smis_filename,
         mut_smis_filename=mut_smis_filename,
-        seed=random_seed,
+        onthefly=True,
+        seed=12345
     )
 
+    exit(0)
     rxn_smis_file_prefix = "50k_clean_rxnsmi_noreagent"
     for phase in ["train", "valid", "test"]:
         augmented_data.precompute(
