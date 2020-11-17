@@ -525,7 +525,7 @@ class Experiment:
                                         logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
                                         break
                             except: # do nothing 
-                                logging.info('Index out of range (last minibatch)')
+                                logging.info('\nIndex out of range (last minibatch)')
                     else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                         batch_true_ranks = 0
                         curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum().item() 
@@ -609,7 +609,7 @@ class Experiment:
                                     logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}\n')
                                     break
                         except:
-                            logging.info('Index out of range (last minibatch)')
+                            logging.info('\nIndex out of range (last minibatch)')
                 else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                     batch_true_ranks = 0
                     curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum().item() 
