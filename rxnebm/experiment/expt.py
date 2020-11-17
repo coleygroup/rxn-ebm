@@ -469,7 +469,8 @@ class Experiment:
             self.model.train()
             train_loss, train_correct_preds = 0, 0
             train_loader = tqdm(self.train_loader, desc='training...')
-            for batch in train_loader:  
+            for i, batch in enumerate(train_loader):
+                if i > 10: break  
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device) 
                 curr_batch_loss, curr_batch_preds = self._one_batch(
@@ -511,15 +512,17 @@ class Experiment:
                         
                         if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                             for j in range(i * self.batch_size, (i+1) * self.batch_size):
-                                if j % (self.val_size // 4) == 0:  # peek at a random sample of current batch to monitor training progress
+                                if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
                                     sample_idx = random.sample(list(range(self.batch_size)), k=1)
+                                    sample_true_rank = batch_true_ranks_array[sample_idx][0]
+                                    sample_pred_rank = curr_batch_preds[sample_idx, 0].item() 
                                     sample_true_prod = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
                                     sample_true_precursor = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 1]  
                                     sample_cand_precursors = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
                                     sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
                                     logging.info(f'\ntrue product:   {sample_true_prod}')
-                                    logging.info(f'pred precursor: {sample_pred_precursor}')
-                                    logging.info(f'true precursor: {sample_true_precursor}')
+                                    logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
+                                    logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
                                     break
                     else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                         batch_true_ranks = 0
@@ -590,15 +593,17 @@ class Experiment:
                     curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
                     if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                         for j in range(i * self.batch_size, (i+1) * self.batch_size):
-                            if j % (self.val_size // 4) == 0:  # peek at a random sample of current batch to monitor training progress
+                            if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
                                 sample_idx = random.sample(list(range(self.batch_size)), k=1)
+                                sample_true_rank = batch_true_ranks_array[sample_idx]
+                                sample_pred_rank = curr_batch_preds[sample_idx, 0]
                                 sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
                                 sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
                                 sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
                                 sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
                                 logging.info(f'\ntrue product:   {sample_true_prod}')
-                                logging.info(f'pred precursor: {sample_pred_precursor}')
-                                logging.info(f'true precursor: {sample_true_precursor}')
+                                logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
+                                logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
                                 break
                 else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                     batch_true_ranks = 0
