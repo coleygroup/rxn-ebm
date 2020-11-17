@@ -18,6 +18,7 @@ See Appendix A for a full description of data preprocessing.
  
 ## Finetuning
 Before finetuning, ensure you have 1) the 3 CSV files 2) the 3 precomputed reaction data files (be it fingerprints, rxn_smi, graphs etc.). In terms of arguments, you additionally need to provide --old_expt_name and --date_trained (DD_MM_YYYY).
+    
     sh scripts/finetune_rdm_5_cos_5_bit_5_1_1_mut_10.sh 
 
 ## Folder organisation
