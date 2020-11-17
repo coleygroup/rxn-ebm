@@ -1,13 +1,16 @@
 import os
 import pickle
 from concurrent.futures import ProcessPoolExecutor as Pool
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
+import json
 import logging
 import scipy
 import torch
+import sys
 from scipy import sparse
 from torch.utils.data import Dataset
 from tqdm import tqdm
@@ -432,7 +435,7 @@ class ReactionDatasetSMILES(Dataset):
     def __init__(
         self,
         augmentations: dict,
-        precomp_rxnsmi_filename: str,
+        precomp_rxnsmi_filename: Optional[str],
         fp_to_smi_dict_filename: str,
         smi_to_fp_dict_filename: str,
         mol_fps_filename: str,
@@ -488,6 +491,7 @@ class ReactionDatasetSMILES(Dataset):
                     raise ValueError('Invalid augmentation!')
 
             self._augmented_rxn_smiles = []
+            self._masks = []
             self.precompute()
 
         else:
@@ -532,22 +536,43 @@ class ReactionDatasetSMILES(Dataset):
         self.augs.append((self.mutaugmentor.get_one_sample, aug_params))
 
     def precompute(self):
-        for rxn_smi in self.rxn_smis:
+        for rxn_smi in tqdm(self.rxn_smis):
             minibatch_smiles = [rxn_smi]
             for aug, aug_params in self.augs:
                 neg_rxn_smiles = aug(rxn_smi, **aug_params)
                 minibatch_smiles.extend(neg_rxn_smiles)
 
-            self._augmented_rxn_smiles.append(minibatch_smiles)
+            # crem would give empty string
+            minibatch_masks = [bool(smi) for smi in minibatch_smiles]
 
-    def __getitem__(self, index) -> List[str]:
-        return self._augmented_rxn_smiles[index]
+            self._augmented_rxn_smiles.append(minibatch_smiles)
+            self._masks.append(minibatch_masks)
+
+        # with open("augmented.json", "w") as of:
+        #     json.dump(self._augmented_rxn_smiles, of, indent=4)
+
+    def __getitem__(self, index) -> Tuple[List[str], List[bool]]:
+        return self._augmented_rxn_smiles[index], self._masks[index]
 
     def __len__(self):
         return len(self._augmented_rxn_smiles)
 
 
 if __name__ == "__main__":
+    # logger setup
+    os.makedirs("./logs", exist_ok=True)
+    dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    # logger.propagate = False
+    fh = logging.FileHandler(f"./logs/aug_log.{dt}")
+    fh.setLevel(logging.INFO)
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setLevel(logging.INFO)
+    logger.addHandler(fh)
+    logger.addHandler(sh)
+
     # augmentations = {
     #     "rdm": {"num_neg": 2},
     #     "cos": {"num_neg": 2, "query_params": None},
@@ -555,10 +580,10 @@ if __name__ == "__main__":
     #     "mut": {"num_neg": 10},
     # }
     augmentations = {
-        "rdm": {"num_neg": 2},
+        "rdm": {"num_neg": 5},
         "cos": {"num_neg": 0, "query_params": None},
         "bit": {"num_neg": 0, "num_bits": 3, "increment_bits": 1},
-        "mut": {"num_neg": 10}
+        "mut": {"num_neg": 26}
     }
 
     smi_to_fp_dict_filename = "50k_mol_smi_to_sparse_fp_idx.pickle"
@@ -568,12 +593,12 @@ if __name__ == "__main__":
     mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
 
     rxn_smis_filename = "50k_clean_rxnsmi_noreagent_train.pickle"
-    augmented_data = dataset.ReactionDatasetSMILES(
+    augmented_data = ReactionDatasetSMILES(
         augmentations=augmentations,
+        precomp_rxnsmi_filename=None,
         fp_to_smi_dict_filename=fp_to_smi_dict_filename,
         smi_to_fp_dict_filename=smi_to_fp_dict_filename,
         mol_fps_filename=mol_fps_filename,
-        search_index_filename=search_index_filename,
         rxn_smis_filename=rxn_smis_filename,
         mut_smis_filename=mut_smis_filename,
         onthefly=True,

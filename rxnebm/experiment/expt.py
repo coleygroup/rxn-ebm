@@ -12,7 +12,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm 
 
-from rxnebm.data import dataset
+from rxnebm.data import dataset, dataset_utils
 from rxnebm.experiment import expt_utils
 from rxnebm.model import model_utils
 
@@ -80,6 +80,7 @@ class Experiment:
         fp_to_smi_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         mol_fps_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         search_index_filename: Optional[Union[str, bytes, os.PathLike]] = None,
+        rxn_smis_file_prefix: Optional[Union[str, bytes, os.PathLike]] = None,
         device: Optional[str] = None,
         distributed: Optional[bool] = False,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -87,7 +88,7 @@ class Experiment:
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
         saved_stats: Optional[dict] = None,
         begin_epoch: Optional[int] = None,
-        **kwargs,
+        **kwargs
     ):
         self.batch_size = batch_size
         self.learning_rate = learning_rate
@@ -107,7 +108,7 @@ class Experiment:
             self.fp_type = fp_type
             self.rctfp_size = rctfp_size
             self.prodfp_size = prodfp_size
-            self.fp_radius = kwargs["fp_radius"] # just for record keeping purposes
+            self.fp_radius = kwargs["fp_radius"]    # just for record keeping purposes
 
         if root:
             self.root = Path(root)
@@ -157,7 +158,16 @@ class Experiment:
                 mol_fps_filename=mol_fps_filename,
                 search_index_filename=search_index_filename,
             )
-        self.energies = {} # for self.get_topk_acc
+        elif self.representation == "smiles":
+            self._init_smi_dataloaders(
+                precomp_file_prefix=None,
+                onthefly=onthefly,
+                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+                mol_fps_filename=mol_fps_filename,
+                search_index_filename=search_index_filename,
+            )
+        self.energies = {}      # for self.get_topk_acc
 
         model_utils.seed_everything(random_seed)
 
@@ -278,7 +288,7 @@ class Experiment:
         search_index_filename: str,
         rxn_smis_file_prefix: Optional[str] = None,
     ):
-        logging.info("Initialising dataloaders...")
+        logging.info("Initialising fingerprint dataloaders...")
         if "cos" in self.augmentations:
             worker_init_fn = expt_utils._worker_init_fn_nmslib
         else:
@@ -367,6 +377,83 @@ class Experiment:
         self.test_size = len(test_dataset)
         del train_dataset, val_dataset, test_dataset  # save memory
 
+    def _get_smi_dl(self,
+                    phase: str,
+                    rxn_smis_file_prefix: str,
+                    fp_to_smi_dict_filename: str,
+                    smi_to_fp_dict_filename: str,
+                    mol_fps_filename: str,
+                    mut_smis_filename: str,
+                    shuffle: bool = False):
+        rxn_smis_filename = f"{rxn_smis_file_prefix}_{phase}.pickle"
+
+        augmented_data = dataset.ReactionDatasetSMILES(
+            augmentations=self.augmentations,
+            precomp_rxnsmi_filename=None,
+            fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+            smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+            mol_fps_filename=mol_fps_filename,
+            rxn_smis_filename=rxn_smis_filename,
+            mut_smis_filename=mut_smis_filename,
+            onthefly=True,
+            seed=self.random_seed
+        )
+
+        pin_memory = True if torch.cuda.is_available() else False
+        _loader = DataLoader(
+            augmented_data,
+            self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=shuffle,
+            pin_memory=pin_memory,
+            collate_fn=dataset_utils.graph_collate_fn_builder(self.device)
+        )
+
+        _size = len(augmented_data)
+        del augmented_data
+
+        return _loader, _size
+
+    def _init_smi_dataloaders(
+        self,
+        precomp_file_prefix: Optional[str],
+        onthefly: bool,
+        fp_to_smi_dict_filename: str,
+        smi_to_fp_dict_filename: str,
+        mol_fps_filename: str,
+        mut_smis_filename: str,
+        search_index_filename: str,
+        rxn_smis_file_prefix: Optional[str] = None
+    ):
+        logging.info("Initialising SMILES dataloaders...")
+        if onthefly:
+            self.train_loader, self.train_size = self._get_smi_dl(
+                phase="train",
+                rxn_smis_file_prefix=rxn_smis_file_prefix,
+                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+                mol_fps_filename=mol_fps_filename,
+                mut_smis_filename=mut_smis_filename,
+                shuffle=True)
+            self.val_loader, self.val_size = self._get_smi_dl(
+                phase="valid",
+                rxn_smis_file_prefix=rxn_smis_file_prefix,
+                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+                mol_fps_filename=mol_fps_filename,
+                mut_smis_filename=mut_smis_filename,
+                shuffle=False)
+            self.test_loader, self.test_size = self._get_smi_dl(
+                phase="test",
+                rxn_smis_file_prefix=rxn_smis_file_prefix,
+                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+                mol_fps_filename=mol_fps_filename,
+                mut_smis_filename=mut_smis_filename,
+                shuffle=False)
+        else:
+            raise NotImplementedError
+
     def _check_earlystop(self, current_epoch):
         self.to_break = 0
         if self.min_val_loss - self.val_losses[-1] < self.early_stop_min_delta:
@@ -421,7 +508,7 @@ class Experiment:
         )
         torch.save(checkpoint_dict, checkpoint_filename)
 
-    def _one_batch(self, batch: Tensor, mask: Tensor, backprop: bool = True):
+    def _one_batch(self, batch, mask: Tensor, backprop: bool = True):
         """
         Passes one batch of samples through model to get energies & loss
         Does backprop if training 
@@ -596,7 +683,7 @@ class Experiment:
                 
                 energies = self.model(batch_data)
                 energies = torch.where(batch_mask, energies,
-                                     torch.tensor([float('inf')], device=batch_mask.device))
+                                       torch.tensor([float('inf')], device=batch_mask.device))
                 energies_combined.append(energies)
 
             energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).to(torch.device('cpu'))

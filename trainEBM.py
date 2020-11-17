@@ -34,9 +34,11 @@ def parse_args():
                         default="50k_neg150_rad2_maxsize3_mutprodsmis.pickle")
     parser.add_argument("--rxn_smis_file_prefix", help="do not change", type=str,
                         default="50k_clean_rxnsmi_noreagent")
-    parser.add_argument("--path_to_energies", help="do not change (folder to store array of energy values for train & test data)", type=str)
+    parser.add_argument("--path_to_energies",
+                        help="do not change (folder to store array of energy values for train & test data)", type=str)
     # fingerprint params
-    parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
+    parser.add_argument("--representation", help="reaction representation (fingerprint/smiles)",
+                        type=str, default="fingerprint")
     parser.add_argument("--rctfp_size", help="reactant fp size", type=int, default=4096)
     parser.add_argument("--prodfp_size", help="product fp size", type=int, default=4096)
     parser.add_argument("--fp_radius", help="fp radius", type=int, default=3)
@@ -108,13 +110,20 @@ def train(args):
     """train EBM from scratch"""
 
     # hard-coded
+    # augmentations = {
+    #     "rdm": {"num_neg": 1},
+    #     "cos": {"num_neg": 1, "query_params": None},
+    #     "bit": {"num_neg": 1, "num_bits": 1, "increment_bits": 1},
+    #     "mut": {"num_neg": 1},
+    # }
     augmentations = {
-        "rdm": {"num_neg": 1},  
-        "cos": {"num_neg": 1, "query_params": None},
-        "bit": {"num_neg": 1, "num_bits": 1, "increment_bits": 1},
-        "mut": {"num_neg": 1},
+        "rdm": {"num_neg": 5},
+        "cos": {"num_neg": 0, "query_params": None},
+        "bit": {"num_neg": 0, "num_bits": 3, "increment_bits": 1},
+        "mut": {"num_neg": 26}
     }
 
+    '''
     logging.info("Precomputing augmentation")
     augmented_data = dataset.AugmentedDataFingerprints(
         augmentations=augmentations,
@@ -132,6 +141,7 @@ def train(args):
             rxn_smis=f"{args.rxn_smis_file_prefix}_{phase}.pickle", 
             parallel=False,
         )
+    '''
 
     logging.info("Setting up model and experiment")
     model_args = FF_args
