@@ -469,8 +469,7 @@ class Experiment:
             self.model.train()
             train_loss, train_correct_preds = 0, 0
             train_loader = tqdm(self.train_loader, desc='training...')
-            for i, batch in enumerate(train_loader):
-                if i > 10: break  
+            for batch in train_loader: 
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device) 
                 curr_batch_loss, curr_batch_preds = self._one_batch(

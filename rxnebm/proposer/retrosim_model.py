@@ -114,8 +114,7 @@ class Retrosim:
 
         self.parallelize = parallelize
 
-        self._prep_training_corpus()
-        self._prep_valid_and_test_data()
+        self._prep_training_corpus() 
 
     def _prep_training_corpus(self) -> None:
         ''' 
@@ -197,7 +196,9 @@ class Retrosim:
         self.rcts_smiles = rcts_smiles
         self.all_prod_smiles = all_prod_smiles
 
-    def _prep_valid_and_test_data(self) -> None:
+    def prep_valid_and_test_data(self,
+                                input_data_folder: Optional[Union[str, bytes, os.PathLike]] = None, 
+                                input_data_file_prefix: Optional[str] = None) -> None:
         ''' 
         Needs self._prep_training_corpus() to have executed first! 
         Sets:
@@ -214,7 +215,11 @@ class Retrosim:
         for phase in self.phases:
             phase_rxn_smi_remove_atom_map, phase_prod_smis, phase_rcts_smis = [], [], []
             
-            with open(self.input_folder / f'{self.input_prefix}_{phase}.pickle', 'rb') as handle:
+            if input_data_folder is None:
+                input_data_folder = self.input_folder
+            if input_data_file_prefix is None:
+                input_data_file_prefix = self.input_prefix
+            with open(input_data_folder / f'{input_data_file_prefix}_{phase}.pickle', 'rb') as handle:
                 clean_50k[phase] = pickle.load(handle) 
 
             for rxn_smi in tqdm(clean_50k[phase], desc=f'Processing {phase}'):                     
@@ -311,46 +316,52 @@ class Retrosim:
 
         Sets self.all_proposed_smiles upon successful execution 
         '''
-        all_proposed_smiles = {}
-        if self.parallelize: 
-            # TODO: see if this can also be checkpointed from inside self.propose_one_helper() 
-            try:
-                num_workers = len(os.sched_getaffinity(0))
-            except AttributeError:
-                num_workers = os.cpu_count()
-            print(f"Parallelizing over {num_workers} cores")
-            results = {} 
-            output_dicts = Parallel(n_jobs=num_workers, verbose=5)(
-                    delayed(self.propose_one_helper)(
-                            prod_smi, results, self.topk, self.max_prec
-                        ) 
-                    for prod_smi in self.all_prod_smiles
-                )
-            for output_dict in output_dicts:
-                all_proposed_smiles.update(output_dict)
+        if (self.output_folder / 
+            f'all_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle'
+            ).exists(): # file already exists
+            self.all_proposed_smiles = pickle.load(handle)
+            self._compile_into_csv() 
+        
         else:
-            for i, prod_smi in enumerate(tqdm(self.all_prod_smiles, desc="Generating Retrosim's Proposals...")):
-                if prod_smi in all_proposed_smiles and len(all_proposed_smiles[prod_smi]) > 0:
-                    continue # no need to repeat calculation 
+            all_proposed_smiles = {}
+            if self.parallelize: 
+                # TODO: see if this can also be checkpointed from inside self.propose_one_helper() 
+                try:
+                    num_workers = len(os.sched_getaffinity(0))
+                except AttributeError:
+                    num_workers = os.cpu_count()
+                print(f"Parallelizing over {num_workers} cores")
+                results = {} 
+                output_dicts = Parallel(n_jobs=num_workers, verbose=5)(
+                        delayed(self.propose_one_helper)(
+                                prod_smi, results, self.topk, self.max_prec
+                            ) 
+                        for prod_smi in self.all_prod_smiles
+                    )
+                for output_dict in output_dicts:
+                    all_proposed_smiles.update(output_dict)
+            else:
+                for i, prod_smi in enumerate(tqdm(self.all_prod_smiles, desc="Generating Retrosim's Proposals...")):
+                    if prod_smi in all_proposed_smiles and len(all_proposed_smiles[prod_smi]) > 0:
+                        continue # no need to repeat calculation 
 
-                all_proposed_smiles[prod_smi] = self.propose_one(prod_smi, self.topk, self.max_prec)
+                    all_proposed_smiles[prod_smi] = self.propose_one(prod_smi, self.topk, self.max_prec)
 
-                if i % 4000 == 0: # checkpoint temporary files
-                    with open(self.output_folder / f'all_proposed_smiles_{i}.pickle', 'wb') as handle:
-                        pickle.dump(all_proposed_smiles, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                    if i % 4000 == 0: # checkpoint temporary files
+                        with open(self.output_folder / f'all_proposed_smiles_{i}.pickle', 'wb') as handle:
+                            pickle.dump(all_proposed_smiles, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                    
+            with open(
+                    self.output_folder / 
+                    f'all_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle', 'wb'
+                ) as handle:
+                pickle.dump(all_proposed_smiles, handle, protocol=pickle.HIGHEST_PROTOCOL)
                 
-        with open(
-                self.output_folder / 
-                f'all_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle', 'wb'
-            ) as handle:
-            pickle.dump(all_proposed_smiles, handle, protocol=pickle.HIGHEST_PROTOCOL)
-            
-        with open(self.input_folder / 'jx_cache.pickle', 'wb') as handle:
-            pickle.dump(jx_cache, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            with open(self.input_folder / 'jx_cache.pickle', 'wb') as handle:
+                pickle.dump(jx_cache, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-        self.all_proposed_smiles = all_proposed_smiles
-
-        self._compile_into_csv() 
+            self.all_proposed_smiles = all_proposed_smiles
+            self._compile_into_csv() 
 
     def _compile_into_csv(self):
         '''
@@ -521,5 +532,6 @@ class Retrosim:
 if __name__ == '__main__': 
     retrosim_model = Retrosim(topk=200, max_prec=200, similarity_type='Tanimoto',
                             fp_type='Morgan2Feat')
+    retrosim_model.prep_valid_and_test_data(input_data_file_prefix='50k_clean_rxnsmi_noreagent_allmapped')
     retrosim_model.propose_all()
     retrosim_model.analyse_proposed() 
