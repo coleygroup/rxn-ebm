@@ -396,7 +396,7 @@ class Experiment:
                 self.to_break = 1  # will break loop
             else:
                 self.wait += 1
-                logging.info(f"Decrease in val loss < early stop min delta, patience count: {self.wait}")
+                logging.info(f"\nDecrease in val loss < early stop min delta, patience count: {self.wait}")
         else:
             self.wait = 0
             self.min_val_loss = min(self.min_val_loss, self.val_losses[-1])
@@ -510,19 +510,22 @@ class Experiment:
                         curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
                         
                         if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                            for j in range(i * self.batch_size, (i+1) * self.batch_size):
-                                if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
-                                    sample_idx = random.sample(list(range(self.batch_size)), k=1)
-                                    sample_true_rank = batch_true_ranks_array[sample_idx][0]
-                                    sample_pred_rank = curr_batch_preds[sample_idx, 0].item() 
-                                    sample_true_prod = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
-                                    sample_true_precursor = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 1]  
-                                    sample_cand_precursors = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
-                                    sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
-                                    logging.info(f'\ntrue product:   {sample_true_prod}')
-                                    logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
-                                    logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
-                                    break
+                            try:
+                                for j in range(i * self.batch_size, (i+1) * self.batch_size):
+                                    if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                                        sample_idx = random.sample(list(range(self.batch_size)), k=1)
+                                        sample_true_rank = batch_true_ranks_array[sample_idx][0]
+                                        sample_pred_rank = curr_batch_preds[sample_idx, 0].item() 
+                                        sample_true_prod = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
+                                        sample_true_precursor = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 1]  
+                                        sample_cand_precursors = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
+                                        sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
+                                        logging.info(f'\ntrue product:   {sample_true_prod}')
+                                        logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
+                                        logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
+                                        break
+                            except: # do nothing 
+                                logging.info('Index out of range (last minibatch)')
                     else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                         batch_true_ranks = 0
                         curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum().item() 
@@ -591,19 +594,22 @@ class Experiment:
                     loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
                     curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
                     if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                        for j in range(i * self.batch_size, (i+1) * self.batch_size):
-                            if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
-                                sample_idx = random.sample(list(range(self.batch_size)), k=1)
-                                sample_true_rank = batch_true_ranks_array[sample_idx]
-                                sample_pred_rank = curr_batch_preds[sample_idx, 0]
-                                sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
-                                sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
-                                sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
-                                sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
-                                logging.info(f'\ntrue product:   {sample_true_prod}')
-                                logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
-                                logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
-                                break
+                        try:
+                            for j in range(i * self.batch_size, (i+1) * self.batch_size):
+                                if j % (self.test_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                                    sample_idx = random.sample(list(range(self.batch_size)), k=1)
+                                    sample_true_rank = batch_true_ranks_array[sample_idx][0]
+                                    sample_pred_rank = curr_batch_preds[sample_idx, 0].item()
+                                    sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
+                                    sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
+                                    sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
+                                    sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
+                                    logging.info(f'\ntrue product:   {sample_true_prod}')
+                                    logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
+                                    logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}\n')
+                                    break
+                        except:
+                            logging.info('Index out of range (last minibatch)')
                 else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                     batch_true_ranks = 0
                     curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum().item() 
