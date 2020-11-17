@@ -30,6 +30,20 @@ urls_fns = [
      "50k_rdm_5_cos_5_bit_5_1_1_mut_10_valid.npz"),
     ("https://drive.google.com/uc?id=13DwNxixNp_ylOTuA047mZSTgTCKL9WYm",
      "50k_rdm_5_cos_5_bit_5_1_1_mut_10_test.npz")
+    # retrosim CSV files
+    ("https://drive.google.com/uc?id=15Le31UeYosYXC7-9PXG2tu7jAP2lY2cY",
+     "retrosim_200maxtest_200maxprec_train.csv"),
+    ("https://drive.google.com/uc?id=1-QkcmuLXxAI-lRbUdZ5c0mYDevz0x47d",
+     "retrosim_200maxtest_200maxprec_valid.csv"),
+    ("https://drive.google.com/uc?id=1DQi_dXs2l8rrPae6zQdAWsKXvkSreTlg",
+     "retrosim_200maxtest_200maxprec_test.csv")
+    # retrosim rxn fp files
+    ("https://drive.google.com/uc?id=1mBp6eBYr9InGf1bPdyM9wyJyuCUt_fdB",
+     "retrosim_rxn_fps_train.npz"),
+    ("https://drive.google.com/uc?id=1KmKGfOSYs4HU5hpPGvvP5BaAj85iQKD4",
+     "retrosim_rxn_fps_valid.npz"),
+    ("https://drive.google.com/uc?id=1JzbyLC74N8r3O6ULGC26t_hmFfLZ3FTe",
+     "retrosim_rxn_fps_test.npz")
 ]
 output = "./rxnebm/data/cleaned_data/"
 
