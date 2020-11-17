@@ -319,7 +319,7 @@ class Experiment:
                 precomp_filenames[phase] = precomp_file_prefix + f"_{phase}.npz"
         
         if proposals_csv_file_prefix is not None:
-            for phase in ['train', 'valid', 'test']:
+            for phase in ['valid', 'test']:
                 proposals_csv_filenames[phase] = proposals_csv_file_prefix + f"_{phase}.csv"
 
         if self.rxn_type == "sep":
@@ -469,14 +469,14 @@ class Experiment:
             self.model.train()
             train_loss, train_correct_preds = 0, 0
             train_loader = tqdm(self.train_loader, desc='training...')
-            for i, batch in enumerate(train_loader): 
+            for batch in train_loader:  
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device) 
                 curr_batch_loss, curr_batch_preds = self._one_batch(
                     batch_data, batch_mask, backprop=True
                 ) 
                 # for training, true rxn is always at 0th-index 
-                curr_batch_correct_preds = torch.where(curr_batch_preds.cpu() == 0)[0].shape[0]
+                curr_batch_correct_preds = torch.where(curr_batch_preds.cpu() == 0)[0].shape[0] 
                 train_loader.set_description(f"training...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
                 train_loader.refresh()  
                 train_loss += curr_batch_loss 
@@ -486,51 +486,52 @@ class Experiment:
 
             # validation
             self.model.eval()
-            val_loss, val_correct_preds = 0, 0
-            val_loader = tqdm(self.val_loader, desc='validating...')
-            for i, batch in enumerate(val_loader):
-                batch_data = batch[0].to(self.device)
-                batch_mask = batch[1].to(self.device)
-                curr_batch_energies, curr_batch_preds = self._one_batch(
-                    batch_data, batch_mask, backprop=False
-                ) 
-                curr_batch_energies, curr_batch_preds = curr_batch_energies.cpu(), curr_batch_preds.cpu()
-                # for validation/test data, true rxn may not be present! 
-                if self.val_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
-                    batch_idx = batch[2]
-                    batch_true_ranks_array = self.val_loader.dataset.proposals_data[batch_idx, 2].astype('int')
-                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
-                    loss_numerator = curr_batch_energies[
-                                                            np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
-                                                            batch_true_ranks_array[batch_true_ranks_array != 9999]
-                                                        ]
-                    loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
-                    curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
-                    
-                    if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                        for j in range(i * self.batch_size, (i+1) * self.batch_size):
-                            if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
-                                sample_idx = random.sample(list(range(self.batch_size)), k=1)
-                                sample_true_prod = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
-                                sample_true_precursor = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 1]  
-                                sample_cand_precursors = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
-                                sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
-                                logging.info(f'true product: {sample_true_prod}')
-                                logging.info(f'predicted precursor: {sample_pred_precursor}')
-                                logging.info(f'true precursor: {sample_true_precursor}')
-                                break
-                else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
-                    batch_true_ranks = 0
-                    curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum()
-            
-                curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0]
-                val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
-                val_loader.refresh()  
-                val_loss += curr_batch_loss
-                val_correct_preds += curr_batch_correct_preds
-            self.val_accs.append(val_correct_preds / self.val_size)
-            self.val_losses.append(val_loss / self.val_size)
+            with torch.no_grad(): 
+                val_loss, val_correct_preds = 0, 0
+                val_loader = tqdm(self.val_loader, desc='validating...')
+                for i, batch in enumerate(val_loader):
+                    batch_data = batch[0].to(self.device)
+                    batch_mask = batch[1].to(self.device)
+                    curr_batch_energies, curr_batch_preds = self._one_batch(
+                        batch_data, batch_mask, backprop=False
+                    ) 
+                    curr_batch_energies, curr_batch_preds = curr_batch_energies.cpu(), curr_batch_preds.cpu()
+                    # for validation/test data, true rxn may not be present! 
+                    if self.val_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
+                        batch_idx = batch[2]
+                        batch_true_ranks_array = self.val_loader.dataset.proposals_data[batch_idx, 2].astype('int')
+                        batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                        # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
+                        loss_numerator = curr_batch_energies[
+                                                                np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
+                                                                batch_true_ranks_array[batch_true_ranks_array != 9999]
+                                                            ]
+                        loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
+                        curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
+                        
+                        if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                            for j in range(i * self.batch_size, (i+1) * self.batch_size):
+                                if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                                    sample_idx = random.sample(list(range(self.batch_size)), k=1)
+                                    sample_true_prod = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
+                                    sample_true_precursor = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 1]  
+                                    sample_cand_precursors = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
+                                    sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
+                                    logging.info(f'true product: {sample_true_prod}')
+                                    logging.info(f'predicted precursor: {sample_pred_precursor}')
+                                    logging.info(f'true precursor: {sample_true_precursor}')
+                                    break
+                    else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
+                        batch_true_ranks = 0
+                        curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum().item() 
+                
+                    curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0] 
+                    val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
+                    val_loader.refresh()  
+                    val_loss += curr_batch_loss 
+                    val_correct_preds += curr_batch_correct_preds
+                self.val_accs.append(val_correct_preds / self.val_size)
+                self.val_losses.append(val_loss / self.val_size)
 
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step(self.val_losses[-1])
@@ -567,46 +568,47 @@ class Experiment:
         self.model.eval()
         test_loss, test_correct_preds = 0, 0
         test_loader = tqdm(self.test_loader, desc='testing...')
-        for i, batch in enumerate(test_loader):
-            batch_data = batch[0].to(self.device)
-            batch_mask = batch[1].to(self.device)
-            curr_batch_energies, curr_batch_preds = self._one_batch(
-                batch_data, batch_mask, backprop=False
-            )
-            curr_batch_energies, curr_batch_preds = curr_batch_energies.cpu(), curr_batch_preds.cpu()
-            # for validation/test data, true rxn may not be present! 
-            if self.test_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
-                batch_idx = batch[2]
-                batch_true_ranks_array = self.test_loader.dataset.proposals_data[batch_idx, 2].astype('int')  
-                batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
-                loss_numerator = curr_batch_energies[
-                                                        np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
-                                                        batch_true_ranks_array[batch_true_ranks_array != 9999]
-                                                    ]
-                loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
-                curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
-                if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                    for j in range(i * self.batch_size, (i+1) * self.batch_size):
-                        if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
-                            sample_idx = random.sample(list(range(self.batch_size)), k=1)
-                            sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
-                            sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
-                            sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
-                            sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
-                            logging.info(f'true product: {sample_true_prod}')
-                            logging.info(f'predicted precursor: {sample_pred_precursor}')
-                            logging.info(f'true precursor: {sample_true_precursor}')
-                            break
-            else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
-                batch_true_ranks = 0
-                curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum()
+        with torch.no_grad():
+            for i, batch in enumerate(test_loader):
+                batch_data = batch[0].to(self.device)
+                batch_mask = batch[1].to(self.device)
+                curr_batch_energies, curr_batch_preds = self._one_batch(
+                    batch_data, batch_mask, backprop=False
+                )
+                curr_batch_energies, curr_batch_preds = curr_batch_energies.cpu(), curr_batch_preds.cpu()
+                # for validation/test data, true rxn may not be present! 
+                if self.test_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
+                    batch_idx = batch[2]
+                    batch_true_ranks_array = self.test_loader.dataset.proposals_data[batch_idx, 2].astype('int')  
+                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
+                    loss_numerator = curr_batch_energies[
+                                                            np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
+                                                            batch_true_ranks_array[batch_true_ranks_array != 9999]
+                                                        ]
+                    loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
+                    curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
+                    if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                        for j in range(i * self.batch_size, (i+1) * self.batch_size):
+                            if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                                sample_idx = random.sample(list(range(self.batch_size)), k=1)
+                                sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
+                                sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
+                                sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
+                                sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
+                                logging.info(f'true product: {sample_true_prod}')
+                                logging.info(f'predicted precursor: {sample_pred_precursor}')
+                                logging.info(f'true precursor: {sample_true_precursor}')
+                                break
+                else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
+                    batch_true_ranks = 0
+                    curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum().item() 
 
-            curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0]
-            test_loss += curr_batch_loss
-            test_correct_preds += curr_batch_correct_preds
-            test_loader.set_description(f"testing...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
-            test_loader.refresh() 
+                curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0] 
+                test_loss += curr_batch_loss 
+                test_correct_preds += curr_batch_correct_preds
+                test_loader.set_description(f"testing...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
+                test_loader.refresh() 
 
         if saved_stats:
             self.stats = saved_stats
