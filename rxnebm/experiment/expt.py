@@ -511,14 +511,14 @@ class Experiment:
                         
                         if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                             for j in range(i * self.batch_size, (i+1) * self.batch_size):
-                                if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                                if j % (self.val_size // 4) == 0:  # peek at a random sample of current batch to monitor training progress
                                     sample_idx = random.sample(list(range(self.batch_size)), k=1)
                                     sample_true_prod = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
                                     sample_true_precursor = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 1]  
                                     sample_cand_precursors = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
                                     sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
-                                    logging.info(f'true product: {sample_true_prod}')
-                                    logging.info(f'predicted precursor: {sample_pred_precursor}')
+                                    logging.info(f'\ntrue product:   {sample_true_prod}')
+                                    logging.info(f'pred precursor: {sample_pred_precursor}')
                                     logging.info(f'true precursor: {sample_true_precursor}')
                                     break
                     else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
@@ -590,14 +590,14 @@ class Experiment:
                     curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
                     if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                         for j in range(i * self.batch_size, (i+1) * self.batch_size):
-                            if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                            if j % (self.val_size // 4) == 0:  # peek at a random sample of current batch to monitor training progress
                                 sample_idx = random.sample(list(range(self.batch_size)), k=1)
                                 sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
                                 sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
                                 sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
                                 sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
-                                logging.info(f'true product: {sample_true_prod}')
-                                logging.info(f'predicted precursor: {sample_pred_precursor}')
+                                logging.info(f'\ntrue product:   {sample_true_prod}')
+                                logging.info(f'pred precursor: {sample_pred_precursor}')
                                 logging.info(f'true precursor: {sample_true_precursor}')
                                 break
                 else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
@@ -716,7 +716,7 @@ class Experiment:
 
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).to(torch.device('cpu'))
 
-                loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum()
+                loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item() 
             
             if phase == "custom":
                 loss /= custom_dataset_len
@@ -726,7 +726,7 @@ class Experiment:
                 loss /= self.train_size
             elif phase == "val":
                 loss /= self.val_size
-            logging.info(f"Loss on {phase} : {loss.item():.6f}")
+            logging.info(f"Loss on {phase} : {loss:.4f}")
 
         if path_to_energies is None:
             path_to_energies = Path(__file__).resolve().parents[1] / "energies"
@@ -740,10 +740,11 @@ class Experiment:
 
         if phase not in self.energies:
             self.energies[phase] = energies_combined
+            self.true_ranks[phase] = true_ranks.unsqueeze(dim=-1)
             if phase == 'train':
                 self.stats["train_loss_nodropout"] = loss
         
-        if finetune:
+        if finetune and phase != 'train':
             return energies_combined, loss, true_ranks
         else:
             return energies_combined, loss
@@ -788,9 +789,7 @@ class Experiment:
             if phase not in self.energies:
                 energies, loss, true_ranks = self.get_energies_and_loss(
                     phase=phase, finetune=True, custom_dataloader=custom_dataloader
-                )
-                self.energies[phase] = energies
-                self.true_ranks[phase] = true_ranks
+                ) 
             
             if self.energies[phase].shape[1] > k: 
                 pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
@@ -799,7 +798,7 @@ class Experiment:
                 self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase} (finetune): {topk_accuracy}") 
+                logging.info(f"Top-{k} accuracy on {phase} (finetune): {topk_accuracy:.4f}") 
             else:
                 logging.info(f'{k} out of range for dimension 1 on {phase} (finetune')
 
@@ -819,6 +818,6 @@ class Experiment:
                 self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase}: {topk_accuracy}") 
+                logging.info(f"Top-{k} accuracy on {phase}: {topk_accuracy:.4f}") 
             else:
                 logging.info(f'{k} out of range for dimension 1 on {phase}')
