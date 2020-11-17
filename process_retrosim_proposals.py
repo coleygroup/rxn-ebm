@@ -77,6 +77,7 @@ def main(args):
             print('Could not find proposals CSV file by retrosim; generating them now! (Can take up to 25 hours!!!)')
             retrosim_model = retrosim_model.Retrosim(topk=topk, max_prec=max_prec, similarity_type=similarity_type,
                                     input_data_file_prefix=rxn_smi_file_prefix, fp_type=fp_type, parallelize=parallelize)
+            retrosim_model.prep_valid_and_test_data()
             retrosim_model.propose_all()
             retrosim_model.analyse_proposed() 
             break # propose_all() settles all 3 of train, valid & test
@@ -89,15 +90,6 @@ def main(args):
         proposals = proposals.fillna('9999') 
         proposals_trimmed = proposals.drop(['orig_rxn_smi', 'rank_of_true_precursor'], axis=1)
         proposals_numpy = proposals_trimmed.values
-        
-        # max_col = float('-inf') # marker to keep track of longest # of cols needed in sparse matrix (just a convenience func to reduce matrix size IF possible)
-        # for row_idx, row in enumerate(proposals_numpy):
-        #     for i, precursor in enumerate(row[1:]):
-        #         if str(precursor) == '9999':
-        #             this_max_col = i
-        #             break  
-        #     max_col = max(this_max_col, max_col)
-        # print(f'Checked max non N/A columns! Found max non N/A col: {max_col}')
 
         processed_rxn_smis = []
         for row in proposals_numpy:

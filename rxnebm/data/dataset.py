@@ -289,13 +289,13 @@ class AugmentedDataFingerprints:
             if i > 0 and i % 19000 == 0: # checkpoint
                 diff_fps_stacked = sparse.vstack(diff_fps)
                 diff_fps_stacked = diff_fps_stacked.tocsr(copy=False) 
-                sparse.save_npz(self.root / f"{Path(output_filename).stem()}_{i}.npz", diff_fps_stacked)
+                sparse.save_npz(self.root / f"{Path(output_filename).stem}_{i}.npz", diff_fps_stacked)
                 diff_fps = [] # reset diff_fps list
                 del diff_fps_stacked
 
         diff_fps_stacked = sparse.vstack(diff_fps)  # last chunk
         diff_fps_stacked = diff_fps_stacked.tocsr(copy=False) 
-        sparse.save_npz(self.root / f"{Path(output_filename).stem()}_{i}.npz", diff_fps_stacked)
+        sparse.save_npz(self.root / f"{Path(output_filename).stem}_{i}.npz", diff_fps_stacked)
         return
 
     def precompute(
