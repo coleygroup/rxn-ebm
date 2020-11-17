@@ -4,7 +4,6 @@ from concurrent.futures import ProcessPoolExecutor as Pool
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
-import pandas as pd
 import numpy as np
 import logging
 import scipy
@@ -249,54 +248,9 @@ class AugmentedDataFingerprints:
                     self.cosaugmentor.search_index.setQueryTimeParams({"efSearch": 100})
 
         out = []
-        for i in tqdm(range(len(self.rxn_smis)), desc='Precomputing rxn_fps...'):
+        for i in tqdm(range(len(self.rxn_smis))):
             out.append(self[i])
         return out
-
-    def precompute_light_memory(
-        self,
-        output_filename: str,
-        rxn_smis: Union[List[str], Union[str, bytes, os.PathLike]], 
-    ):    
-        self.load_smis(rxn_smis)
-
-        if (self.root / output_filename).exists():
-            logging.info(f"{self.root / output_filename} already exists!")
-            return
-        else:
-            logging.info("Precomputing...")
- 
-        logging.info("Running light memory version...not parallelizing!")
-        if hasattr(self, "cosaugmentor"):
-            if self.cosaugmentor.search_index is None:
-                self.cosaugmentor.search_index = nmslib.init(
-                    method="hnsw",
-                    space="cosinesimil_sparse",
-                    data_type=nmslib.DataType.SPARSE_VECTOR,
-                )
-                self.cosaugmentor.search_index.loadIndex(
-                    str(self.root / self.search_index_filename), load_data=True
-                )
-                if self.query_params is not None:
-                    self.cosaugmentor.search_index.setQueryTimeParams(self.query_params)
-                else:
-                    self.cosaugmentor.search_index.setQueryTimeParams({"efSearch": 100})
-
-        diff_fps = []
-        for i in tqdm(range(len(self.rxn_smis)), desc='Precomputing rxn_fps...'):
-            diff_fps.append(self[i])
-
-            if i > 0 and i % 19000 == 0: # checkpoint
-                diff_fps_stacked = sparse.vstack(diff_fps)
-                diff_fps_stacked = diff_fps_stacked.tocsr(copy=False) 
-                sparse.save_npz(self.root / f"output_filename_{i}.npz", diff_fps_stacked)
-                diff_fps = [] # reset diff_fps list
-                del diff_fps_stacked
-
-        diff_fps_stacked = sparse.vstack(diff_fps)  # last chunk
-        diff_fps_stacked = diff_fps_stacked.tocsr(copy=False) 
-        sparse.save_npz(self.root / f"output_filename_{i}.npz", diff_fps_stacked)
-        return
 
     def precompute(
         self,
@@ -342,27 +296,15 @@ class AugmentedDataFingerprints:
         
         else:
             logging.info("Not parallelizing!")
-            if hasattr(self, "cosaugmentor"):
-                if self.cosaugmentor.search_index is None:
-                    self.cosaugmentor.search_index = nmslib.init(
-                        method="hnsw",
-                        space="cosinesimil_sparse",
-                        data_type=nmslib.DataType.SPARSE_VECTOR,
-                    )
-                    self.cosaugmentor.search_index.loadIndex(
-                        str(self.root / self.search_index_filename), load_data=True
-                    )
-                    if self.query_params is not None:
-                        self.cosaugmentor.search_index.setQueryTimeParams(self.query_params)
-                    else:
-                        self.cosaugmentor.search_index.setQueryTimeParams({"efSearch": 100})
+            
+            diff_fps = self.precompute_helper()
 
-            diff_fps = []
-            for i in tqdm(range(len(self.rxn_smis)), desc='Precomputing rxn_fps...'):
-                diff_fps.append(self[i])
-
-        diff_fps_stacked = sparse.vstack(diff_fps, format='csr', dtype='int32')   
-        sparse.save_npz(self.root / output_filename, diff_fps_stacked)
+        diff_fps = sparse.vstack(diff_fps)  # COO format
+        try:
+            diff_fps = diff_fps.tocsr(copy=False)
+        except:
+            logging.info('Could not convert to csr format')
+        sparse.save_npz(self.root / output_filename, diff_fps)
         return
 
     def load_smis(self, rxn_smis: Union[List[str], Union[str, bytes, os.PathLike]]):
@@ -409,7 +351,7 @@ class ReactionDatasetFingerprints(Dataset):
     ----------
     onthefly : bool (Default = False)
         whether to generate augmentations on the fly
-        if precomp_rxn_fp_filename is given, loading that file takes priority
+        if pre-computed filename is given, loading that file takes priority
     """
 
     def __init__(
@@ -421,7 +363,6 @@ class ReactionDatasetFingerprints(Dataset):
         augmented_data: Optional[AugmentedDataFingerprints] = None,
         query_params: Optional[dict] = None,
         search_index_filename: Optional[str] = None,
-        proposals_csv_filename: Optional[str] = None, 
         root: Optional[str] = None,
         viz_neg: Optional[bool] = False,
     ):
@@ -452,13 +393,6 @@ class ReactionDatasetFingerprints(Dataset):
                 "Please provide precomp_rxnfp_filename or set onthefly = True!"
             )
 
-        if proposals_csv_filename is not '' and proposals_csv_filename is not None: # load csv file generated by gen_retrosim_proposals.py, only necessary for valid & test  
-            self.proposals_data = pd.read_csv(root / proposals_csv_filename, index_col=None, dtype='str')
-            # self.proposals_data.rank_of_true_precursor = self.proposals_data.rank_of_true_precursor.astype('int')
-            self.proposals_data = self.proposals_data.drop(['orig_rxn_smi'], axis=1).values 
-        else:
-            self.proposals_data = None
-
     def __getitem__(self, idx: Union[int, Tensor]) -> Tuple[Tensor, Tensor]:
         """Returns tuple of minibatch & boolean mask
 
@@ -475,7 +409,7 @@ class ReactionDatasetFingerprints(Dataset):
         )
         mask = torch.sum(rxn_smi_fps.bool(), axis=1).bool()
 
-        return rxn_smi_fps.float(), mask, idx # return idx for retrieving SMILES from rxn_smi_data 
+        return rxn_smi_fps.float(), mask
 
     def __len__(self):
         return self.data.shape[0]

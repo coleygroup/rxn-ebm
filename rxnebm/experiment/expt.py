@@ -71,7 +71,9 @@ class Experiment:
         lr_scheduler: Optional[str] = None,
         lr_scheduler_factor: Optional[float] = 0.3,
         lr_scheduler_patience: Optional[int] = 1, 
+        proposals_csv_file_prefix: Optional[str] = None,
         onthefly: Optional[bool] = False,
+        rxn_smis_file_prefix: Optional[str] = None,
         rxn_type: Optional[str] = None,
         fp_type: Optional[str] = None,
         rctfp_size: Optional[int] = None,
@@ -80,6 +82,7 @@ class Experiment:
         fp_to_smi_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         mol_fps_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         search_index_filename: Optional[Union[str, bytes, os.PathLike]] = None,
+        debug: Optional[bool] = True, 
         device: Optional[str] = None,
         distributed: Optional[bool] = False,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -89,6 +92,7 @@ class Experiment:
         begin_epoch: Optional[int] = None,
         **kwargs,
     ):
+        self.debug = debug
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.epochs = epochs
@@ -151,13 +155,16 @@ class Experiment:
         if self.representation == 'fingerprint':
             self._init_fp_dataloaders(
                 precomp_file_prefix=precomp_file_prefix,
+                proposals_csv_file_prefix=proposals_csv_file_prefix,
                 onthefly=onthefly,
                 smi_to_fp_dict_filename=smi_to_fp_dict_filename,
                 fp_to_smi_dict_filename=fp_to_smi_dict_filename,
                 mol_fps_filename=mol_fps_filename,
                 search_index_filename=search_index_filename,
+                rxn_smis_file_prefix=rxn_smis_file_prefix,
             )
         self.energies = {} # for self.get_topk_acc
+        self.true_ranks = {} # for self.get_topk_acc (finetuning)
 
         model_utils.seed_everything(random_seed)
 
@@ -277,6 +284,7 @@ class Experiment:
         mol_fps_filename: str,
         search_index_filename: str,
         rxn_smis_file_prefix: Optional[str] = None,
+        proposals_csv_file_prefix: Optional[str] = None,
     ):
         logging.info("Initialising dataloaders...")
         if "cos" in self.augmentations:
@@ -286,6 +294,7 @@ class Experiment:
 
         rxn_smis_filenames = defaultdict(str)
         precomp_filenames = defaultdict(str)
+        proposals_csv_filenames = defaultdict(str)
         if onthefly:
             augmented_data = dataset.AugmentedDataFingerprints(
                 self.augmentations,
@@ -308,6 +317,10 @@ class Experiment:
                 "test",
             ]:  # precomp_file_prefix = '50k_count_rdm_5'
                 precomp_filenames[phase] = precomp_file_prefix + f"_{phase}.npz"
+        
+        if proposals_csv_file_prefix is not None:
+            for phase in ['train', 'valid', 'test']:
+                proposals_csv_filenames[phase] = proposals_csv_file_prefix + f"_{phase}.csv"
 
         if self.rxn_type == "sep":
             input_dim = self.rctfp_size + self.prodfp_size
@@ -318,6 +331,7 @@ class Experiment:
         train_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
             precomp_rxnfp_filename=precomp_filenames["train"],
+            proposals_csv_filename=proposals_csv_filenames["train"],
             rxn_smis_filename=rxn_smis_filenames["train"],
             onthefly=onthefly,
             augmented_data=augmented_data,
@@ -335,6 +349,7 @@ class Experiment:
         val_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
             precomp_rxnfp_filename=precomp_filenames["valid"],
+            proposals_csv_filename=proposals_csv_filenames["valid"],
             rxn_smis_filename=rxn_smis_filenames["valid"],
             onthefly=onthefly,
             augmented_data=augmented_data,
@@ -352,6 +367,7 @@ class Experiment:
         test_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
             precomp_rxnfp_filename=precomp_filenames["test"],
+            proposals_csv_filename=proposals_csv_filenames["test"],
             rxn_smis_filename=rxn_smis_filenames["test"],
             onthefly=onthefly,
             augmented_data=augmented_data,
@@ -365,7 +381,7 @@ class Experiment:
             pin_memory=pin_memory,
         )
         self.test_size = len(test_dataset)
-        del train_dataset, val_dataset, test_dataset  # save memory
+        del train_dataset, val_dataset, test_dataset  
 
     def _check_earlystop(self, current_epoch):
         self.to_break = 0
@@ -432,20 +448,20 @@ class Experiment:
 
         # replace all-zero vectors with float('inf'), making those gradients 0 on backprop
         energies = torch.where(mask, energies, torch.tensor([float('inf')], device=mask.device))
- 
-        # positives are the 0-th index of each sample
-        loss = (energies[:, 0] + torch.logsumexp(-energies, dim=1)).sum()
+        # index with lowest energy is what the model deems to be the most feasible rxn
+        pred_labels = torch.topk(energies, k=1, dim=1, largest=False)[1] 
 
         if backprop:
+            # for training only: positives are the 0-th index of each sample
+            loss = (energies[:, 0] + torch.logsumexp(-energies, dim=1)).sum()
+
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
-        # index with lowest energy is the most feasible rxn
-        pred_labels = torch.topk(energies, 1, dim=1, largest=False)[1]
-        # 0-th index should have the lowest energy
-        pred_correct = torch.where(pred_labels == 0)[0].shape[0]
-        return loss.item(), pred_correct
+            return loss.item(), pred_labels
+        else: # if fine-tuning: validation/testing, cannot calculate loss naively, need the true_ranks of precursors from retrosynthesis models
+            return energies, pred_labels
  
     def train(self):
         self.start = time.time()  # timeit.default_timer()
@@ -453,12 +469,16 @@ class Experiment:
             self.model.train()
             train_loss, train_correct_preds = 0, 0
             train_loader = tqdm(self.train_loader, desc='training...')
-            for batch in train_loader:
+            for i, batch in enumerate(train_loader):
+                if i > 10:
+                    break
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device) 
-                curr_batch_loss, curr_batch_correct_preds = self._one_batch(
+                curr_batch_loss, curr_batch_preds = self._one_batch(
                     batch_data, batch_mask, backprop=True
                 ) 
+                # for training, true rxn is always at 0th-index 
+                curr_batch_correct_preds = torch.where(curr_batch_preds == 0)[0].shape[0]
                 train_loader.set_description(f"training...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
                 train_loader.refresh()  
                 train_loss += curr_batch_loss 
@@ -466,15 +486,45 @@ class Experiment:
             self.train_accs.append(train_correct_preds / self.train_size)
             self.train_losses.append(train_loss / self.train_size)
 
+            # validation
             self.model.eval()
             val_loss, val_correct_preds = 0, 0
             val_loader = tqdm(self.val_loader, desc='validating...')
-            for batch in val_loader:
+            for i, batch in enumerate(val_loader):
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device)
-                curr_batch_loss, curr_batch_correct_preds = self._one_batch(
+                curr_batch_energies, curr_batch_preds = self._one_batch(
                     batch_data, batch_mask, backprop=False
-                )
+                ) 
+                # for validation/test data, true rxn may not be present! 
+                if self.val_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
+                    batch_idx = batch[2]
+                    batch_true_ranks_array = self.val_loader.dataset.proposals_data[batch_idx, 2].astype('int')
+                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
+                    loss_numerator = curr_batch_energies[
+                                                            np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
+                                                            batch_true_ranks_array[batch_true_ranks_array != 9999]
+                                                        ]
+                    loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
+                    curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
+                    if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                        for j in range(i * self.batch_size, (i+1) * self.batch_size):
+                            if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                                sample_idx = random.sample(list(range(self.batch_size)), k=1)
+                                sample_true_prod = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
+                                sample_true_precursor = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 1]  
+                                sample_cand_precursors = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
+                                sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
+                                logging.info(f'true product: {sample_true_prod}')
+                                logging.info(f'predicted precursor: {sample_pred_precursor}')
+                                logging.info(f'true precursor: {sample_true_precursor}')
+                                break
+                else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
+                    batch_true_ranks = 0
+                    curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum()
+            
+                curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0]
                 val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
                 val_loader.refresh()  
                 val_loss += curr_batch_loss
@@ -517,12 +567,41 @@ class Experiment:
         self.model.eval()
         test_loss, test_correct_preds = 0, 0
         test_loader = tqdm(self.test_loader, desc='testing...')
-        for batch in test_loader:
+        for i, batch in enumerate(test_loader):
             batch_data = batch[0].to(self.device)
             batch_mask = batch[1].to(self.device)
-            curr_batch_loss, curr_batch_correct_preds = self._one_batch(
+            curr_batch_energies, curr_batch_preds = self._one_batch(
                 batch_data, batch_mask, backprop=False
             )
+            # for validation/test data, true rxn may not be present! 
+            if self.test_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
+                batch_idx = batch[2]
+                batch_true_ranks_array = self.test_loader.dataset.proposals_data[batch_idx, 2].astype('int')  
+                batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
+                loss_numerator = curr_batch_energies[
+                                                        np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
+                                                        batch_true_ranks_array[batch_true_ranks_array != 9999]
+                                                    ]
+                loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
+                curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
+                if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                    for j in range(i * self.batch_size, (i+1) * self.batch_size):
+                        if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                            sample_idx = random.sample(list(range(self.batch_size)), k=1)
+                            sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
+                            sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
+                            sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
+                            sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
+                            logging.info(f'true product: {sample_true_prod}')
+                            logging.info(f'predicted precursor: {sample_pred_precursor}')
+                            logging.info(f'true precursor: {sample_true_precursor}')
+                            break
+            else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
+                batch_true_ranks = 0
+                curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum()
+
+            curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0]
             test_loss += curr_batch_loss
             test_correct_preds += curr_batch_correct_preds
             test_loader.set_description(f"testing...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
@@ -543,7 +622,8 @@ class Experiment:
 
     def get_energies_and_loss(
         self,
-        phase: Optional[str] = "test",
+        phase: str = "test",
+        finetune: bool = False, 
         custom_dataloader: Optional[torch.utils.data.DataLoader] = None,
         save_energies: Optional[bool] = True,
         name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -556,7 +636,10 @@ class Experiment:
         ----------
         phase : str (Default = 'test') [train', 'test', 'val', 'custom']
             whether to get energies from train/test/val phases or a custom_dataloader
-        custom_dataloader : Optional[Dataloader] (Default = None)
+        finetune : bool (Default = False)
+            whether finetuning a pre-trained EBM or training from scratch on synthetic data
+            affects calculation of loss & top-k accuracy! 
+        custom_dataloader : Optional[Dataloader] (Default = None) (unused for now; in case we want to evaluate on some external test set)
             custom dataloader that loops through dataset that is not the original train, test or val
         save_energies : Optional[bool] (Default = True)
             whether to save the energy values to disk
@@ -588,20 +671,50 @@ class Experiment:
             dataloader = self.val_loader
 
         self.model.eval()
-        energies_combined = []
         with torch.no_grad():
-            for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
-                batch_data = batch[0].to(self.device)
-                batch_mask = batch[1].to(self.device)
-                
-                energies = self.model(batch_data)
-                energies = torch.where(batch_mask, energies,
-                                     torch.tensor([float('inf')], device=batch_mask.device))
-                energies_combined.append(energies)
+            if finetune and phase != 'train': # for training, we know positive rxn is always the 0th-index, even during finetuning
+                energies_combined, true_ranks = [], []
+                loss = 0
+                for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
+                    batch_data = batch[0].to(self.device)
+                    batch_mask = batch[1].to(self.device)
+                    curr_batch_energies, curr_batch_preds = self._one_batch(
+                        batch_data, batch_mask, backprop=False
+                    ) 
 
-            energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).to(torch.device('cpu'))
+                    batch_idx = batch[2]
+                    batch_true_ranks_array = dataloader.dataset.proposals_data[batch_idx, 2].astype('int') 
+                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator)
+                    loss_numerator = curr_batch_energies[
+                                                            np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
+                                                            batch_true_ranks[batch_true_ranks != 9999]
+                                                        ]
+                    loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
+                    curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
+                    loss += curr_batch_loss
 
-            loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum()
+                    energies_combined.append(curr_batch_energies) 
+                    true_ranks.append(batch_true_ranks)
+
+                energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).to(torch.device('cpu')) 
+                true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).to(torch.device('cpu')) 
+
+            else: # pre-training
+                energies_combined = [] 
+                for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
+                    batch_data = batch[0].to(self.device)
+                    batch_mask = batch[1].to(self.device)
+                    
+                    energies = self.model(batch_data)
+                    energies = torch.where(batch_mask, energies,
+                                        torch.tensor([float('inf')], device=batch_mask.device))
+                    energies_combined.append(energies)
+
+                energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).to(torch.device('cpu'))
+
+                loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum()
+            
             if phase == "custom":
                 loss /= custom_dataset_len
             elif phase == "test":
@@ -626,11 +739,16 @@ class Experiment:
             self.energies[phase] = energies_combined
             if phase == 'train':
                 self.stats["train_loss_nodropout"] = loss
-        return energies_combined, loss
+        
+        if finetune:
+            return energies_combined, loss, true_ranks
+        else:
+            return energies_combined, loss
 
     def get_topk_acc(
         self,
-        phase: Optional[str] = "test",
+        phase: str = "test",
+        finetune: bool = False,
         custom_dataloader: Optional[torch.utils.data.DataLoader] = None,
         k: Optional[int] = 1, 
     ) -> Tensor:
@@ -642,6 +760,9 @@ class Experiment:
         ----------
         phase : str (Default = 'test') [train', 'test', 'val', 'custom']
             whether to get energies from train/test/valid phases or a custom_dataloader
+        finetune : bool (Default = False)
+            whether finetuning a pre-trained EBM or training from scratch on synthetic data
+            affects calculation of loss & top-k accuracy! 
         custom_dataloader : Optional[Dataloader] (Default = None)
             custom dataloader that loops through dataset that is not the original train, test or val
         save_energies: bool (Default = True)
@@ -659,21 +780,42 @@ class Experiment:
         """ 
         if custom_dataloader is not None:
             phase = 'custom'
-        if phase not in self.energies:
-            energies, loss = self.get_energies_and_loss(
-                phase=phase, custom_dataloader=custom_dataloader
-            )
-            self.energies[phase] = energies
-            if phase == 'train':
-                self.stats["train_loss_nodropout"] = loss
-        
-        if self.energies[phase].shape[1] > k: 
-            pred_labels = torch.topk(self.energies[phase], k, dim=1, largest=False)[1]
-            topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0]
 
-            self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
-            torch.save(self.stats, self.stats_filename)
+        if finetune and phase != 'train':
+            if phase not in self.energies:
+                energies, loss, true_ranks = self.get_energies_and_loss(
+                    phase=phase, finetune=True, custom_dataloader=custom_dataloader
+                )
+                self.energies[phase] = energies
+                self.true_ranks[phase] = true_ranks
+            
+            if self.energies[phase].shape[1] > k: 
+                pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
+                topk_accuracy = torch.where(pred_labels == self.true_ranks[phase])[0].shape[0] / pred_labels.shape[0]
 
-            logging.info(f"Top-{k} accuracy on {phase}: {topk_accuracy}") 
-        else:
-            logging.info(f'{k} out of range for dimension 1 on {phase}')
+                self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
+                torch.save(self.stats, self.stats_filename)
+
+                logging.info(f"Top-{k} accuracy on {phase} (finetune): {topk_accuracy}") 
+            else:
+                logging.info(f'{k} out of range for dimension 1 on {phase} (finetune')
+
+        else: # true rank is always 0
+            if phase not in self.energies:
+                energies, loss = self.get_energies_and_loss(
+                    phase=phase, finetune=False, custom_dataloader=custom_dataloader
+                )
+                self.energies[phase] = energies
+                if phase == 'train':
+                    self.stats["train_loss_nodropout"] = loss
+            
+            if self.energies[phase].shape[1] > k: 
+                pred_labels = torch.topk(self.energies[phase], k, dim=1, largest=False)[1]
+                topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0]
+
+                self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
+                torch.save(self.stats, self.stats_filename)
+
+                logging.info(f"Top-{k} accuracy on {phase}: {topk_accuracy}") 
+            else:
+                logging.info(f'{k} out of range for dimension 1 on {phase}')

@@ -5,7 +5,7 @@ retrosim_config = {
     "fp_type": "Morgan2Feat",
     # try to use absolute path if possible
     "input_data_folder": "./rxnebm/data/cleaned_data",
-    "input_data_file_prefix": "50k_clean_rxnsmi_noreagent_allmapped",  #50k_evencleaner
+    "input_data_file_prefix": "50k_clean_rxnsmi_noreagent_allmapped", 
     "output_folder": None,
     "parallelize": False,
 }

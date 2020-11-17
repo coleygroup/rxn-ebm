@@ -145,7 +145,7 @@ def train(args):
         model_args=model_args,
         augmentations=augmentations,
         **train_args,
-        **fp_args
+        **fp_args,
     )
 
     logging.info("Start training")
@@ -185,3 +185,5 @@ if __name__ == "__main__":
         train(args)
     else:
         raise ValueError(f"Please train from scratch")
+
+    # just call finetuneEBM.py from the launcher bash script 

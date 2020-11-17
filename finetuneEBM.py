@@ -20,6 +20,8 @@ def parse_args():
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--path_to_energies", help="do not change (folder to store array of energy values for train & test data)", type=str)
+    parser.add_argument("--proposals_csv_file_prefix", help="do not change (CSV file containing proposals from retro models)", 
+                    type=str, default='retrosim_200maxtest_200maxprec')
     # fingerprint params
     parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
     # training params 
@@ -68,6 +70,7 @@ def args_to_dict(args, args_type: str) -> dict:
                 "checkpoint",
                 "random_seed",
                 "precomp_file_prefix",
+                "proposals_csv_file_prefix",
                 "checkpoint_folder",
                 "expt_name"]
     else:
@@ -104,21 +107,22 @@ def finetune(args):
         saved_stats=saved_stats,
         saved_stats_filename=saved_stats_filename,
         begin_epoch=0,
+        debug=True,
     )
 
     logging.info("Start finetuning")
-    # experiment.train()
-    # experiment.test()
+    experiment.train()
+    experiment.test()
 
-    _, _ = experiment.get_energies_and_loss(phase="train", save_energies=True, path_to_energies=args.path_to_energies)
-    _, _ = experiment.get_energies_and_loss(phase="val", save_energies=True, path_to_energies=args.path_to_energies)
-    _, _ = experiment.get_energies_and_loss(phase="test", save_energies=True, path_to_energies=args.path_to_energies)
+    _, _, _ = experiment.get_energies_and_loss(phase="train", finetune=True, save_energies=True, path_to_energies=args.path_to_energies)
+    _, _, _ = experiment.get_energies_and_loss(phase="val", finetune=True, save_energies=True, path_to_energies=args.path_to_energies)
+    _, _, _ = experiment.get_energies_and_loss(phase="test", finetune=True, save_energies=True, path_to_energies=args.path_to_energies)
     for k in [1, 2, 3, 5, 10, 20, 50, 100]:
-        experiment.get_topk_acc(phase="train", k=k)
+        experiment.get_topk_acc(phase="train", finetune=True, k=k)
     for k in [1, 2, 3, 5, 10, 20, 50, 100]:
-        experiment.get_topk_acc(phase="val", k=k)
+        experiment.get_topk_acc(phase="val", finetune=True, k=k)
     for k in [1, 2, 3, 5, 10, 20, 50, 100]:
-        experiment.get_topk_acc(phase="test", k=k)
+        experiment.get_topk_acc(phase="test", finetune=True, k=k)
 
 if __name__ == "__main__":
     args = parse_args()
