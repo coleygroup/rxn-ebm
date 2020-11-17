@@ -741,16 +741,14 @@ class Experiment:
         if save_energies:
             logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
             torch.save(energies_combined, Path(path_to_energies / name_energies))
-
-        if phase not in self.energies:
+ 
+        if finetune and phase != 'train':
             self.energies[phase] = energies_combined
             self.true_ranks[phase] = true_ranks.unsqueeze(dim=-1)
-            if phase == 'train':
-                self.stats["train_loss_nodropout"] = loss
-        
-        if finetune and phase != 'train':
             return energies_combined, loss, true_ranks
         else:
+            self.stats["train_loss_nodropout"] = loss
+            self.energies[phase] = energies_combined
             return energies_combined, loss
 
     def get_topk_acc(

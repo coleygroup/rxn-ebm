@@ -155,12 +155,13 @@ def train(args):
     _, _ = experiment.get_energies_and_loss(phase="train", save_energies=True, path_to_energies=args.path_to_energies)
     _, _ = experiment.get_energies_and_loss(phase="val", save_energies=True, path_to_energies=args.path_to_energies)
     _, _ = experiment.get_energies_and_loss(phase="test", save_energies=True, path_to_energies=args.path_to_energies)
+    logging.info('\nGetting train accuracies')
     for k in [1, 2, 3, 5, 10, 20, 50, 100]:
         experiment.get_topk_acc(phase="train", k=k)
-        logging.info('\n')
+    logging.info('\nGetting val accuracies')
     for k in [1, 2, 3, 5, 10, 20, 50, 100]:
         experiment.get_topk_acc(phase="val", k=k)
-        logging.info('\n')
+    logging.info('\nGetting test accuracies')
     for k in [1, 2, 3, 5, 10, 20, 50, 100]:
         experiment.get_topk_acc(phase="test", k=k)
 
