@@ -469,16 +469,14 @@ class Experiment:
             self.model.train()
             train_loss, train_correct_preds = 0, 0
             train_loader = tqdm(self.train_loader, desc='training...')
-            for i, batch in enumerate(train_loader):
-                if i > 10:
-                    break
+            for i, batch in enumerate(train_loader): 
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device) 
                 curr_batch_loss, curr_batch_preds = self._one_batch(
                     batch_data, batch_mask, backprop=True
                 ) 
                 # for training, true rxn is always at 0th-index 
-                curr_batch_correct_preds = torch.where(curr_batch_preds == 0)[0].shape[0]
+                curr_batch_correct_preds = torch.where(curr_batch_preds.cpu() == 0)[0].shape[0]
                 train_loader.set_description(f"training...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
                 train_loader.refresh()  
                 train_loss += curr_batch_loss 
@@ -496,6 +494,7 @@ class Experiment:
                 curr_batch_energies, curr_batch_preds = self._one_batch(
                     batch_data, batch_mask, backprop=False
                 ) 
+                curr_batch_energies, curr_batch_preds = curr_batch_energies.cpu(), curr_batch_preds.cpu()
                 # for validation/test data, true rxn may not be present! 
                 if self.val_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
                     batch_idx = batch[2]
@@ -508,6 +507,7 @@ class Experiment:
                                                         ]
                     loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
                     curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
+                    
                     if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                         for j in range(i * self.batch_size, (i+1) * self.batch_size):
                             if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
@@ -573,6 +573,7 @@ class Experiment:
             curr_batch_energies, curr_batch_preds = self._one_batch(
                 batch_data, batch_mask, backprop=False
             )
+            curr_batch_energies, curr_batch_preds = curr_batch_energies.cpu(), curr_batch_preds.cpu()
             # for validation/test data, true rxn may not be present! 
             if self.test_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
                 batch_idx = batch[2]
