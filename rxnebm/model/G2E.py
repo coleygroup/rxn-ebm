@@ -297,10 +297,18 @@ class GraphFeatEncoder(nn.Module):
         tensors = self.embed_graph(graph_tensors)
         hatom, _ = self.encoder(*tensors, mask=None)
         atom_scope, bond_scope = scopes
+        # print(atom_scope)
 
+        hmol = []
         if isinstance(atom_scope[0], list):
-            hmol = [torch.stack([hatom[st:st+le].sum(dim=0) for (st, le) in scope])
-                    for scope in atom_scope]
+            for scope in atom_scope:
+                if not scope:
+                    hmol.append(torch.zeros([1, self.h_size], device=hatom.device))
+                else:
+                    hmol.append(torch.stack([hatom[st:st+le].sum(dim=0) for (st, le) in scope]))
+
+            # hmol = [torch.stack([hatom[st:st+le].sum(dim=0) for (st, le) in scope])
+            #         for scope in atom_scope]
         else:
             hmol = torch.stack([hatom[st:st+le].sum(dim=0) for st, le in atom_scope])
         return hatom, hmol
@@ -326,21 +334,49 @@ class G2E(nn.Module):
             each sample contains a positive rxn on the first column,
             and K-1 negative rxns on all subsequent columns
         """
-        graph_tensors, scopes = batch
+        graph_tensors, scopes, batch_size = batch
         hatom, hmol = self.encoder(graph_tensors=graph_tensors,
-                                   scopes=scopes)                  # [n_atoms, 400]
-        energies = self.output(hmol)
+                                   scopes=scopes)
+        # logging.info("-------hatom-------")
+        # logging.info(hatom[0])
+        # logging.info(hatom.size())
+        # logging.info(hatom[0].size())
+        # logging.info("-------hmol-------")
+        # logging.info(hmol[0])
+        # logging.info(len(hmol))
+        # logging.info([h.size() for h in hmol])
 
-        logging.info("-------hatom-------")
-        logging.info(hatom)
-        logging.info("-------hmol-------")
-        logging.info(hmol)
-        logging.info("-------energies-------")
-        logging.info(energies)
+        # hatom: [n_atoms, 400], hmol: list of [n_molecules, 400]
+        # n_molecules = batch_size * (r + p_pos + p_negs) = e.g. 2 * (1 + 1 + (5+26)) = 66
+        # want energies to be 2 * 32
+        # list of 66 [n_molecules, 400] => [2, 32]
+
+        hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, 400] => list of [1, 400]
+        # logging.info([h.size() for h in hmol])
+
+        normalized_hmols = []
+
+        mols_per_minibatch = len(hmol) // batch_size                     # = (1) r + (32) p
+        # logging.info(f"{len(hmol)}, {batch_size}, {mols_per_minibatch}")
+        for i in range(batch_size):
+            r_hmol = hmol[i*mols_per_minibatch]                         # [1, 400]
+            p_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
+            pooled_hmols = torch.cat(
+                [p_hmol - r_hmol for p_hmol in p_hmols], 0)             # [32, 400]
+            pooled_hmols = torch.unsqueeze(pooled_hmols, 0)             # [1, 32, 400]
+            normalized_hmols.append(pooled_hmols)
+
+        normalized_hmols = torch.cat(normalized_hmols, 0)               # [bsz, 32, 400]
+        # logging.info(normalized_hmols.size())
+
+        #
+        # energies = self.output(hmol)
+        # logging.info("-------energies-------")
+        # logging.info(energies)
 
         # atom_scope = scopes[0]                                  # [b*K, n_components, 2]
         # molecular_lengths = [scope[-1][0] + scope[-1][1] - scope[0][0]
         #                   for scope in atom_scope]              # [b]
         #
-        # energies = self.ffn(batch)  # tensor of size N x K x 1
-        return energies.squeeze(dim=-1)  # scores: N x K after squeezing
+        energies = self.output(normalized_hmols)                        # [bsz, 32, 1]
+        return energies.squeeze(dim=-1)                                 # [bsz, 32]

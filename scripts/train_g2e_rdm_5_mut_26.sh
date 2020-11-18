@@ -5,7 +5,7 @@ python trainEBM.py \
 	--precomp_file_prefix="" \
 	--representation="smiles" \
 	--random_seed=0 \
-	--batch_size=2 \
+	--batch_size=32 \
 	--learning_rate=5e-3 \
 	--optimizer="Adam" \
 	--epochs=30 \

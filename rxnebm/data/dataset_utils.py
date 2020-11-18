@@ -96,24 +96,30 @@ def graph_collate_fn_builder(device, debug: bool):
         """The actual collate_fn"""
 
         batch_smis = []
+        batch_masks = []
         for rxn_smiles, masks in data:
             r_smi = rxn_smiles[0].split(">>")[0]
             p_smis = [rxn_smi.split(">>")[-1] for rxn_smi in rxn_smiles]
 
             batch_smis.append(r_smi)
             batch_smis.extend(p_smis)
+            batch_masks.append([bool(smi) for smi in p_smis])
 
+        batch_size = len(data)
+        batch_masks = torch.tensor(batch_masks, dtype=torch.bool, device=device)
         graph_tensors, scopes = get_graph_features(batch_smis, use_rxn_class=False)
         graph_tensors = [tensor.to(device) for tensor in graph_tensors]
 
         if debug:
             logging.info("-------batch smiles-------")
             logging.info(batch_smis)
-            logging.info("-------graph tensors-------")
-            logging.info(graph_tensors)
+            # logging.info("-------graph tensors-------")
+            # logging.info(graph_tensors)
             logging.info("-------scopes-------")
             logging.info(scopes)
+            logging.info("-------batch_masks-------")
+            logging.info(batch_masks)
 
-        return graph_tensors, scopes
+        return (graph_tensors, scopes, batch_size), batch_masks
 
     return collate_fn

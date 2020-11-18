@@ -408,8 +408,8 @@ class Experiment:
             self.batch_size,
             num_workers=self.num_workers,
             shuffle=shuffle,
-            pin_memory=pin_memory,
-            collate_fn=dataset_utils.graph_collate_fn_builder(self.device, debug=True)
+            # pin_memory=pin_memory,
+            collate_fn=dataset_utils.graph_collate_fn_builder(self.device, debug=False)
         )
 
         _size = len(augmented_data)
@@ -544,13 +544,15 @@ class Experiment:
             train_loss, train_correct_preds = 0, 0
             train_loader = tqdm(self.train_loader, desc='training...')
             for batch in train_loader:
-                batch_data = batch[0].to(self.device)
-                batch_mask = batch[1].to(self.device) 
+                # batch_data = batch[0].to(self.device)
+                # batch_mask = batch[1].to(self.device)
+                batch_data, batch_mask = batch
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(
                     batch_data, batch_mask, backprop=True
                 ) 
-                train_loader.set_description(f"training...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
-                train_loader.refresh()  
+                # train_loader.set_description(f"training...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
+                train_loader.set_description(f"training...loss={curr_batch_loss/batch_mask.shape[0]:.4f}, acc={curr_batch_correct_preds/batch_mask.shape[0]:.4f}")
+                train_loader.refresh()
                 train_loss += curr_batch_loss 
                 train_correct_preds += curr_batch_correct_preds
             self.train_accs.append(train_correct_preds / self.train_size)
@@ -560,13 +562,15 @@ class Experiment:
             val_loss, val_correct_preds = 0, 0
             val_loader = tqdm(self.val_loader, desc='validating...')
             for batch in val_loader:
-                batch_data = batch[0].to(self.device)
-                batch_mask = batch[1].to(self.device)
+                # batch_data = batch[0].to(self.device)
+                # batch_mask = batch[1].to(self.device)
+                batch_data, batch_mask = batch
                 curr_batch_loss, curr_batch_correct_preds = self._one_batch(
                     batch_data, batch_mask, backprop=False
                 )
-                val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
-                val_loader.refresh()  
+                # val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
+                val_loader.set_description(f"validating...loss={curr_batch_loss/batch_mask.shape[0]:.4f}, acc={curr_batch_correct_preds/batch_mask.shape[0]:.4f}")
+                val_loader.refresh()
                 val_loss += curr_batch_loss
                 val_correct_preds += curr_batch_correct_preds
             self.val_accs.append(val_correct_preds / self.val_size)
@@ -608,15 +612,17 @@ class Experiment:
         test_loss, test_correct_preds = 0, 0
         test_loader = tqdm(self.test_loader, desc='testing...')
         for batch in test_loader:
-            batch_data = batch[0].to(self.device)
-            batch_mask = batch[1].to(self.device)
+            # batch_data = batch[0].to(self.device)
+            # batch_mask = batch[1].to(self.device)
+            batch_data, batch_mask = batch
             curr_batch_loss, curr_batch_correct_preds = self._one_batch(
                 batch_data, batch_mask, backprop=False
             )
             test_loss += curr_batch_loss
             test_correct_preds += curr_batch_correct_preds
-            test_loader.set_description(f"testing...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
-            test_loader.refresh() 
+            # test_loader.set_description(f"testing...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
+            test_loader.set_description(f"testing...loss={curr_batch_loss/batch_mask.shape[0]:.4f}, acc={curr_batch_correct_preds/batch_mask.shape[0]:.4f}")
+            test_loader.refresh()
 
         if saved_stats:
             self.stats = saved_stats
