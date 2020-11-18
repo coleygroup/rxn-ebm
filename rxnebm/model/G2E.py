@@ -1,3 +1,4 @@
+import logging
 import torch
 import torch.nn as nn
 from typing import Tuple
@@ -306,7 +307,7 @@ class GraphFeatEncoder(nn.Module):
 
 
 class G2E(nn.Module):
-    def __init__(self, encoder_hidden_size, encoder_depth):
+    def __init__(self, encoder_hidden_size, encoder_depth, **kwargs):
         super().__init__()
         self.encoder = GraphFeatEncoder(n_atom_feat=ATOM_FDIM,
                                         n_bond_feat=BOND_FDIM,
@@ -329,6 +330,13 @@ class G2E(nn.Module):
         hatom, hmol = self.encoder(graph_tensors=graph_tensors,
                                    scopes=scopes)                  # [n_atoms, 400]
         energies = self.output(hmol)
+
+        logging.info("-------hatom-------")
+        logging.info(hatom)
+        logging.info("-------hmol-------")
+        logging.info(hmol)
+        logging.info("-------energies-------")
+        logging.info(energies)
 
         # atom_scope = scopes[0]                                  # [b*K, n_components, 2]
         # molecular_lengths = [scope[-1][0] + scope[-1][1] - scope[0][0]

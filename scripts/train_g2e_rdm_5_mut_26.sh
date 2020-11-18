@@ -5,7 +5,7 @@ python trainEBM.py \
 	--precomp_file_prefix="" \
 	--representation="smiles" \
 	--random_seed=0 \
-	--batch_size=2048 \
+	--batch_size=2 \
 	--learning_rate=5e-3 \
 	--optimizer="Adam" \
 	--epochs=30 \
@@ -18,5 +18,3 @@ python trainEBM.py \
 	--num_workers=0 \
 	--checkpoint \
 	--random_seed=0
-  
-read -p "Press any key to continue" x

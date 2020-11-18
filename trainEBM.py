@@ -119,8 +119,8 @@ def train(args):
     # }
     augmentations = {
         "rdm": {"num_neg": 5},
-        "cos": {"num_neg": 0, "query_params": None},
-        "bit": {"num_neg": 0, "num_bits": 3, "increment_bits": 1},
+        # "cos": {"num_neg": 0, "query_params": None},
+        # "bit": {"num_neg": 0, "num_bits": 3, "increment_bits": 1},
         "mut": {"num_neg": 26}
     }
 
@@ -157,6 +157,12 @@ def train(args):
         model=model,
         model_args=model_args,
         augmentations=augmentations,
+        onthefly=True,
+        rxn_smis_file_prefix=args.rxn_smis_file_prefix,
+        fp_to_smi_dict_filename=args.fp_to_smi_dict_filename,
+        smi_to_fp_dict_filename=args.smi_to_fp_dict_filename,
+        mol_fps_filename=args.mol_fps_filename,
+        mut_smis_filename=args.mut_smis_filename,
         **train_args,
         **fp_args
     )
@@ -193,6 +199,8 @@ if __name__ == "__main__":
     sh.setLevel(logging.INFO)
     logger.addHandler(fh)
     logger.addHandler(sh)
+
+    torch.set_printoptions(profile="full")
 
     if not args.resume:
         train(args)

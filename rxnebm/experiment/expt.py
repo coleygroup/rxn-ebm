@@ -104,7 +104,7 @@ class Experiment:
 
         self.representation = representation
         ### fingerprint arguments ###
-        if self.representation == 'fingerprint':
+        if self.representation == 'fingerprint' or self.representation == 'smiles':     # hard-code for compatibility
             self.rxn_type = rxn_type
             self.fp_type = fp_type
             self.rctfp_size = rctfp_size
@@ -167,6 +167,7 @@ class Experiment:
                 fp_to_smi_dict_filename=fp_to_smi_dict_filename,
                 mol_fps_filename=mol_fps_filename,
                 mut_smis_filename=mut_smis_filename,
+                rxn_smis_file_prefix=rxn_smis_file_prefix,
                 search_index_filename=search_index_filename,
             )
         self.energies = {}      # for self.get_topk_acc
@@ -177,7 +178,7 @@ class Experiment:
         return f"Experiment with: {self.augmentations}"
 
     def _collate_args(self): 
-        if self.representation == 'fingerprint':
+        if self.representation == 'fingerprint' or self.representation == 'smiles':     # hard-code for compatibility
             self.fp_args = {
                 "rxn_type": self.rxn_type,
                 "fp_type": self.fp_type,
@@ -408,7 +409,7 @@ class Experiment:
             num_workers=self.num_workers,
             shuffle=shuffle,
             pin_memory=pin_memory,
-            collate_fn=dataset_utils.graph_collate_fn_builder(self.device)
+            collate_fn=dataset_utils.graph_collate_fn_builder(self.device, debug=True)
         )
 
         _size = len(augmented_data)

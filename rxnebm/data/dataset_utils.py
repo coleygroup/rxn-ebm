@@ -1,5 +1,6 @@
-import torch
+import logging
 import networkx as nx
+import torch
 from rdkit import Chem
 from rxnebm.data.chem_utils import BOND_FDIM, get_atom_features, get_bond_features
 from rxnebm.data.rxn_graphs import RxnGraph
@@ -89,13 +90,13 @@ def get_graph_features(smiles: List[str],
     return graph_tensors, scopes
 
 
-def graph_collate_fn_builder(device):
+def graph_collate_fn_builder(device, debug: bool):
     """Creates an 'collate_fn' closure to be passed to DataLoader, for graph encoders"""
     def collate_fn(data):           # list of bsz (list of K smiles)
         """The actual collate_fn"""
 
         batch_smis = []
-        for rxn_smiles in data:
+        for rxn_smiles, masks in data:
             r_smi = rxn_smiles[0].split(">>")[0]
             p_smis = [rxn_smi.split(">>")[-1] for rxn_smi in rxn_smiles]
 
@@ -104,6 +105,14 @@ def graph_collate_fn_builder(device):
 
         graph_tensors, scopes = get_graph_features(batch_smis, use_rxn_class=False)
         graph_tensors = [tensor.to(device) for tensor in graph_tensors]
+
+        if debug:
+            logging.info("-------batch smiles-------")
+            logging.info(batch_smis)
+            logging.info("-------graph tensors-------")
+            logging.info(graph_tensors)
+            logging.info("-------scopes-------")
+            logging.info(scopes)
 
         return graph_tensors, scopes
 
