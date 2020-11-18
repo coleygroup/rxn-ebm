@@ -79,6 +79,7 @@ class Experiment:
         smi_to_fp_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         fp_to_smi_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         mol_fps_filename: Optional[Union[str, bytes, os.PathLike]] = None,
+        mut_smis_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         search_index_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         rxn_smis_file_prefix: Optional[Union[str, bytes, os.PathLike]] = None,
         device: Optional[str] = None,
@@ -165,6 +166,7 @@ class Experiment:
                 smi_to_fp_dict_filename=smi_to_fp_dict_filename,
                 fp_to_smi_dict_filename=fp_to_smi_dict_filename,
                 mol_fps_filename=mol_fps_filename,
+                mut_smis_filename=mut_smis_filename,
                 search_index_filename=search_index_filename,
             )
         self.energies = {}      # for self.get_topk_acc
@@ -172,7 +174,7 @@ class Experiment:
         model_utils.seed_everything(random_seed)
 
     def __repr__(self):
-        return "Experiment with: " + self.augmentations
+        return f"Experiment with: {self.augmentations}"
 
     def _collate_args(self): 
         if self.representation == 'fingerprint':

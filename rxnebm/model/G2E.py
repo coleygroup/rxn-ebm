@@ -313,6 +313,7 @@ class G2E(nn.Module):
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
                                         depth=encoder_depth)
+        self.output = nn.Linear(encoder_hidden_size, 1)
         model_utils.initialize_weights(self)
 
     def __repr__(self):
@@ -325,11 +326,13 @@ class G2E(nn.Module):
             and K-1 negative rxns on all subsequent columns
         """
         graph_tensors, scopes = batch
-        hatom, _ = self.encoder(graph_tensors=graph_tensors,
-                                scopes=scopes)                  # [n_atoms, 400]
-        atom_scope = scopes[0]                                  # [b*K, n_components, 2]
-        molecular_lengths = [scope[-1][0] + scope[-1][1] - scope[0][0]
-                          for scope in atom_scope]              # [b]
+        hatom, hmol = self.encoder(graph_tensors=graph_tensors,
+                                   scopes=scopes)                  # [n_atoms, 400]
+        energies = self.output(hmol)
 
-        energies = self.ffn(batch)  # tensor of size N x K x 1
+        # atom_scope = scopes[0]                                  # [b*K, n_components, 2]
+        # molecular_lengths = [scope[-1][0] + scope[-1][1] - scope[0][0]
+        #                   for scope in atom_scope]              # [b]
+        #
+        # energies = self.ffn(batch)  # tensor of size N x K x 1
         return energies.squeeze(dim=-1)  # scores: N x K after squeezing

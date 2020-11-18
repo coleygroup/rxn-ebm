@@ -10,8 +10,9 @@ from datetime import datetime
 from rdkit import RDLogger
 from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_utils
-from rxnebm.model import FF
+from rxnebm.model import FF, G2E
 from rxnebm.model.FF_args import FF_args
+from rxnebm.model.G2E_args import G2E_args
 
 torch.backends.cudnn.benchmark = True
 
@@ -144,11 +145,13 @@ def train(args):
     '''
 
     logging.info("Setting up model and experiment")
-    model_args = FF_args
+    # model_args = FF_args
+    model_args = G2E_args
     fp_args = args_to_dict(args, "fp_args")
     train_args = args_to_dict(args, "train_args")
 
-    model = FF.FeedforwardFingerprint(**model_args, **fp_args)
+    # model = FF.FeedforwardFingerprint(**model_args, **fp_args)
+    model = G2E.G2E(**model_args, **fp_args)
 
     experiment = expt.Experiment(
         model=model,
