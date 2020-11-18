@@ -14,7 +14,7 @@ The downloaded data is automatically checked and will throw an error if any requ
 See Appendix A for a full description of data preprocessing.
  
 ## Train and test
-    sh scripts/train_rdm_5_cos_5_bit_5_1_1_mut_10.sh
+    sh scripts/train_g2e_rdm_2_mut_13.sh
 
 ## Folder organisation
 ```

@@ -118,10 +118,10 @@ def train(args):
     #     "mut": {"num_neg": 1},
     # }
     augmentations = {
-        "rdm": {"num_neg": 5},
+        "rdm": {"num_neg": 2},
         # "cos": {"num_neg": 0, "query_params": None},
         # "bit": {"num_neg": 0, "num_bits": 3, "increment_bits": 1},
-        "mut": {"num_neg": 26}
+        "mut": {"num_neg": 13}
     }
 
     '''
