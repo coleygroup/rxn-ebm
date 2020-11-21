@@ -32,6 +32,7 @@ To run this script from terminal/interpreter, go to root/of/rxnebm/ then execute
 class Experiment:
     """
     NOTE: assumes pre-computed file already exists --> trainEBM.py handles the pre-computation
+    NOTE: accs are now in % (e.g. 50.5%, 90.8%) instead of decimals (i.e. no longer 0.505, 0.908)
     TODO: representation: ['graph', 'string'] 
     TODO: wandb/tensorboard for hyperparameter tuning
 
@@ -41,9 +42,6 @@ class Experiment:
         which representation to use. affects which version of AugmentedData & ReactionDataset gets called.
         if not using 'fingerprint', cannot use Bit Augmentor. 
 
-    device : Optional[str] (Default = None) [torch.device('cuda'), torch.device('cpu')]
-        device to do training, testing & inference on.
-        If None, automatically detects if GPU is available, else uses CPU.
     load_checkpoint : Optional[bool] (Default = False)
         whether to load from a previous checkpoint.
         if True: load_optimizer, load_stats & begin_epoch must be provided
@@ -57,9 +55,6 @@ class Experiment:
         epochs: int,
         optimizer: str,
         learning_rate: float,
-        early_stop: bool,
-        early_stop_patience: int,
-        early_stop_min_delta: float,  
         num_workers: int,
         checkpoint: bool,
         random_seed: int,
@@ -68,7 +63,12 @@ class Experiment:
         expt_name: str,
         augmentations: dict,
         representation: str, 
+        early_stop: bool,
+        early_stop_criteria: Optional[str] = 'top1_acc', 
+        early_stop_patience: Optional[int] = 1,
+        early_stop_min_delta: Optional[float] = 0.05,  
         lr_scheduler: Optional[str] = None,
+        lr_scheduler_criteria: Optional[str] = 'acc',
         lr_scheduler_factor: Optional[float] = 0.3,
         lr_scheduler_patience: Optional[int] = 1, 
         proposals_csv_file_prefix: Optional[str] = None,
@@ -97,21 +97,24 @@ class Experiment:
         self.learning_rate = learning_rate
         self.epochs = epochs
         self.best_epoch = 0  # will be automatically assigned after 1 epoch
+
         self.early_stop = early_stop
-        self.early_stop_min_delta = early_stop_min_delta
-        self.early_stop_patience = early_stop_patience
+        if self.early_stop:
+            self.early_stop_criteria = early_stop_criteria
+            self.early_stop_min_delta = early_stop_min_delta
+            self.early_stop_patience = early_stop_patience
+
+            self.min_val_loss = float("+inf")  
+            self.max_val_acc = float("-inf") 
+            self.wait = 0  # counter for _check_earlystop()
+        else:
+            self.early_stop_criteria = None
+            self.early_stop_min_delta = None
+            self.early_stop_patience = None
+
         self.num_workers = num_workers
         self.checkpoint = checkpoint
         self.random_seed = random_seed
-
-        self.representation = representation
-        ### fingerprint arguments ###
-        if self.representation == 'fingerprint':
-            self.rxn_type = rxn_type
-            self.fp_type = fp_type
-            self.rctfp_size = rctfp_size
-            self.prodfp_size = prodfp_size
-            self.fp_radius = kwargs["fp_radius"] # just for record keeping purposes
 
         if root:
             self.root = Path(root)
@@ -121,6 +124,15 @@ class Experiment:
 
         self.expt_name = expt_name
         self.augmentations = augmentations
+        self.representation = representation
+        ### fingerprint arguments ###
+        if self.representation == 'fingerprint':
+            self.rxn_type = rxn_type
+            self.fp_type = fp_type
+            self.rctfp_size = rctfp_size
+            self.prodfp_size = prodfp_size
+            self.fp_radius = kwargs["fp_radius"] # just for record keeping purposes
+
         if self.representation != 'fingerprint' and 'bit' in augmentations.keys():
             raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
         logging.info(f"\nInitialising experiment: {self.expt_name}")
@@ -132,23 +144,21 @@ class Experiment:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(self.device)
         self.model = model
-        self.model_name = model.__repr__()
+        self.model_name = repr(self.model)
         self.model_args = model_args
         self.distributed = distributed  # TODO: affects how checkpoint is saved
+
         if saved_optimizer is not None:
             self.optimizer_name = str(optimizer).split(' ')[0]
         else:
             self.optimizer_name = optimizer
+
         self.lr_scheduler_name = lr_scheduler
+        self.lr_scheduler_criteria = lr_scheduler_criteria
         self.lr_scheduler_factor = lr_scheduler_factor
         self.lr_scheduler_patience = lr_scheduler_patience
 
         self._collate_args()
-
-        if load_checkpoint:
-            self._load_checkpoint(saved_optimizer, saved_stats, begin_epoch)
-        else:
-            self._init_optimizer_and_stats()
 
         # if onthefly is True, need smi_to_fp_dict_filename, 
         # mol_fps_filename, (if cos: search_index_filename, fp_to_smi_dict_filename)
@@ -163,13 +173,46 @@ class Experiment:
                 search_index_filename=search_index_filename,
                 rxn_smis_file_prefix=rxn_smis_file_prefix,
             )
+
+        if load_checkpoint:
+            self._load_checkpoint(saved_optimizer, saved_stats, begin_epoch)
+        else:
+            self._init_optimizer_and_stats()
+        self.train_losses = []
+        self.val_losses = []
+        
+        if self.representation == 'fingerprint':
+            self.maxk = self.train_loader.dataset.data.shape[-1] //  self.train_loader.dataset.input_dim
+        elif self.representation == 'smiles':
+            self.maxk = len(self.train_loader.dataset._augmented_rxn_smiles[0])
+        else:
+            raise NotImplementedError('Please add self.maxk for the current representation; \
+                                we need maxk to calculate topk_accs up to the maximum allowed value \
+                                (otherwise torch will raise index out of range)') 
+            # e.g. we can't calculate top-50 acc if we only have 1 positive + 10 negatives per minibatch
+        self.train_topk_accs = {}  
+        self.val_topk_accs = {}  
+        self.test_topk_accs = {} 
+        self.k_to_calc = [1, 2, 3, 5, 10, 20, 50, 100]
+        k_not_to_calc = []
+        for k in self.k_to_calc:
+            if k > self.maxk:
+                k_not_to_calc.append(k)
+            else: # init empty lists; 1 value will be appended to each list per epoch 
+                self.train_topk_accs[k] = []
+                self.val_topk_accs[k] = []  
+                self.test_topk_accs[k] = None    
+        for k in k_not_to_calc:
+            self.k_to_calc.remove(k)
+        logging.info(f'k to calculate for accuracies: {self.k_to_calc}')
         self.energies = {} # for self.get_topk_acc
         self.true_ranks = {} # for self.get_topk_acc (finetuning)
 
         model_utils.seed_everything(random_seed)
 
     def __repr__(self):
-        return "Experiment with: " + self.augmentations
+        return f"Experiment name: {self.expt_name}, \
+                with augmentations: {self.augmentations}" 
 
     def _collate_args(self): 
         if self.representation == 'fingerprint':
@@ -184,10 +227,12 @@ class Experiment:
             "epochs": self.epochs,
             "batch_size": self.batch_size,
             "learning_rate": self.learning_rate,
-            "lr_scheduler": self.lr_scheduler_name,
+            "lr_scheduler": self.lr_scheduler_name,            
+            "lr_scheduler_criteria": self.lr_scheduler_criteria,
             "lr_scheduler_factor": self.lr_scheduler_factor,
             "lr_scheduler_patience": self.lr_scheduler_patience,
             "early_stop": self.early_stop,
+            "early_stop_criteria": self.early_stop_criteria,
             "early_stop_patience": self.early_stop_patience,
             "early_stop_min_delta": self.early_stop_min_delta,
             "num_workers": self.num_workers,
@@ -213,13 +258,17 @@ class Experiment:
         self.optimizer = saved_optimizer  # load optimizer w/ state dict from checkpoint
         if self.lr_scheduler_name is not None:
             logging.info(f'Initialising {self.lr_scheduler_name}')
+            if self.lr_scheduler_criteria == 'acc':
+                mode = 'max'
+            elif self.lr_scheduler_criteria == 'loss':
+                mode = 'min'
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                optimizer=self.optimizer, mode='min', 
+                optimizer=self.optimizer, mode=mode, 
                 factor=self.lr_scheduler_factor, patience=self.lr_scheduler_patience, verbose=True
                 ) 
         else:
             self.lr_scheduler = None 
-        #TODO: lr_scheduler.load_state_dict(checkpoint['scheduler']) https://discuss.pytorch.org/t/how-to-save-and-load-lr-scheduler-stats-in-pytorch/20208/2
+        #NOTE/TODO: lr_scheduler.load_state_dict(checkpoint['scheduler']) https://discuss.pytorch.org/t/how-to-save-and-load-lr-scheduler-stats-in-pytorch/20208/2
 
         if saved_stats is None:
             raise ValueError("load_checkpoint requires saved_stats!")
@@ -233,36 +282,29 @@ class Experiment:
         self.train_args = self.stats["train_args"]
         self.augmentations = self.stats["augmentations"]
 
-        self.train_losses = self.stats["train_losses"]
-        self.train_accs = self.stats["train_accs"]
-        self.val_losses = self.stats["val_losses"]
-        self.val_accs = self.stats["val_accs"]
-        self.min_val_loss = float("+inf") # need to reset to +inf for _check_earlystop() 
-        self.wait = 0  # counter for _check_earlystop()
-
         if begin_epoch is None:
             raise ValueError("load_checkpoint requires begin_epoch!")
-        self.begin_epoch = begin_epoch
+        else:
+            self.begin_epoch = begin_epoch
 
     def _init_optimizer_and_stats(self): 
         logging.info("Initialising optimizer & stats...")
         self.optimizer = model_utils.get_optimizer(self.optimizer_name)(self.model.parameters(), lr=self.learning_rate) 
         if self.lr_scheduler_name is not None:
             logging.info(f'Initialising {self.lr_scheduler_name}')
+            if self.lr_scheduler_criteria == 'acc':
+                mode = 'max'
+            elif self.lr_scheduler_criteria == 'loss':
+                mode = 'min'
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                optimizer=self.optimizer, factor=self.lr_scheduler_factor, patience=self.lr_scheduler_patience, verbose=True
+                optimizer=self.optimizer, mode=mode, 
+                factor=self.lr_scheduler_factor, patience=self.lr_scheduler_patience, verbose=True
                 ) 
         else:
             logging.info('Not using any LR Scheduler!')
             self.lr_scheduler = None 
 
-        self.train_losses = []
-        self.train_accs = []
-        self.min_val_loss = float("+inf")
-        self.val_losses = []
-        self.val_accs = []
-        self.begin_epoch = 0
-        self.wait = 0  # counter for _check_earlystop()
+        self.begin_epoch = 0 
 
         self.stats = {
             "model_args": self.model_args,
@@ -385,37 +427,61 @@ class Experiment:
 
     def _check_earlystop(self, current_epoch):
         self.to_break = 0
-        if self.min_val_loss - self.val_losses[-1] < self.early_stop_min_delta:
-            if self.early_stop_patience <= self.wait:
-                logging.info(
-                    f"\nEarly stopped at the end of epoch: {current_epoch}, \
-                train loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_accs[-1]:.4f}, \
-                \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_accs[-1]:.4f}"
-                )
-                self.stats["early_stop_epoch"] = current_epoch
-                self.to_break = 1  # will break loop
+        if self.early_stop_criteria == 'loss': 
+            if self.min_val_loss - self.val_losses[-1] < self.early_stop_min_delta:
+                if self.early_stop_patience <= self.wait:
+                    logging.info(
+                        f"\nEarly stopped at the end of epoch: {current_epoch}, \
+                    train loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.3f}%, \
+                    \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.3f}%"
+                    )
+                    self.stats["early_stop_epoch"] = current_epoch
+                    self.to_break = 1  # will break loop
+                else:
+                    self.wait += 1
+                    logging.info(f"\nDecrease in val loss < early stop min delta {self.early_stop_min_delta}, \
+                                patience count: {self.wait}")
             else:
-                self.wait += 1
-                logging.info(f"\nDecrease in val loss < early stop min delta, patience count: {self.wait}")
-        else:
-            self.wait = 0
-            self.min_val_loss = min(self.min_val_loss, self.val_losses[-1])
+                self.wait = 0
+                self.min_val_loss = min(self.min_val_loss, self.val_losses[-1])
+
+        elif self.early_stop_criteria.split('_')[-1] == 'acc':
+            k = int(self.early_stop_criteria.split('_')[0][-1:])
+            val_acc_to_compare = self.val_topk_accs[k][-1] 
+
+            if self.max_val_acc - val_acc_to_compare > self.early_stop_min_delta:
+                if self.early_stop_patience <= self.wait:
+                    logging.info(
+                        f"\nEarly stopped at the end of epoch: {current_epoch}, \
+                    train loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.3f}%, \
+                    \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.3f}%"
+                    )
+                    self.stats["early_stop_epoch"] = current_epoch
+                    self.to_break = 1  # will break loop
+                else:
+                    self.wait += 1
+                    logging.info(
+                        f'\nIncrease in top-{k} val acc < early stop min delta {self.early_stop_min_delta}, \
+                        patience count: {self.wait}')
+            else:
+                self.wait = 0
+                self.max_val_acc = max(self.max_val_acc, val_acc_to_compare)
+
 
     def _update_stats(self):
         self.stats["train_time"] = (
             self.stats["train_time"] + (time.time() - self.start) / 60
         )  # in minutes
         self.start = time.time()
+        # a list with one value for each epoch
+        self.stats["train_losses"] = self.train_losses 
+        self.stats["train_topk_accs"] = self.train_topk_accs 
 
-        # a list with one value for each epoch
-        self.stats["train_losses"] = self.train_losses
-        # a list with one value for each epoch
-        self.stats["train_accs"] = self.train_accs
-        # a list with one value for each epoch
-        self.stats["val_losses"] = self.val_losses
-        # a list with one value for each epoch
-        self.stats["val_accs"] = self.val_accs
+        self.stats["val_losses"] = self.val_losses 
+        self.stats["val_topk_accs"] = self.val_topk_accs 
+
         self.stats["min_val_loss"] = self.min_val_loss
+        self.stats["max_val_acc"] = self.max_val_acc
         self.stats["best_epoch"] = self.best_epoch
         torch.save(self.stats, self.stats_filename)
 
@@ -448,54 +514,59 @@ class Experiment:
 
         # replace all-zero vectors with float('inf'), making those gradients 0 on backprop
         energies = torch.where(mask, energies, torch.tensor([float('inf')], device=mask.device))
-        # index with lowest energy is what the model deems to be the most feasible rxn
-        pred_labels = torch.topk(energies, k=1, dim=1, largest=False)[1] 
 
         if backprop:
-            # for training only: positives are the 0-th index of each sample
+            # for training only: positives are the 0-th index of each minibatch (row)
             loss = (energies[:, 0] + torch.logsumexp(-energies, dim=1)).sum()
 
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
-            return loss.item(), pred_labels
+            return loss.item(), energies.cpu().detach() 
         else: # if fine-tuning: validation/testing, cannot calculate loss naively, need the true_ranks of precursors from retrosynthesis models
-            return energies, pred_labels
+            return energies.cpu().detach() 
  
     def train(self):
         self.start = time.time()  # timeit.default_timer()
         for epoch in range(self.begin_epoch, self.epochs):
             self.model.train()
-            train_loss, train_correct_preds = 0, 0
+            train_loss, train_correct_preds = 0, defaultdict(int)
             train_loader = tqdm(self.train_loader, desc='training...')
             for batch in train_loader: 
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device) 
-                curr_batch_loss, curr_batch_preds = self._one_batch(
+                curr_batch_loss, curr_batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=True
                 ) 
-                # for training, true rxn is always at 0th-index 
-                curr_batch_correct_preds = torch.where(curr_batch_preds.cpu() == 0)[0].shape[0] 
-                train_loader.set_description(f"training...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
-                train_loader.refresh()  
-                train_loss += curr_batch_loss 
-                train_correct_preds += curr_batch_correct_preds
-            self.train_accs.append(train_correct_preds / self.train_size)
+                train_loss += curr_batch_loss
+
+                for k in self.k_to_calc: # various top-k accuracies
+                    # index with lowest energy is what the model deems to be the most feasible rxn 
+                    curr_batch_preds = torch.topk(curr_batch_energies, k=k, dim=1, largest=False)[1] 
+                    # for training, true rxn is always at 0th-index 
+                    curr_batch_correct_preds = torch.where(curr_batch_preds == 0)[0].shape[0]
+                    train_correct_preds[k] += curr_batch_correct_preds
+                    if k == 1:
+                        train_loader.set_description(f"training...loss={curr_batch_loss/batch[0].shape[0]:.4f}, top-1 acc={100*curr_batch_correct_preds/batch[0].shape[0]:.3f}%")
+                        train_loader.refresh()  
+            
+            for k in self.k_to_calc:     
+                self.train_topk_accs[k].append( 100 * train_correct_preds[k] / self.train_size ) 
             self.train_losses.append(train_loss / self.train_size)
 
             # validation
             self.model.eval()
             with torch.no_grad(): 
-                val_loss, val_correct_preds = 0, 0
+                val_loss, val_correct_preds = 0, defaultdict(int)
                 val_loader = tqdm(self.val_loader, desc='validating...')
                 for i, batch in enumerate(val_loader):
                     batch_data = batch[0].to(self.device)
                     batch_mask = batch[1].to(self.device)
-                    curr_batch_energies, curr_batch_preds = self._one_batch(
+                    curr_batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False
-                    ) 
-                    curr_batch_energies, curr_batch_preds = curr_batch_energies.cpu(), curr_batch_preds.cpu()
+                    )   
+
                     # for validation/test data, true rxn may not be present! 
                     if self.val_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
                         batch_idx = batch[2]
@@ -503,47 +574,79 @@ class Experiment:
                         batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                         # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
                         loss_numerator = curr_batch_energies[
-                                                                np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
-                                                                batch_true_ranks_array[batch_true_ranks_array != 9999]
+                                                                np.arange(curr_batch_energies.shape[0])[ batch_true_ranks_array != 9999 ], 
+                                                                batch_true_ranks_array[ batch_true_ranks_array != 9999 ]
                                                             ]
-                        loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
+                        loss_denominator = curr_batch_energies[
+                                                                np.arange(curr_batch_energies.shape[0])[ batch_true_ranks_array != 9999 ], 
+                                                                :
+                                                            ]
                         curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
+
+                        for k in self.k_to_calc:
+                            # index with lowest energy is what the model deems to be the most feasible rxn
+                            curr_batch_preds = torch.topk(curr_batch_energies, k=k, dim=1, largest=False)[1]  
+                            curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0]
+                            val_correct_preds[k] += curr_batch_correct_preds
+
+                            if k == 1:
+                                val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, top-1 acc={100*curr_batch_correct_preds/batch[0].shape[0]:.3f}%")
+                                val_loader.refresh()
                         
-                        if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                            try:
-                                for j in range(i * self.batch_size, (i+1) * self.batch_size):
-                                    if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
-                                        sample_idx = random.sample(list(range(self.batch_size)), k=1)
-                                        sample_true_rank = batch_true_ranks_array[sample_idx][0]
-                                        sample_pred_rank = curr_batch_preds[sample_idx, 0].item() 
-                                        sample_true_prod = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
-                                        sample_true_precursor = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 1]  
-                                        sample_cand_precursors = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
-                                        sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
-                                        logging.info(f'\ntrue product:   {sample_true_prod}')
-                                        logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
-                                        logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
-                                        break
-                            except: # do nothing 
-                                logging.info('\nIndex out of range (last minibatch)')
+                                if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                                    try:
+                                        for j in range(i * self.batch_size, (i+1) * self.batch_size):
+                                            if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                                                sample_idx = random.sample( list(range(self.batch_size)), k=1 )
+                                                sample_true_rank = batch_true_ranks_array[sample_idx][0]
+                                                sample_pred_rank = curr_batch_preds[sample_idx, 0].item() 
+                                                sample_true_prod = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 0 ]
+                                                sample_true_precursor = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 1 ]  
+
+                                                sample_cand_precursors = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 3: ] 
+                                                sample_pred_precursor = sample_cand_precursors[ curr_batch_preds[sample_idx] ]
+                                                logging.info(f'\ntrue product:   {sample_true_prod}')
+                                                logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
+                                                logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
+                                                break
+                                    except: # do nothing 
+                                        logging.info('\nIndex out of range (last minibatch)')                        
+                    
                     else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                         batch_true_ranks = 0
                         curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum().item() 
+
+                        # calculate top-k acc assuming true index is 0 (for pre-training step)
+                        for k in self.k_to_calc:
+                            curr_batch_preds = torch.topk(curr_batch_energies, k=k, dim=1, largest=False)[1] 
+                            curr_batch_correct_preds = torch.where(curr_batch_preds == 0)[0].shape[0] 
+                            val_correct_preds[k] += curr_batch_correct_preds
+
+                            if k == 1:
+                                val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, top-1 acc={100*curr_batch_correct_preds/batch[0].shape[0]:.3f}%")
+                                val_loader.refresh()  
+                    
+                    val_loss += curr_batch_loss  
                 
-                    curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0] 
-                    val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
-                    val_loader.refresh()  
-                    val_loss += curr_batch_loss 
-                    val_correct_preds += curr_batch_correct_preds
-                self.val_accs.append(val_correct_preds / self.val_size)
+                for k in self.k_to_calc:
+                    self.val_topk_accs[k].append( 100 * val_correct_preds[k] / self.val_size )
                 self.val_losses.append(val_loss / self.val_size)
 
             if self.lr_scheduler is not None:
-                self.lr_scheduler.step(self.val_losses[-1])
+                if self.lr_scheduler_criteria == 'loss':
+                    self.lr_scheduler.step(self.val_losses[-1])
+                elif self.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
+                    self.lr_scheduler.step(self.val_topk_accs[1][-1])
 
             # track best_epoch to facilitate loading of best checkpoint
-            if self.val_losses[-1] < self.min_val_loss:
-                self.best_epoch = epoch
+            if self.early_stop_criteria == 'loss':
+                if self.val_losses[-1] < self.min_val_loss:
+                    self.best_epoch = epoch
+            elif self.early_stop_criteria.split('_')[-1] == 'acc':
+                k = int(self.early_stop_criteria.split('_')[0][-1:])
+                val_acc_to_compare = self.val_topk_accs[k][-1]
+                if val_acc_to_compare > self.max_val_acc:
+                    self.best_epoch = epoch 
 
             self._update_stats()
             if self.checkpoint:
@@ -555,8 +658,8 @@ class Experiment:
 
             logging.info(
                 f"\nEnd of epoch: {epoch}, \
-                \ntrain loss: {self.train_losses[-1]:.6f}, top-1 train acc: {self.train_accs[-1]:.4f}, \
-                \nval loss: {self.val_losses[-1]: .6f}, top-1 val acc: {self.val_accs[-1]:.4f}"
+                \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.3f}%, \
+                \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.3f}%"
             )
 
         logging.info(f'Total training time: {self.stats["train_time"]}')
@@ -571,16 +674,15 @@ class Experiment:
             Used to load existing stats file when loading a trained model from checkpoint
         """
         self.model.eval()
-        test_loss, test_correct_preds = 0, 0
+        test_loss, test_correct_preds = 0, defaultdict(int)
         test_loader = tqdm(self.test_loader, desc='testing...')
         with torch.no_grad():
             for i, batch in enumerate(test_loader):
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device)
-                curr_batch_energies, curr_batch_preds = self._one_batch(
+                curr_batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=False
-                )
-                curr_batch_energies, curr_batch_preds = curr_batch_energies.cpu(), curr_batch_preds.cpu()
+                ) 
                 # for validation/test data, true rxn may not be present! 
                 if self.test_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
                     batch_idx = batch[2]
@@ -591,34 +693,59 @@ class Experiment:
                                                             np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
                                                             batch_true_ranks_array[batch_true_ranks_array != 9999]
                                                         ]
-                    loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
+                    loss_denominator = curr_batch_energies[
+                                                            np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
+                                                            :
+                                                        ]
                     curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
-                    if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                        try:
-                            for j in range(i * self.batch_size, (i+1) * self.batch_size):
-                                if j % (self.test_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
-                                    sample_idx = random.sample(list(range(self.batch_size)), k=1)
-                                    sample_true_rank = batch_true_ranks_array[sample_idx][0]
-                                    sample_pred_rank = curr_batch_preds[sample_idx, 0].item()
-                                    sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
-                                    sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
-                                    sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
-                                    sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
-                                    logging.info(f'\ntrue product:   {sample_true_prod}')
-                                    logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
-                                    logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}\n')
-                                    break
-                        except:
-                            logging.info('\nIndex out of range (last minibatch)')
+
+                    for k in self.k_to_calc:
+                        # index with lowest energy is what the model deems to be the most feasible rxn
+                        curr_batch_preds = torch.topk(curr_batch_energies, k=k, dim=1, largest=False)[1]  
+                        curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0]
+                        test_correct_preds[k] += curr_batch_correct_preds
+
+                        if k == 1:
+                            test_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, top-1 acc={100*curr_batch_correct_preds/batch[0].shape[0]:.3f}%")
+                            test_loader.refresh()
+
+                            if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                                try:
+                                    for j in range(i * self.batch_size, (i+1) * self.batch_size):
+                                        if j % (self.test_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                                            sample_idx = random.sample(list(range(self.batch_size)), k=1)
+                                            sample_true_rank = batch_true_ranks_array[sample_idx][0]
+                                            sample_pred_rank = curr_batch_preds[sample_idx, 0].item()
+                                            sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
+                                            sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
+
+                                            sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
+                                            sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
+                                            logging.info(f'\ntrue product:   {sample_true_prod}')
+                                            logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
+                                            logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}\n')
+                                            break
+                                except:
+                                    logging.info('\nIndex out of range (last minibatch)')
+
                 else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                     batch_true_ranks = 0
                     curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum().item() 
 
-                curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0] 
-                test_loss += curr_batch_loss 
-                test_correct_preds += curr_batch_correct_preds
-                test_loader.set_description(f"testing...loss={curr_batch_loss/batch[0].shape[0]:.4f}, acc={curr_batch_correct_preds/batch[0].shape[0]:.4f}")
-                test_loader.refresh() 
+                    # calculate top-k acc assuming true index is 0 (for pre-training step)
+                    for k in self.k_to_calc:
+                        curr_batch_preds = torch.topk(curr_batch_energies, k=k, dim=1, largest=False)[1] 
+                        curr_batch_correct_preds = torch.where(curr_batch_preds == 0)[0].shape[0] 
+                        test_correct_preds[k] += curr_batch_correct_preds
+
+                        if k == 1:
+                            test_loader.set_description(f"testing...loss={curr_batch_loss/batch[0].shape[0]:.4f}, top-1 acc={100*curr_batch_correct_preds/batch[0].shape[0]:.3f}%")
+                            test_loader.refresh()  
+ 
+                test_loss += curr_batch_loss   
+
+            for k in self.k_to_calc:
+                self.test_topk_accs[k] = 100 * test_correct_preds[k] / self.test_size
 
         if saved_stats:
             self.stats = saved_stats
@@ -627,10 +754,13 @@ class Experiment:
                 "self.stats only has 2 keys or less. If loading checkpoint, you need to provide load_stats!"
             )
 
-        self.stats["test_loss"] = test_loss / self.test_size
-        self.stats["test_acc"] = test_correct_preds / self.test_size
-        logging.info(f'Test loss: {self.stats["test_loss"]}')
-        logging.info(f'Test top-1 accuracy: {self.stats["test_acc"]}')
+        self.stats["test_loss"] = test_loss / self.test_size 
+        logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
+
+        self.stats["test_topk_accs"] = self.test_topk_accs
+        for k in self.k_to_calc:
+            logging.info(f'Test top-{k} accuracy: {self.stats["test_topk_accs"][k]:.3f}%')
+
         torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
     def get_energies_and_loss(
@@ -691,7 +821,7 @@ class Experiment:
                 for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
                     batch_data = batch[0].to(self.device)
                     batch_mask = batch[1].to(self.device)
-                    curr_batch_energies, curr_batch_preds = self._one_batch(
+                    curr_batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False
                     ) 
 
@@ -736,7 +866,7 @@ class Experiment:
                 loss /= self.train_size
             elif phase == "val":
                 loss /= self.val_size
-            logging.info(f"Loss on {phase} : {loss:.4f}")
+            logging.info(f"\nLoss on {phase} : {loss:.4f}")
 
         if path_to_energies is None:
             path_to_energies = Path(__file__).resolve().parents[1] / "energies"
@@ -799,14 +929,14 @@ class Experiment:
                     phase=phase, finetune=True, custom_dataloader=custom_dataloader
                 ) 
             
-            if self.energies[phase].shape[1] > k: 
+            if self.energies[phase].shape[1] >= k: 
                 pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
-                topk_accuracy = torch.where(pred_labels == self.true_ranks[phase])[0].shape[0] / pred_labels.shape[0]
+                topk_accuracy = 100 * torch.where(pred_labels == self.true_ranks[phase])[0].shape[0] / pred_labels.shape[0]
 
-                self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
+                self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase} (finetune): {topk_accuracy:.4f}") 
+                logging.info(f"Top-{k} accuracy on {phase} (finetune): {topk_accuracy:.3f}%") 
             else:
                 logging.info(f'{k} out of range for dimension 1 on {phase} (finetune')
 
@@ -819,13 +949,13 @@ class Experiment:
                 if phase == 'train':
                     self.stats["train_loss_nodropout"] = loss
             
-            if self.energies[phase].shape[1] > k: 
+            if self.energies[phase].shape[1] >= k: 
                 pred_labels = torch.topk(self.energies[phase], k, dim=1, largest=False)[1]
-                topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0]
+                topk_accuracy = 100 * torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0] 
 
-                self.stats[f"{phase}_top_{k}_acc_nodropout"] = topk_accuracy
+                self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase}: {topk_accuracy:.4f}") 
+                logging.info(f"Top-{k} accuracy on {phase}: {topk_accuracy:.3f}%") 
             else:
                 logging.info(f'{k} out of range for dimension 1 on {phase}')

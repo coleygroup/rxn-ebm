@@ -191,8 +191,7 @@ class Mutate(Augmentor):
  
         if len(neg_rxn_fps) < self.num_neg: 
             dummy_fp = np.zeros((1, self.fp_size), dtype=self.dtype) # pad with zero-vectors whenever insufficient negs generated from CReM
-            for i in range(self.num_neg - len(neg_rxn_fps)):
-                neg_rxn_fps.append(dummy_fp)
+            neg_rxn_fps.extend([dummy_fp] * (self.num_neg - len(neg_rxn_fps)))
 
         return neg_rxn_fps
 
