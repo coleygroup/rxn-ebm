@@ -193,7 +193,7 @@ class Experiment:
         self.train_topk_accs = {}  
         self.val_topk_accs = {}  
         self.test_topk_accs = {} 
-        self.k_to_calc = [1, 2, 3, 5, 10, 20, 50, 100]
+        self.k_to_calc = [1, 5, 10, 50] # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...? 
         k_not_to_calc = []
         for k in self.k_to_calc:
             if k > self.maxk:
@@ -204,7 +204,7 @@ class Experiment:
                 self.test_topk_accs[k] = None    
         for k in k_not_to_calc:
             self.k_to_calc.remove(k)
-        logging.info(f'k to calculate for accuracies: {self.k_to_calc}')
+        
         self.energies = {} # for self.get_topk_acc
         self.true_ranks = {} # for self.get_topk_acc (finetuning)
 
@@ -426,7 +426,6 @@ class Experiment:
         del train_dataset, val_dataset, test_dataset  
 
     def _check_earlystop(self, current_epoch):
-        self.to_break = 0
         if self.early_stop_criteria == 'loss': 
             if self.min_val_loss - self.val_losses[-1] < self.early_stop_min_delta:
                 if self.early_stop_patience <= self.wait:
@@ -453,7 +452,7 @@ class Experiment:
                 if self.early_stop_patience <= self.wait:
                     logging.info(
                         f"\nEarly stopped at the end of epoch: {current_epoch}, \
-                    train loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.3f}%, \
+                    \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.3f}%, \
                     \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.3f}%"
                     )
                     self.stats["early_stop_epoch"] = current_epoch
@@ -462,7 +461,7 @@ class Experiment:
                     self.wait += 1
                     logging.info(
                         f'\nIncrease in top-{k} val acc < early stop min delta {self.early_stop_min_delta}, \
-                        patience count: {self.wait}')
+                        \npatience count: {self.wait}')
             else:
                 self.wait = 0
                 self.max_val_acc = max(self.max_val_acc, val_acc_to_compare)
@@ -529,6 +528,7 @@ class Experiment:
  
     def train(self):
         self.start = time.time()  # timeit.default_timer()
+        self.to_break = 0
         for epoch in range(self.begin_epoch, self.epochs):
             self.model.train()
             train_loss, train_correct_preds = 0, defaultdict(int)
@@ -632,12 +632,6 @@ class Experiment:
                     self.val_topk_accs[k].append( 100 * val_correct_preds[k] / self.val_size )
                 self.val_losses.append(val_loss / self.val_size)
 
-            if self.lr_scheduler is not None:
-                if self.lr_scheduler_criteria == 'loss':
-                    self.lr_scheduler.step(self.val_losses[-1])
-                elif self.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
-                    self.lr_scheduler.step(self.val_topk_accs[1][-1])
-
             # track best_epoch to facilitate loading of best checkpoint
             if self.early_stop_criteria == 'loss':
                 if self.val_losses[-1] < self.min_val_loss:
@@ -653,8 +647,14 @@ class Experiment:
                 self._checkpoint_model_and_opt(current_epoch=epoch)
             if self.early_stop:
                 self._check_earlystop(current_epoch=epoch)
-                if self.to_break:  # is it time to early stop?
-                    break
+            if self.to_break:  # is it time to early stop?
+                break
+            else:
+                if self.lr_scheduler is not None: # update lr scheduler if we are using one 
+                    if self.lr_scheduler_criteria == 'loss':
+                        self.lr_scheduler.step(self.val_losses[-1])
+                    elif self.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
+                        self.lr_scheduler.step(self.val_topk_accs[1][-1])
 
             logging.info(
                 f"\nEnd of epoch: {epoch}, \

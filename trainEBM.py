@@ -55,9 +55,12 @@ def parse_args():
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
     parser.add_argument("--lr_scheduler", help="learning rate schedule", type=str, default="ReduceLROnPlateau")
+    parser.add_argument("--lr_scheduler_criteria", help="criteria for learning rate scheduler ['loss', 'acc']", type=str, default='acc')
     parser.add_argument("--lr_scheduler_factor", help="factor by which learning rate will be reduced", type=float, default=0.2)
     parser.add_argument("--lr_scheduler_patience", help="num. of epochs with no improvement after which learning rate will be reduced", type=int, default=1)
     parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") # type=bool, default=True) 
+    parser.add_argument("--early_stop_criteria", help="criteria for early stopping ['loss', 'top1_acc', 'top5_acc', 'top10_acc', 'top50_acc']", 
+                        type=str, default='top1_acc')
     parser.add_argument("--early_stop_patience", help="num. of epochs tolerated without improvement in val loss before early stop", type=int, default=2)
     parser.add_argument("--early_stop_min_delta", help="min. improvement in val loss needed to not early stop", type=float, default=1e-4) 
     parser.add_argument("--num_workers", help="num. of workers (0 to 8)", type=int, default=0)
@@ -84,9 +87,11 @@ def args_to_dict(args, args_type: str) -> dict:
                 "epochs",
                 "learning_rate",
                 "lr_scheduler",
+                "lr_scheduler_criteria",
                 "lr_scheduler_factor",
                 "lr_scheduler_patience",
                 "early_stop",
+                "early_stop_criteria",
                 "early_stop_patience",
                 "early_stop_min_delta",
                 "num_workers",
