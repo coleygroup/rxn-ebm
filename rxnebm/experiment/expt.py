@@ -31,8 +31,7 @@ To run this script from terminal/interpreter, go to root/of/rxnebm/ then execute
 
 class Experiment:
     """
-    NOTE: assumes pre-computed file already exists --> trainEBM.py handles the pre-computation
-    NOTE: accs are now in % (e.g. 50.5%, 90.8%) instead of decimals (i.e. no longer 0.505, 0.908)
+    NOTE: assumes pre-computed file already exists --> trainEBM.py handles the pre-computation 
     TODO: representation: ['graph', 'string'] 
     TODO: wandb/tensorboard for hyperparameter tuning
 
@@ -431,8 +430,8 @@ class Experiment:
                 if self.early_stop_patience <= self.wait:
                     logging.info(
                         f"\nEarly stopped at the end of epoch: {current_epoch}, \
-                    train loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.3f}%, \
-                    \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.3f}%"
+                    train loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
+                    \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}"
                     )
                     self.stats["early_stop_epoch"] = current_epoch
                     self.to_break = 1  # will break loop
@@ -452,8 +451,8 @@ class Experiment:
                 if self.early_stop_patience <= self.wait:
                     logging.info(
                         f"\nEarly stopped at the end of epoch: {current_epoch}, \
-                    \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.3f}%, \
-                    \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.3f}%"
+                    \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
+                    \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}"
                     )
                     self.stats["early_stop_epoch"] = current_epoch
                     self.to_break = 1  # will break loop
@@ -536,23 +535,28 @@ class Experiment:
             for batch in train_loader: 
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device) 
-                curr_batch_loss, curr_batch_energies = self._one_batch(
+                batch_loss, batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=True
                 ) 
-                train_loss += curr_batch_loss
+                train_loss += batch_loss
 
                 for k in self.k_to_calc: # various top-k accuracies
                     # index with lowest energy is what the model deems to be the most feasible rxn 
-                    curr_batch_preds = torch.topk(curr_batch_energies, k=k, dim=1, largest=False)[1] 
+                    batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
                     # for training, true rxn is always at 0th-index 
-                    curr_batch_correct_preds = torch.where(curr_batch_preds == 0)[0].shape[0]
-                    train_correct_preds[k] += curr_batch_correct_preds
+                    batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0]
+                    train_correct_preds[k] += batch_correct_preds
                     if k == 1:
-                        train_loader.set_description(f"training...loss={curr_batch_loss/batch[0].shape[0]:.4f}, top-1 acc={100*curr_batch_correct_preds/batch[0].shape[0]:.3f}%")
-                        train_loader.refresh()  
+                        batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                    elif k == 10:
+                        batch_top10_acc = batch_correct_preds/batch[0].shape[0]
+                if 10 not in self.k_to_calc:
+                    batch_top10_acc = np.nan 
+                train_loader.set_description(f"training...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                train_loader.refresh()
             
             for k in self.k_to_calc:     
-                self.train_topk_accs[k].append( 100 * train_correct_preds[k] / self.train_size ) 
+                self.train_topk_accs[k].append( train_correct_preds[k] / self.train_size ) 
             self.train_losses.append(train_loss / self.train_size)
 
             # validation
@@ -563,7 +567,7 @@ class Experiment:
                 for i, batch in enumerate(val_loader):
                     batch_data = batch[0].to(self.device)
                     batch_mask = batch[1].to(self.device)
-                    curr_batch_energies = self._one_batch(
+                    batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False
                     )   
 
@@ -573,25 +577,24 @@ class Experiment:
                         batch_true_ranks_array = self.val_loader.dataset.proposals_data[batch_idx, 2].astype('int')
                         batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                         # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
-                        loss_numerator = curr_batch_energies[
-                                                                np.arange(curr_batch_energies.shape[0])[ batch_true_ranks_array != 9999 ], 
+                        loss_numerator = batch_energies[
+                                                                np.arange(batch_energies.shape[0])[ batch_true_ranks_array != 9999 ], 
                                                                 batch_true_ranks_array[ batch_true_ranks_array != 9999 ]
                                                             ]
-                        loss_denominator = curr_batch_energies[
-                                                                np.arange(curr_batch_energies.shape[0])[ batch_true_ranks_array != 9999 ], 
+                        loss_denominator = batch_energies[
+                                                                np.arange(batch_energies.shape[0])[ batch_true_ranks_array != 9999 ], 
                                                                 :
                                                             ]
-                        curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
+                        batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
 
                         for k in self.k_to_calc:
                             # index with lowest energy is what the model deems to be the most feasible rxn
-                            curr_batch_preds = torch.topk(curr_batch_energies, k=k, dim=1, largest=False)[1]  
-                            curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0]
-                            val_correct_preds[k] += curr_batch_correct_preds
+                            batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
+                            batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+                            val_correct_preds[k] += batch_correct_preds
 
                             if k == 1:
-                                val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, top-1 acc={100*curr_batch_correct_preds/batch[0].shape[0]:.3f}%")
-                                val_loader.refresh()
+                                batch_top1_acc = batch_correct_preds/batch[0].shape[0]
                         
                                 if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                     try:
@@ -599,37 +602,44 @@ class Experiment:
                                             if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
                                                 sample_idx = random.sample( list(range(self.batch_size)), k=1 )
                                                 sample_true_rank = batch_true_ranks_array[sample_idx][0]
-                                                sample_pred_rank = curr_batch_preds[sample_idx, 0].item() 
+                                                sample_pred_rank = batch_preds[sample_idx, 0].item() 
                                                 sample_true_prod = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 0 ]
                                                 sample_true_precursor = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 1 ]  
 
                                                 sample_cand_precursors = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 3: ] 
-                                                sample_pred_precursor = sample_cand_precursors[ curr_batch_preds[sample_idx] ]
+                                                sample_pred_precursor = sample_cand_precursors[ batch_preds[sample_idx] ]
                                                 logging.info(f'\ntrue product:   {sample_true_prod}')
                                                 logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
                                                 logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
                                                 break
                                     except: # do nothing 
-                                        logging.info('\nIndex out of range (last minibatch)')                        
+                                        logging.info('\nIndex out of range (last minibatch)') 
+                            elif k == 10:
+                                batch_top10_acc = batch_correct_preds/batch[0].shape[0]                       
                     
                     else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                         batch_true_ranks = 0
-                        curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum().item() 
+                        batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
 
                         # calculate top-k acc assuming true index is 0 (for pre-training step)
                         for k in self.k_to_calc:
-                            curr_batch_preds = torch.topk(curr_batch_energies, k=k, dim=1, largest=False)[1] 
-                            curr_batch_correct_preds = torch.where(curr_batch_preds == 0)[0].shape[0] 
-                            val_correct_preds[k] += curr_batch_correct_preds
+                            batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
+                            batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
+                            val_correct_preds[k] += batch_correct_preds
 
                             if k == 1:
-                                val_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, top-1 acc={100*curr_batch_correct_preds/batch[0].shape[0]:.3f}%")
-                                val_loader.refresh()  
+                                batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                            elif k == 10:
+                                batch_top10_acc = batch_correct_preds/batch[0].shape[0]
+                    if 10 not in self.k_to_calc:
+                        batch_top10_acc = np.nan 
+                    val_loader.set_description(f"training...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                    val_loader.refresh() 
                     
-                    val_loss += curr_batch_loss  
+                    val_loss += batch_loss  
                 
                 for k in self.k_to_calc:
-                    self.val_topk_accs[k].append( 100 * val_correct_preds[k] / self.val_size )
+                    self.val_topk_accs[k].append( val_correct_preds[k] / self.val_size )
                 self.val_losses.append(val_loss / self.val_size)
 
             # track best_epoch to facilitate loading of best checkpoint
@@ -656,10 +666,18 @@ class Experiment:
                     elif self.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
                         self.lr_scheduler.step(self.val_topk_accs[1][-1])
 
+            if 10 in self.train_topk_accs:
+                epoch_top10_train_acc = self.train_topk_accs[10][-1]
+                epoch_top10_val_acc = self.val_topk_accs[10][-1]
+            else:
+                epoch_top10_train_acc = np.nan
+                epoch_top10_val_acc = np.nan
             logging.info(
                 f"\nEnd of epoch: {epoch}, \
-                \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.3f}%, \
-                \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.3f}%"
+                \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
+                \ntop-10 train acc: {epoch_top10_train_acc:.4f}, \
+                \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
+                \ntop-10 val acc: {epoch_top10_val_acc:.4f}"
             )
 
         logging.info(f'Total training time: {self.stats["train_time"]}')
@@ -680,7 +698,7 @@ class Experiment:
             for i, batch in enumerate(test_loader):
                 batch_data = batch[0].to(self.device)
                 batch_mask = batch[1].to(self.device)
-                curr_batch_energies = self._one_batch(
+                batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=False
                 ) 
                 # for validation/test data, true rxn may not be present! 
@@ -689,25 +707,24 @@ class Experiment:
                     batch_true_ranks_array = self.test_loader.dataset.proposals_data[batch_idx, 2].astype('int')  
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
-                    loss_numerator = curr_batch_energies[
-                                                            np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
+                    loss_numerator = batch_energies[
+                                                            np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999], 
                                                             batch_true_ranks_array[batch_true_ranks_array != 9999]
                                                         ]
-                    loss_denominator = curr_batch_energies[
-                                                            np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
+                    loss_denominator = batch_energies[
+                                                            np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999], 
                                                             :
                                                         ]
-                    curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
+                    batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
 
                     for k in self.k_to_calc:
                         # index with lowest energy is what the model deems to be the most feasible rxn
-                        curr_batch_preds = torch.topk(curr_batch_energies, k=k, dim=1, largest=False)[1]  
-                        curr_batch_correct_preds = torch.where(curr_batch_preds == batch_true_ranks)[0].shape[0]
-                        test_correct_preds[k] += curr_batch_correct_preds
+                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
+                        batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+                        test_correct_preds[k] += batch_correct_preds
 
                         if k == 1:
-                            test_loader.set_description(f"validating...loss={curr_batch_loss/batch[0].shape[0]:.4f}, top-1 acc={100*curr_batch_correct_preds/batch[0].shape[0]:.3f}%")
-                            test_loader.refresh()
+                            batch_top1_acc = batch_correct_preds/batch[0].shape[0]
 
                             if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                 try:
@@ -715,37 +732,44 @@ class Experiment:
                                         if j % (self.test_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
                                             sample_idx = random.sample(list(range(self.batch_size)), k=1)
                                             sample_true_rank = batch_true_ranks_array[sample_idx][0]
-                                            sample_pred_rank = curr_batch_preds[sample_idx, 0].item()
+                                            sample_pred_rank = batch_preds[sample_idx, 0].item()
                                             sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
                                             sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
 
                                             sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
-                                            sample_pred_precursor = sample_cand_precursors[curr_batch_preds[sample_idx]]
+                                            sample_pred_precursor = sample_cand_precursors[batch_preds[sample_idx]]
                                             logging.info(f'\ntrue product:   {sample_true_prod}')
                                             logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
                                             logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}\n')
                                             break
                                 except:
                                     logging.info('\nIndex out of range (last minibatch)')
+                        elif k == 10:
+                            batch_top10_acc = batch_correct_preds/batch[0].shape[0]
 
                 else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                     batch_true_ranks = 0
-                    curr_batch_loss = (curr_batch_energies[:, 0] + torch.logsumexp(-curr_batch_energies, dim=1)).sum().item() 
+                    batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
 
                     # calculate top-k acc assuming true index is 0 (for pre-training step)
                     for k in self.k_to_calc:
-                        curr_batch_preds = torch.topk(curr_batch_energies, k=k, dim=1, largest=False)[1] 
-                        curr_batch_correct_preds = torch.where(curr_batch_preds == 0)[0].shape[0] 
-                        test_correct_preds[k] += curr_batch_correct_preds
+                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
+                        batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
+                        test_correct_preds[k] += batch_correct_preds
 
                         if k == 1:
-                            test_loader.set_description(f"testing...loss={curr_batch_loss/batch[0].shape[0]:.4f}, top-1 acc={100*curr_batch_correct_preds/batch[0].shape[0]:.3f}%")
-                            test_loader.refresh()  
- 
-                test_loss += curr_batch_loss   
+                            batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                        elif k == 10:
+                            batch_top10_acc = batch_correct_preds/batch[0].shape[0]
+                if 10 not in self.k_to_calc:
+                    batch_top10_acc = np.nan 
+                test_loader.set_description(f"training...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                test_loader.refresh() 
+
+                test_loss += batch_loss   
 
             for k in self.k_to_calc:
-                self.test_topk_accs[k] = 100 * test_correct_preds[k] / self.test_size
+                self.test_topk_accs[k] = test_correct_preds[k] / self.test_size
 
         if saved_stats:
             self.stats = saved_stats
@@ -759,7 +783,7 @@ class Experiment:
 
         self.stats["test_topk_accs"] = self.test_topk_accs
         for k in self.k_to_calc:
-            logging.info(f'Test top-{k} accuracy: {self.stats["test_topk_accs"][k]:.3f}%')
+            logging.info(f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%')
 
         torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
@@ -821,7 +845,7 @@ class Experiment:
                 for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
                     batch_data = batch[0].to(self.device)
                     batch_mask = batch[1].to(self.device)
-                    curr_batch_energies = self._one_batch(
+                    batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False
                     ) 
 
@@ -829,15 +853,15 @@ class Experiment:
                     batch_true_ranks_array = dataloader.dataset.proposals_data[batch_idx, 2].astype('int') 
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator)
-                    loss_numerator = curr_batch_energies[
-                                                            np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], 
+                    loss_numerator = batch_energies[
+                                                            np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999], 
                                                             batch_true_ranks[batch_true_ranks != 9999]
                                                         ]
-                    loss_denominator = curr_batch_energies[np.arange(curr_batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
-                    curr_batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
-                    loss += curr_batch_loss
+                    loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
+                    batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
+                    loss += batch_loss
 
-                    energies_combined.append(curr_batch_energies) 
+                    energies_combined.append(batch_energies) 
                     true_ranks.append(batch_true_ranks)
 
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).to(torch.device('cpu')) 
@@ -931,12 +955,12 @@ class Experiment:
             
             if self.energies[phase].shape[1] >= k: 
                 pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
-                topk_accuracy = 100 * torch.where(pred_labels == self.true_ranks[phase])[0].shape[0] / pred_labels.shape[0]
+                topk_accuracy = torch.where(pred_labels == self.true_ranks[phase])[0].shape[0] / pred_labels.shape[0]
 
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase} (finetune): {topk_accuracy:.3f}%") 
+                logging.info(f"Top-{k} accuracy on {phase} (finetune): {100 * topk_accuracy:.3f}%") 
             else:
                 logging.info(f'{k} out of range for dimension 1 on {phase} (finetune')
 
@@ -951,11 +975,11 @@ class Experiment:
             
             if self.energies[phase].shape[1] >= k: 
                 pred_labels = torch.topk(self.energies[phase], k, dim=1, largest=False)[1]
-                topk_accuracy = 100 * torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0] 
+                topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0] 
 
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase}: {topk_accuracy:.3f}%") 
+                logging.info(f"Top-{k} accuracy on {phase}: {100 * topk_accuracy:.3f}%") 
             else:
                 logging.info(f'{k} out of range for dimension 1 on {phase}')

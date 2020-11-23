@@ -61,8 +61,8 @@ def parse_args():
     parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") # type=bool, default=True) 
     parser.add_argument("--early_stop_criteria", help="criteria for early stopping ['loss', 'top1_acc', 'top5_acc', 'top10_acc', 'top50_acc']", 
                         type=str, default='top1_acc')
-    parser.add_argument("--early_stop_patience", help="num. of epochs tolerated without improvement in val loss before early stop", type=int, default=2)
-    parser.add_argument("--early_stop_min_delta", help="min. improvement in val loss needed to not early stop", type=float, default=1e-4) 
+    parser.add_argument("--early_stop_patience", help="num. of epochs tolerated without improvement in criteria before early stop", type=int, default=2)
+    parser.add_argument("--early_stop_min_delta", help="min. improvement in criteria needed to not early stop", type=float, default=1e-4) 
     parser.add_argument("--num_workers", help="num. of workers (0 to 8)", type=int, default=0)
     parser.add_argument("--checkpoint", help="whether to save model checkpoints", action="store_true") # type=bool, default=True) 
     parser.add_argument("--random_seed", help="random seed", type=int, default=0)
