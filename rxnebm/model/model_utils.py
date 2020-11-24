@@ -19,6 +19,8 @@ def get_activation_function(activation: str) -> nn.Module:
     * :code:`tanh`
     * :code:`SELU`
     * :code:`ELU`
+    * :code:`Swish`
+    * :code:`LearnedSwish`
     :param activation: The name of the activation function.
     :return: The activation function module.
     """
@@ -34,8 +36,28 @@ def get_activation_function(activation: str) -> nn.Module:
         return nn.SELU()
     elif activation == "ELU":
         return nn.ELU()
+    elif activation == 'Swish':
+        return Swish() 
+    elif activation == 'LearnedSwish':
+        return LearnedSwish() 
     else:
         raise ValueError(f'Activation "{activation}" not supported.')
+
+class Swish(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, x):
+        return x * torch.sigmoid(x) 
+
+class LearnedSwish(nn.Module):
+    def __init__(self, slope = 1):
+        super().__init__()
+        self.slope = slope * torch.nn.Parameter(torch.ones(1))
+    
+    def forward(self, x):
+        return self.slope * x * torch.sigmoid(x) 
+
 
 def get_optimizer(optimizer: str) -> torch.optim.Optimizer:
     if optimizer == 'Adam':

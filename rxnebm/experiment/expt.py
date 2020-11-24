@@ -633,7 +633,7 @@ class Experiment:
                                 batch_top10_acc = batch_correct_preds/batch[0].shape[0]
                     if 10 not in self.k_to_calc:
                         batch_top10_acc = np.nan 
-                    val_loader.set_description(f"training...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                    val_loader.set_description(f"validating...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                     val_loader.refresh() 
                     
                     val_loss += batch_loss  
@@ -864,8 +864,8 @@ class Experiment:
                     energies_combined.append(batch_energies) 
                     true_ranks.append(batch_true_ranks)
 
-                energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).to(torch.device('cpu')) 
-                true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).to(torch.device('cpu')) 
+                energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
+                true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).cpu() 
 
             else: # pre-training
                 energies_combined = [] 
@@ -878,7 +878,7 @@ class Experiment:
                                         torch.tensor([float('inf')], device=batch_mask.device))
                     energies_combined.append(energies)
 
-                energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).to(torch.device('cpu'))
+                energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
 
                 loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item() 
             
@@ -962,7 +962,7 @@ class Experiment:
 
                 logging.info(f"Top-{k} accuracy on {phase} (finetune): {100 * topk_accuracy:.3f}%") 
             else:
-                logging.info(f'{k} out of range for dimension 1 on {phase} (finetune')
+                logging.info(f'{k} out of range for dimension 1 on {phase} (finetune)')
 
         else: # true rank is always 0
             if phase not in self.energies:
@@ -974,7 +974,7 @@ class Experiment:
                     self.stats["train_loss_nodropout"] = loss
             
             if self.energies[phase].shape[1] >= k: 
-                pred_labels = torch.topk(self.energies[phase], k, dim=1, largest=False)[1]
+                pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
                 topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0] 
 
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
@@ -983,3 +983,19 @@ class Experiment:
                 logging.info(f"Top-{k} accuracy on {phase}: {100 * topk_accuracy:.3f}%") 
             else:
                 logging.info(f'{k} out of range for dimension 1 on {phase}')
+
+# def accuracy(output, target, topk=(1,)):
+# """Computes the accuracy over the k top predictions for the specified values of k"""
+# with torch.no_grad():
+#     maxk = max(topk)
+#     batch_size = target.size(0)
+
+#     _, pred = output.topk(maxk, 1, True, True)
+#     pred = pred.t()
+#     correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+#     res = []
+#     for k in topk:
+#         correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+#         res.append(correct_k.mul_(100.0 / batch_size))
+#     return res
