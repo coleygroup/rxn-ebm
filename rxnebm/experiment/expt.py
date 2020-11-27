@@ -608,7 +608,7 @@ class Experiment:
 
                                                 sample_cand_precursors = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 3: ] 
                                                 sample_pred_precursor = sample_cand_precursors[ batch_preds[sample_idx] ]
-                                                logging.info(f'\ntrue product:   {sample_true_prod}')
+                                                logging.info(f'\ntrue product:                           {sample_true_prod}')
                                                 logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
                                                 logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
                                                 break
@@ -738,7 +738,7 @@ class Experiment:
 
                                             sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
                                             sample_pred_precursor = sample_cand_precursors[batch_preds[sample_idx]]
-                                            logging.info(f'\ntrue product:   {sample_true_prod}')
+                                            logging.info(f'\ntrue product:                           {sample_true_prod}')
                                             logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
                                             logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}\n')
                                             break
@@ -763,7 +763,7 @@ class Experiment:
                             batch_top10_acc = batch_correct_preds/batch[0].shape[0]
                 if 10 not in self.k_to_calc:
                     batch_top10_acc = np.nan 
-                test_loader.set_description(f"training...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                test_loader.set_description(f"testing...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                 test_loader.refresh() 
 
                 test_loss += batch_loss   

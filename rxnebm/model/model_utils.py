@@ -6,6 +6,7 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import get_worker_info
 
 
@@ -37,9 +38,11 @@ def get_activation_function(activation: str) -> nn.Module:
     elif activation == "ELU":
         return nn.ELU()
     elif activation == 'Swish':
-        return Swish() 
+        return Swish()
     elif activation == 'LearnedSwish':
-        return LearnedSwish() 
+        return LearnedSwish()
+    elif activation == 'Mish':
+        return Mish()
     else:
         raise ValueError(f'Activation "{activation}" not supported.')
 
@@ -54,10 +57,24 @@ class LearnedSwish(nn.Module):
     def __init__(self, slope = 1):
         super().__init__()
         self.slope = slope * torch.nn.Parameter(torch.ones(1))
+        self.slope.requiresGrad = True # trainable parameter 
     
     def forward(self, x):
         return self.slope * x * torch.sigmoid(x) 
 
+class Mish(nn.Module):
+    '''
+    Mish - "Mish: A Self Regularized Non-Monotonic Neural Activation Function"
+    https://arxiv.org/abs/1908.08681v1
+    implemented for PyTorch / FastAI by lessw2020 
+    github: https://github.com/lessw2020/mish
+    '''
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x): 
+        return x *( torch.tanh(F.softplus(x)) )
+        
 
 def get_optimizer(optimizer: str) -> torch.optim.Optimizer:
     if optimizer == 'Adam':
