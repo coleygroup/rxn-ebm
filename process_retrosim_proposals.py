@@ -170,8 +170,10 @@ def main(args):
                         neg_rxn_fps.append(neg_rxn_fp)
 
                     if len(neg_rxn_fps) < topk:
-                        if rxn_type == 'sep':
+                        if rxn_type == 'sep' or rxn_type == 'hybrid':
                             dummy_fp = np.zeros((1, fp_size * 2))
+                        elif rxn_type == 'hybrid_all':
+                            dummy_fp = np.zeros((1, fp_size * 3))
                         else: # diff 
                             dummy_fp = np.zeros((1, fp_size))
                         neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps))) 
@@ -190,8 +192,10 @@ def main(args):
                         rxn_fps.append(rxn_fp)
 
                     if len(rxn_fps) < topk:
-                        if rxn_type == 'sep':
+                        if rxn_type == 'sep' or rxn_type == 'hybrid':
                             dummy_fp = np.zeros((1, fp_size * 2))
+                        elif rxn_type == 'hybrid_all':
+                            dummy_fp = np.zeros((1, fp_size * 3))
                         else: # diff 
                             dummy_fp = np.zeros((1, fp_size))
                         rxn_fps.extend([dummy_fp] * (topk - len(rxn_fps))) 
@@ -227,14 +231,28 @@ if __name__ == '__main__':
     for fp_size in [512, 1024, 2048, 4096*2, 4096*4]:
         args.fp_size = fp_size
         args.output_file_prefix = f"retrosim_rxn_fps_{fp_size}"
-        logging.info(f'Processing retrosim proposals into {fp_size}-dim diff fingerprints\n')
+        logging.info(f'\nProcessing retrosim proposals into {fp_size}-dim diff fingerprints')
         main(args) 
 
-    for fp_size in [4096]:
+    for fp_size in [1024, 4096, 4096*4]:
         args.fp_size = fp_size
         args.rxn_type = 'sep'
         args.output_file_prefix = f"retrosim_rxn_fps_{fp_size}_{args.rxn_type}"
         logging.info(f'Processing retrosim proposals into {fp_size}-dim sep fingerprints\n')
+        main(args) 
+
+    for fp_size in [1024, 4096, 4096*2, 4096*4]:
+        args.fp_size = fp_size
+        args.rxn_type = 'hybrid'
+        args.output_file_prefix = f"retrosim_rxn_fps_{fp_size}_{args.rxn_type}"
+        logging.info(f'Processing retrosim proposals into {fp_size}-dim hybrid fingerprints\n')
+        main(args) 
+
+    for fp_size in [4096*4, 4096*2, 4096]:
+        args.fp_size = fp_size
+        args.rxn_type = 'hybrid_all'
+        args.output_file_prefix = f"retrosim_rxn_fps_{fp_size}_{args.rxn_type}"
+        logging.info(f'Processing retrosim proposals into {fp_size}-dim hybrid_all fingerprints\n')
         main(args) 
 
     logging.info(f'Successfully prepared {args.representation} from retrosim proposals!')

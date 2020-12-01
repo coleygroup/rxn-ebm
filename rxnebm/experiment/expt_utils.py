@@ -112,10 +112,12 @@ def load_model_opt_and_stats(
             )
             print("loaded checkpoint from load_epoch: ", load_epoch)
 
-        if model_name == "FeedforwardFingerprint" or model_name == "FeedforwardEBM":
-            saved_model = FF.FeedforwardFingerprint(**saved_stats["model_args"])
+        if model_name == "FeedforwardFingerprint" or model_name == 'FeedforwardFp' or model_name == "FeedforwardEBM":
+            saved_model = FF.FeedforwardSingle(**saved_stats["model_args"], **saved_stats["fp_args"])
+        elif model_name == 'FeedforwardTriple3indiv3prod1cos':
+            saved_model = FF.FeedforwardTriple3indiv3prod1cos(**saved_stats["model_args"], **saved_stats["fp_args"])
         else:
-            print("Only FeedforwardFingerprint is supported currently!")
+            print("Only FeedforwardFp is supported currently!")
             return
 
         # override bug in name of optimizer when saving checkpoint

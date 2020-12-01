@@ -143,7 +143,7 @@ def train(args):
     fp_args = args_to_dict(args, "fp_args")
     train_args = args_to_dict(args, "train_args")
 
-    model = FF.FeedforwardFingerprint(**model_args, **fp_args)
+    model = FF.FeedforwardSingle(**model_args, **fp_args)
 
     experiment = expt.Experiment(
         model=model,

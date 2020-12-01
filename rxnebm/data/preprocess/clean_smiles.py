@@ -418,7 +418,7 @@ def clean_rxn_smis_50k_one_phase(
 
 
 def clean_rxn_smis_50k_all_phases(
-    input_file_prefix: str = "schneider50k_raw",
+    input_file_prefix: str = "schneider50k",
     output_file_prefix: str = "50k_clean_rxnsmi_noreagent",
     input_root: Optional[Union[str, bytes, os.PathLike]] = None,
     output_root: Optional[Union[str, bytes, os.PathLike]] = None, 

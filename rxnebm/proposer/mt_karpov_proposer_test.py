@@ -1,6 +1,5 @@
-from mt_karpov_config import mt_karpov_config
-from mt_karpov_proposer import MTKarpovProposer
-
+from rxnebm.proposer.mt_karpov_config import mt_karpov_config
+from rxnebm.proposer.mt_karpov_proposer import MTKarpovProposer
 
 def test():
     proposer = MTKarpovProposer(mt_karpov_config)

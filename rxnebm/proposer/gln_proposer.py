@@ -1,7 +1,7 @@
 from typing import Dict, List
 
 from gln.test.model_inference import RetroGLN
-from proposer_base import Proposer
+from rxnebm.proposer.proposer_base import Proposer
 
 
 class GLNProposer(Proposer):

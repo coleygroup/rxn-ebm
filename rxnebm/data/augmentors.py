@@ -52,13 +52,26 @@ def make_rxn_fp(
     Assembles rcts_fp (a sparse array of 1 x fp_size) & prod_fp (another sparse array, usually of the same shape)
     into a reaction fingerprint, rxn_fp, of the fingerprint type requested
 
-    rxn_type : str (Default = 'diff')
-        currently supports 'diff' & 'sep' fingerprints
+    rxn_type : str (Default = 'diff') ['diff', 'sep', 'hybrid', 'hybrid_all']
+        'diff': 
+            subtract rcts_fp (sum of all rct_fp for that rxn) from prod_fp
+        'sep':
+            simply concatenate rcts_fp with prod_fp
+        'hybrid':
+            concatenate prod_fp with 'diff' fp 
+        'hybrid_all':
+            concatenate rcts_fp, prof_fp & 'diff' fp 
     """
     if rxn_type == "diff":
         rxn_fp = prod_fp - rcts_fp
     elif rxn_type == "sep":
         rxn_fp = sparse.hstack([rcts_fp, prod_fp])
+    elif rxn_type == 'hybrid':
+        diff_fp = prod_fp - rcts_fp
+        rxn_fp = sparse.hstack([prod_fp, diff_fp])
+    elif rxn_type == 'hybrid_all':
+        diff_fp = prod_fp - rcts_fp
+        rxn_fp = sparse.hstack([rcts_fp, prod_fp, diff_fp])
     return rxn_fp
 
 

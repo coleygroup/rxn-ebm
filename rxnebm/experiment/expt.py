@@ -77,6 +77,7 @@ class Experiment:
         fp_type: Optional[str] = None,
         rctfp_size: Optional[int] = None,
         prodfp_size: Optional[int] = None,
+        difffp_size: Optional[int] = None,
         smi_to_fp_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         fp_to_smi_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         mol_fps_filename: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -124,12 +125,14 @@ class Experiment:
         self.expt_name = expt_name
         self.augmentations = augmentations
         self.representation = representation
+
         ### fingerprint arguments ###
         if self.representation == 'fingerprint':
             self.rxn_type = rxn_type
             self.fp_type = fp_type
             self.rctfp_size = rctfp_size
             self.prodfp_size = prodfp_size
+            self.difffp_size = difffp_size
             self.fp_radius = kwargs["fp_radius"] # just for record keeping purposes
 
         if self.representation != 'fingerprint' and 'bit' in augmentations.keys():
@@ -220,6 +223,7 @@ class Experiment:
                 "fp_type": self.fp_type,
                 "rctfp_size": self.rctfp_size,
                 "prodfp_size": self.prodfp_size,
+                "difffp_size": self.difffp_size,
                 "fp_radius": self.fp_radius,
             }
         self.train_args = {
@@ -367,6 +371,10 @@ class Experiment:
             input_dim = self.rctfp_size + self.prodfp_size
         elif self.rxn_type == "diff":
             input_dim = self.rctfp_size
+        elif self.rxn_type == 'hybrid':
+            input_dim = self.prodfp_size + self.difffp_size
+        elif self.rxn_type == 'hybrid_all':
+            input_dim = self.rctfp_size + self.prodfp_size + self.difffp_size
 
         pin_memory = True if torch.cuda.is_available() else False
         train_dataset = dataset.ReactionDatasetFingerprints(
@@ -548,11 +556,15 @@ class Experiment:
                     train_correct_preds[k] += batch_correct_preds
                     if k == 1:
                         batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                    elif k == 5:
+                        batch_top5_acc = batch_correct_preds/batch[0].shape[0]
                     elif k == 10:
                         batch_top10_acc = batch_correct_preds/batch[0].shape[0]
+                if 5 not in self.k_to_calc:
+                    batch_top5_acc = np.nan 
                 if 10 not in self.k_to_calc:
                     batch_top10_acc = np.nan 
-                train_loader.set_description(f"training...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                train_loader.set_description(f"training...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                 train_loader.refresh()
             
             for k in self.k_to_calc:     
@@ -608,12 +620,14 @@ class Experiment:
 
                                                 sample_cand_precursors = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 3: ] 
                                                 sample_pred_precursor = sample_cand_precursors[ batch_preds[sample_idx] ]
-                                                logging.info(f'\ntrue product:                           {sample_true_prod}')
+                                                logging.info(f'\ntrue product:            {sample_true_prod}')
                                                 logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
                                                 logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
                                                 break
                                     except: # do nothing 
                                         logging.info('\nIndex out of range (last minibatch)') 
+                            elif k == 5:
+                                batch_top5_acc = batch_correct_preds/batch[0].shape[0] 
                             elif k == 10:
                                 batch_top10_acc = batch_correct_preds/batch[0].shape[0]                       
                     
@@ -629,11 +643,15 @@ class Experiment:
 
                             if k == 1:
                                 batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                            elif k == 5:
+                                batch_top5_acc = batch_correct_preds/batch[0].shape[0]
                             elif k == 10:
                                 batch_top10_acc = batch_correct_preds/batch[0].shape[0]
+                    if 5 not in self.k_to_calc:
+                        batch_top5_acc = np.nan
                     if 10 not in self.k_to_calc:
                         batch_top10_acc = np.nan 
-                    val_loader.set_description(f"validating...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                    val_loader.set_description(f"validating...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                     val_loader.refresh() 
                     
                     val_loss += batch_loss  
@@ -666,6 +684,12 @@ class Experiment:
                     elif self.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
                         self.lr_scheduler.step(self.val_topk_accs[1][-1])
 
+            if 5 in self.train_topk_accs:
+                epoch_top5_train_acc = self.train_topk_accs[5][-1]
+                epoch_top5_val_acc = self.val_topk_accs[5][-1]
+            else:
+                epoch_top5_train_acc = np.nan
+                epoch_top5_val_acc = np.nan
             if 10 in self.train_topk_accs:
                 epoch_top10_train_acc = self.train_topk_accs[10][-1]
                 epoch_top10_val_acc = self.val_topk_accs[10][-1]
@@ -675,10 +699,13 @@ class Experiment:
             logging.info(
                 f"\nEnd of epoch: {epoch}, \
                 \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
-                \ntop-10 train acc: {epoch_top10_train_acc:.4f}, \
+                \ntop-5 train acc: {epoch_top5_train_acc:.4f}, top-10 train acc: {epoch_top10_train_acc:.4f}, \
                 \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
-                \ntop-10 val acc: {epoch_top10_val_acc:.4f}"
+                \ntop-5 val acc: {epoch_top5_val_acc:.4f}, top-10 val acc: {epoch_top10_val_acc:.4f}"
             )
+            if self.optimizer.param_groups[0]['lr'] < 2e-6:
+                logging.info('Stopping training as learning rate has dropped below 2e-6')
+                break 
 
         logging.info(f'Total training time: {self.stats["train_time"]}')
 
@@ -738,12 +765,14 @@ class Experiment:
 
                                             sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
                                             sample_pred_precursor = sample_cand_precursors[batch_preds[sample_idx]]
-                                            logging.info(f'\ntrue product:                           {sample_true_prod}')
+                                            logging.info(f'\ntrue product:            {sample_true_prod}')
                                             logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
                                             logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}\n')
                                             break
                                 except:
                                     logging.info('\nIndex out of range (last minibatch)')
+                        elif k == 5:
+                            batch_top5_acc = batch_correct_preds/batch[0].shape[0]
                         elif k == 10:
                             batch_top10_acc = batch_correct_preds/batch[0].shape[0]
 
@@ -759,11 +788,15 @@ class Experiment:
 
                         if k == 1:
                             batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                        elif k == 5:
+                            batch_top5_acc = batch_correct_preds/batch[0].shape[0]
                         elif k == 10:
                             batch_top10_acc = batch_correct_preds/batch[0].shape[0]
+                if 5 not in self.k_to_calc:
+                    batch_top5_acc = np.nan
                 if 10 not in self.k_to_calc:
                     batch_top10_acc = np.nan 
-                test_loader.set_description(f"testing...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                test_loader.set_description(f"testing...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                 test_loader.refresh() 
 
                 test_loss += batch_loss   

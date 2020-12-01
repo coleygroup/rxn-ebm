@@ -45,12 +45,7 @@ class Feedforward(nn.Module):
 
     def build(
         self,
-        dropout: nn.Dropout,
-        activation: nn.Module,
-        hidden_sizes: List[int],
-        input_dim: int,
-        output_size: int,
-        num_layers: int,
+        **kwargs
     ):
         """"""
         raise NotImplementedError

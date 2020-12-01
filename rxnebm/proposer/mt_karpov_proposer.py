@@ -2,8 +2,8 @@ from typing import Dict, List
 
 from tensorflow.compat.v1.keras import backend as K
 
-from MT_karpov.transformer import buildNetwork, gen_beam
-from proposer_base import Proposer
+from rxnebm.proposer.MT_karpov.transformer import buildNetwork, gen_beam
+from rxnebm.proposer.proposer_base import Proposer
 
 
 class MTKarpovProposer(Proposer):

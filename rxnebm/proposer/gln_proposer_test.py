@@ -1,5 +1,5 @@
-from gln_config import gln_config
-from gln_proposer import GLNProposer
+from rxnebm.proposer.gln_config import gln_config
+from rxnebm.proposer.gln_proposer import GLNProposer
 
 
 def test():
