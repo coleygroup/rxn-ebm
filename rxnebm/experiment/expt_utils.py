@@ -117,7 +117,7 @@ def load_model_opt_and_stats(
         elif model_name == 'FeedforwardTriple3indiv3prod1cos':
             saved_model = FF.FeedforwardTriple3indiv3prod1cos(**saved_stats["model_args"], **saved_stats["fp_args"])
         else:
-            print("Only FeedforwardFp is supported currently!")
+            print("Only FeedforwardSingle and FeedforwardTriple3indiv3prod1cos are supported currently!")
             return
 
         # override bug in name of optimizer when saving checkpoint

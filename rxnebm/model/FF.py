@@ -104,7 +104,7 @@ class FeedforwardTriple3indiv3prod1cos(nn.Module):
     Only supports
       sep: takes as input a tuple (reactants_fp, product_fp)
 
-    hidden_sizes_encoder : List[int]
+    hidden_sizes : List[int]
         list of hidden layer sizes for the encoder, from layer 0 onwards 
         e.g. [1024, 512, 256] = layer 0 has 1024 neurons, layer 1 has 512 neurons etc.
     output_size : Optional[int] (Default = 1)
@@ -125,7 +125,7 @@ class FeedforwardTriple3indiv3prod1cos(nn.Module):
         rxn_type: Optional[str] = "hybrid_all",
         **kwargs
     ):
-      super(FeedforwardFingerprintTriple3indiv3prod1cos, self).__init__()
+      super(FeedforwardTriple3indiv3prod1cos, self).__init__()
       if rxn_type == "hybrid_all": # [rcts_fp, prod_fp, diff_fp]
         self.rctfp_size = rctfp_size
         self.prodfp_size = prodfp_size
