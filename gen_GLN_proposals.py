@@ -43,7 +43,7 @@ def gen_50k(topk: int = 200,
     proposer = GLNProposer(gln_config)
     
     if input_data_folder is None or input_data_folder == '':
-        input_folder = Path(__file__).resolve().parents[0] / 'data/cleaned_data/' 
+        input_folder = Path(__file__).resolve() / 'data/cleaned_data/' 
     else:
         input_folder = Path(input_data_folder)
     if output_folder is None or output_folder == '':
@@ -67,10 +67,10 @@ def gen_50k(topk: int = 200,
                                     desc=f'Generating GLN proposals for {phase}'
                                 )
                             ):
-            prod_smi = [rxn_smi.split('>>')[-1]]
+            prod_smi = rxn_smi.split('>>')[-1]
             rxn_type = ["UNK"]
 
-            curr_proposals = proposer.propose(prod_smi, rxn_type, topk=topk, beam_size=beam_size)
+            curr_proposals = proposer.propose([prod_smi], rxn_type, topk=topk, beam_size=beam_size)
             phase_proposals[prod_smi] = curr_proposals[0] # curr_proposals is a list w/ 1 element (which is a dict)
 
             if i > 0 and i % 4000 == 0: # checkpoint
@@ -118,14 +118,13 @@ if __name__ == "__main__":
         print('Appending train')
         phases.append('train')
         start_idx = args.start_idx
-        end_idx = args.end_idx 
+        end_idx = args.end_idx  
     if args.valid:
         print('Appending valid')
         phases.append('valid')
     if args.test:
         print('Appending test')
         phases.append('test')
-
     if start_idx is None:
         start_idx = 0
         end_idx = None 
