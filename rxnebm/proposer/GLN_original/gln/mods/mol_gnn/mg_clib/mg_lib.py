@@ -4,7 +4,7 @@ import sys
 
 import numpy as np
 
-from gln_config import gln_config
+from rxnebm.proposer.gln_config import gln_config
 
 try:
     import torch
