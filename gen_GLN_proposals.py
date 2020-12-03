@@ -78,7 +78,7 @@ def gen_50k(topk: int = 200,
                 with open(output_folder / f'GLN_proposed_smiles_{phase}_{i + start_idx}.pickle', 'wb') as handle:
                     pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
-        with open(output_folder / f'GLN_proposed_smiles_{phase}.pickle', 'wb') as handle:
+        with open(output_folder / f'GLN_proposed_smiles_{phase}_start{start_idx}_end{end_idx}.pickle', 'wb') as handle:
             pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
         print(f'Successfully finished {phase}!')
 
