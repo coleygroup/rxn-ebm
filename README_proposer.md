@@ -12,10 +12,10 @@ This should work standalone. @Min Htoo: feel free to merge as appropriate.
     conda install rdkit=2019.03.3.0 -c rdkit
     
     # install torch geometric
-    pip install torch-scatter==latest+${CUDA_VER} -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}.html
-    pip install torch-sparse==latest+${CUDA_VER} -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}.html
-    pip install torch-cluster==latest+${CUDA_VER} -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}.html
-    pip install torch-spline-conv==latest+${CUDA_VER} -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}.html
+    pip install torch-scatter -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}+{CUDA_VER}.html
+    pip install torch-sparse -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}+{CUDA_VER}.html
+    pip install torch-cluster -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}+{CUDA_VER}.html
+    pip install torch-spline-conv -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}+{CUDA_VER}.html
     pip install torch-geometric
     
     # install gln as a package
