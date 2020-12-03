@@ -5,11 +5,12 @@ This should work standalone. @Min Htoo: feel free to merge as appropriate.
 ## Environmental setup
     TORCH_VER=1.6.0
     CUDA_VER=cu102
+    CUDA_VER2=10.2 # identical to CUDA_VER, just formatted differently 
     
-    conda create -n rxn-ebm-proposer python=3.6 scipy
+    conda create -n rxn-ebm-proposer python=3.6 scipy typing
     conda activate rxn-ebm-proposer
-    conda install pytorch=${TORCH_VER} torchvision cudatoolkit=10.2 torchtext -c pytorch
-    conda install rdkit=2019.03.3.0 -c rdkit
+    conda install pytorch=${TORCH_VER} torchvision cudatoolkit=${CUDA_VER2} torchtext -c pytorch
+    conda install -y -c conda-forge rdkit 
     
     # install torch geometric
     pip install torch-scatter -f https://pytorch-geometric.com/whl/torch-${TORCH_VER}+{CUDA_VER}.html
