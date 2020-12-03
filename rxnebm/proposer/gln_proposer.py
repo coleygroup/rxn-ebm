@@ -5,7 +5,7 @@ from rxnebm.proposer.proposer_base import Proposer
 
 
 class GLNProposer(Proposer):
-    """GLN proposer, wrapping around GLN.gln.test.model_inference.RetroGLN"""
+    """GLN proposer, wrapping around gln.test.model_inference.RetroGLN"""
 
     def __init__(self, gln_config: Dict) -> None:
         super().__init__()
