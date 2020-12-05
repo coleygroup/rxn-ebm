@@ -59,9 +59,9 @@ def gen_proposals(
     ----------
     topk : int (Default = 50)
         for each product, how many proposals to put in train
-    maxk : int (Default = 200)
+    maxk : int (Default = 100)
         for each product, how many proposals to put in valid/test 
-    beam_size : int (Default = 50) TODO: can we increase to 100/200? 
+    beam_size : int (Default = 50)  
         beam size to use for ranking generated proposals
     phases : List[str] (Default = ['train', 'valid', 'test'])
         phases to generate GLN proposals for

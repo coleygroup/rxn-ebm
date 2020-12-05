@@ -26,7 +26,9 @@ class MTKarpovProposer(Proposer):
 
     def propose(self, input_smiles: List[str],
                 rxn_types: List[str],
-                topk: int = 1, **kwargs) -> List[Dict[str, List]]:
+                topk: int = 1,
+                beam_size: int = 5,
+                **kwargs) -> List[Dict[str, List]]:
 
         results = []
         with self.sess.as_default():
@@ -35,7 +37,8 @@ class MTKarpovProposer(Proposer):
                                   mdl_decoder=self.mdl_decoder,
                                   T=1.2,
                                   product=smi,
-                                  beam_size=5)
+                                  beam_size=beam_size,
+                                  topk=topk)
                 results.append(result)
 
         return results

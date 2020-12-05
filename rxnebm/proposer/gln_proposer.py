@@ -20,12 +20,14 @@ class GLNProposer(Proposer):
 
     def propose(self, input_smiles: List[str],
                 rxn_types: List[str],
-                topk: int = 1, **kwargs) -> List[Dict[str, List]]:
+                topk: int = 1,
+                beam_size: int = 50,
+                **kwargs) -> List[Dict[str, List]]:
 
         results = []
         for smi, rxn_type in zip(input_smiles, rxn_types):
             result = self.model.run(raw_prod=smi,
-                                    beam_size=50,
+                                    beam_size=beam_size,
                                     topk=topk,
                                     rxn_type=rxn_type)
             results.append(result)

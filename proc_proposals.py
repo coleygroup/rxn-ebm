@@ -147,7 +147,7 @@ def main(args):
 
         # TODO: merge proposals from multiple proposers 
         processed_rxn_smis = []
-        for row in proposals_numpy[:1000]:
+        for row in proposals_numpy:
             neg_rxn_smis = []
             pos_rxn_smi = row[1] + '>>' + row[0] # true_precursors>>prod_smi 
             for neg_precursor in row[2:]:
@@ -361,12 +361,12 @@ if __name__ == '__main__':
 
     for fp_size in [4096*4]: #4096
         args.proposer = 'GLN'
-        args.topk = 50 # 100
+        args.topk = 100
         args.maxk = 100
         args.fp_size = fp_size
         args.rxn_type = 'hybrid_all' 
         args.helper_file_prefix = f'{args.proposer}_{fp_size}'
-        args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{fp_size}_{args.rxn_type}_debug"
+        args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{fp_size}_{args.rxn_type}"
         logging.info(f'Processing {args.proposer} proposals into {fp_size}-dim {args.rxn_type} fingerprints\n')
         main(args) 
 

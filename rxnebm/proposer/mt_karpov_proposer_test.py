@@ -10,13 +10,22 @@ def test():
     # TODO: add in utils for dropping atom map
     product_smiles = [
         "CC(C)(C)OC(=O)NCCc1ccc(N)cc1F",
-        "NCC1=CC[C@@H](c2ccc(Cl)cc2Cl)[C@H]([N+](=O)[O-])C1"
-    ]
-    rxn_types = ["UNK", "UNK"]
+    ] #  "NCC1=CC[C@@H](c2ccc(Cl)cc2Cl)[C@H]([N+](=O)[O-])C1"
+    rxn_types = ["UNK"] # ["UNK", "UNK"]
 
     assert len(product_smiles) == len(rxn_types)
+    results = proposer.propose(product_smiles, rxn_types, topk=5, beam_size=20)
+    print('beam_size = 20, topk = 5')
+    print(results[0])
+    print('\n') 
     results = proposer.propose(product_smiles, rxn_types, topk=5, beam_size=5)
-    print(results)
+    print('beam_size = 5, topk = 5')
+    print(results[0])
+    print('\n') 
+    results = proposer.propose(product_smiles, rxn_types, topk=10, beam_size=10)
+    print('beam_size = 10, topk = 10')
+    print(results[0])
+    print('\n') 
     """
     List of n[List of topk[List of reactants, score]]
     """
