@@ -406,7 +406,7 @@ if __name__ == "__main__":
         start_idx=start_idx,
         end_idx=end_idx, 
         input_folder=input_folder,
-        input_file_prefix=input_file_prefix,
+        input_file_prefix=args.input_file_prefix,
         output_folder=output_folder
     ) 
 

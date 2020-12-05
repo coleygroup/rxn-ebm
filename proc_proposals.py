@@ -2,7 +2,8 @@ import argparse
 import logging 
 import os
 import sys
-import time 
+import time
+import pickle
 import gc
 gc.enable()
 
@@ -30,6 +31,7 @@ def parse_args():
     parser.add_argument("--rxn_smi_file_prefix", help="Prefix of the 3 pickle files containing the train/valid/test reaction SMILES strings (do not change)", type=str,
                         default='50k_clean_rxnsmi_noreagent_allmapped') 
     parser.add_argument("--output_file_prefix", help="Prefix of 3 output files containing proposals in chosen representation", type=str) # add graphs to prefix when necessary
+    parser.add_argument("--helper_file_prefix", help="Prefix of helper files for count_mol_fps & mol_smi_to_fp", type=str) # add graphs to prefix when necessary
 
     parser.add_argument("--proposer", help="Proposer ['retrosim', 'GLN']", type=str)
     parser.add_argument("--topk", help="No. of proposals Retrosim should try to generate per product SMILES (not guaranteed)", type=int, default=200)
@@ -72,6 +74,7 @@ def main(args):
     retrosim_fp_type = args.retrosim_fp_type
     parallelize = args.parallelize
     rxn_smi_file_prefix = args.rxn_smi_file_prefix
+    helper_file_prefix = args.helper_file_prefix
 
     cleaned_data_root = args.cleaned_data_root 
     representation = args.representation
@@ -132,6 +135,8 @@ def main(args):
         return
     elif len(phases_to_compute) < 3: # corrupted 
         raise RuntimeError('The retrosim proposal processing is most likely corrupted. Please delete existing files and restart!')
+    
+    
     for phase in phases_to_compute:
         logging.info(f'Processing {phase}')
         
@@ -142,7 +147,7 @@ def main(args):
 
         # TODO: merge proposals from multiple proposers 
         processed_rxn_smis = []
-        for row in proposals_numpy:
+        for row in proposals_numpy[:1000]:
             neg_rxn_smis = []
             pos_rxn_smi = row[1] + '>>' + row[0] # true_precursors>>prod_smi 
             for neg_precursor in row[2:]:
@@ -179,35 +184,34 @@ def main(args):
 
             mol_smi_to_fp_load = None
             try:
-                with open(cleaned_data_root / f'{output_file_prefix}_mol_smi_to_fp_{phase}.pickle', 'rb') as handle:
+                with open(cleaned_data_root / f'{helper_file_prefix}_mol_smi_to_fp.pickle', 'rb') as handle:
                     mol_smi_to_fp_load = pickle.load(handle)
+                logging.info('Loaded mol_smi_to_fp')
             except Exception as e:
                 logging.info(f'{e}')
-
-            if mol_smi_to_fp_load is None:
-                mol_smi_to_fp = {} 
-                for i, mol_smi in enumerate(uniq_mol_smis):
-                    mol_smi_to_fp[mol_smi] = i
-                with open(cleaned_data_root / f'{output_file_prefix}_mol_smi_to_fp_{phase}.pickle', 'wb') as handle:
-                    pickle.dump(mol_smi_to_fp, handle, protocol=pickle.HIGHEST_PROTOCOL)
+ 
+            mol_smi_to_fp = {} 
+            for i, mol_smi in enumerate(uniq_mol_smis):
+                mol_smi_to_fp[mol_smi] = i
 
             count_mol_fps_load = None
             try:
                 count_mol_fps_load = sparse.load_npz(
-                    cleaned_data_root / f'{output_file_prefix}_count_mol_fps_{phase}.npz'
+                    cleaned_data_root / f'{helper_file_prefix}_count_mol_fps.npz'
                 )
+                logging.info('Loaded count_mol_fps')
             except Exception as e:
                 logging.info(f'{e}')
  
-            if mol_smi_to_fpi_load is not None and count_mol_fps_load is not None:
+            if mol_smi_to_fp_load is not None and count_mol_fps_load is not None: # both files already exist
                 count_mol_fps = [] 
                 for i, mol_smi in enumerate(tqdm(uniq_mol_smis, total=len(uniq_mol_smis), desc='Generating mol fps...')):
-                    try: # load precomputed count_mol_fp if it exists 
+                    if mol_smi in mol_smi_to_fp_load:  # load precomputed count_mol_fp if it exists 
                         cand_mol_fp_idx = mol_smi_to_fp_load[mol_smi]
                         cand_mol_fp = count_mol_fps_load[cand_mol_fp_idx]
                         count_mol_fps.append(cand_mol_fp)
-                    except:
-                        try: # compute from scratch
+                    else: # compute from scratch
+                        try: # have to use try except bcos the mol_smi may not be valid (esp w/ transformers)
                             cand_mol_fp = smi_to_fp.mol_smi_to_count_fp(mol_smi, radius, fp_size, dtype)
                             count_mol_fps.append(cand_mol_fp)
                         except Exception as e:
@@ -215,9 +219,20 @@ def main(args):
                             continue
             
                 try:
+                    for mol_smi, fp_idx in mol_smi_to_fp_load.items():
+                        if mol_smi not in mol_smi_to_fp:
+                            missing_mol_fp_idx = mol_smi_to_fp_load[mol_smi]
+                            missing_mol_fp = count_mol_fps_load[missing_mol_fp_idx]
+                            count_mol_fps.append(missing_mol_fp)
+                            mol_smi_to_fp[mol_smi] = len(count_mol_fps) - 1 # fp_idx is simply length - 1
+
                     sparse_count_mol_fps = sparse.vstack(count_mol_fps)
-                    sparse.save_npz(cleaned_data_root / f'{output_file_prefix}_count_mol_fps_{phase}.npz', 
+                    sparse.save_npz(cleaned_data_root / f'{helper_file_prefix}_count_mol_fps.npz', 
                                     sparse_count_mol_fps)
+                    
+                    with open(cleaned_data_root / f'{helper_file_prefix}_mol_smi_to_fp.pickle', 'wb') as handle:
+                        pickle.dump(mol_smi_to_fp, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                    logging.info('Saved count_mol_fps and mol_smi_to_fp!')
                 except Exception as e:
                     logging.info(f'{e}')
 
@@ -233,10 +248,14 @@ def main(args):
             
                 try:
                     sparse_count_mol_fps = sparse.vstack(count_mol_fps)
-                    sparse.save_npz(cleaned_data_root / f'{output_file_prefix}_count_mol_fps_{phase}.npz', 
+                    sparse.save_npz(cleaned_data_root / f'{helper_file_prefix}_count_mol_fps.npz', 
                                     sparse_count_mol_fps)
+                    with open(cleaned_data_root / f'{helper_file_prefix}_mol_smi_to_fp.pickle', 'wb') as handle:
+                        pickle.dump(mol_smi_to_fp, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                    logging.info('Saved count_mol_fps and mol_smi_to_fp!')
                 except Exception as e:
                     logging.info(f'{e}')
+                    
     
             phase_rxn_fps = [] # sparse.csr_matrix((len(proposals_file_prefix), fp_size)) # init big output sparse matrix
             if phase == 'train':
@@ -340,13 +359,14 @@ if __name__ == '__main__':
     #     logging.info(f'Processing retrosim proposals into {fp_size}-dim hybrid fingerprints\n')
     #     main(args) 
 
-    for fp_size in [4096*4]: #4096s
+    for fp_size in [4096*4]: #4096
         args.proposer = 'GLN'
-        args.topk = 100
+        args.topk = 50 # 100
         args.maxk = 100
         args.fp_size = fp_size
         args.rxn_type = 'hybrid_all' 
-        args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{fp_size}_{args.rxn_type}"
+        args.helper_file_prefix = f'{args.proposer}_{fp_size}'
+        args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{fp_size}_{args.rxn_type}_debug"
         logging.info(f'Processing {args.proposer} proposals into {fp_size}-dim {args.rxn_type} fingerprints\n')
         main(args) 
 
