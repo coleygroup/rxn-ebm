@@ -35,7 +35,7 @@ class MTKarpovProposer(Proposer):
             for smi in input_smiles:
                 result = gen_beam(mdl_encoder=self.mdl_encoder,
                                   mdl_decoder=self.mdl_decoder,
-                                  T=1.2,
+                                  T=1.3,
                                   product=smi,
                                   beam_size=beam_size,
                                   topk=topk)

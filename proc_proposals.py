@@ -361,8 +361,8 @@ if __name__ == '__main__':
 
     for fp_size in [4096*4]: #4096
         args.proposer = 'GLN'
-        args.topk = 100
-        args.maxk = 100
+        args.topk = 50
+        args.maxk = 200
         args.fp_size = fp_size
         args.rxn_type = 'hybrid_all' 
         args.helper_file_prefix = f'{args.proposer}_{fp_size}'

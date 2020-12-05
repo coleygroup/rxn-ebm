@@ -37,9 +37,9 @@ class RetroGLN(object):
         self.gln = GraphPath(self.args)
         try:
             self.gln.load_state_dict(torch.load(model_file))
+            self.gln.cuda() 
         except:
             self.gln.load_state_dict(torch.load(model_file, map_location=torch.device('cpu')))
-        self.gln.cuda() 
         self.gln.eval()
 
         self.prod_center_maps = {}

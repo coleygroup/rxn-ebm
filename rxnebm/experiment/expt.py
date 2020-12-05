@@ -460,7 +460,8 @@ class Experiment:
                     logging.info(
                         f"\nEarly stopped at the end of epoch: {current_epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
-                    \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}"
+                    \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f} \
+                    \n"
                     )
                     self.stats["early_stop_epoch"] = current_epoch
                     self.to_break = 1  # will break loop
@@ -468,7 +469,8 @@ class Experiment:
                     self.wait += 1
                     logging.info(
                         f'\nIncrease in top-{k} val acc < early stop min delta {self.early_stop_min_delta}, \
-                        \npatience count: {self.wait}')
+                        \npatience count: {self.wait} \
+                        \n')
             else:
                 self.wait = 0
                 self.max_val_acc = max(self.max_val_acc, val_acc_to_compare)
@@ -616,13 +618,15 @@ class Experiment:
                                                 sample_true_rank = batch_true_ranks_array[sample_idx][0]
                                                 sample_pred_rank = batch_preds[sample_idx, 0].item() 
                                                 sample_true_prod = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 0 ]
-                                                sample_true_precursor = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 1 ]  
+                                                sample_true_prec = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 1 ]  
 
-                                                sample_cand_precursors = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 3: ] 
-                                                sample_pred_precursor = sample_cand_precursors[ batch_preds[sample_idx] ]
+                                                sample_cand_precs = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 3: ] 
+                                                sample_pred_prec = sample_cand_precs[ batch_preds[sample_idx] ]
+                                                sample_orig_prec = sample_cand_precs[ 0 ]
                                                 logging.info(f'\ntrue product:            {sample_true_prod}')
-                                                logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
-                                                logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}')
+                                                logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
+                                                logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
+                                                logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
                                                 break
                                     except: # do nothing 
                                         logging.info('\nIndex out of range (last minibatch)') 
@@ -701,7 +705,8 @@ class Experiment:
                 \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
                 \ntop-5 train acc: {epoch_top5_train_acc:.4f}, top-10 train acc: {epoch_top10_train_acc:.4f}, \
                 \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
-                \ntop-5 val acc: {epoch_top5_val_acc:.4f}, top-10 val acc: {epoch_top10_val_acc:.4f}"
+                \ntop-5 val acc: {epoch_top5_val_acc:.4f}, top-10 val acc: {epoch_top10_val_acc:.4f} \
+                \n"
             )
             if self.optimizer.param_groups[0]['lr'] < 2e-6:
                 logging.info('Stopping training as learning rate has dropped below 2e-6')
@@ -761,13 +766,15 @@ class Experiment:
                                             sample_true_rank = batch_true_ranks_array[sample_idx][0]
                                             sample_pred_rank = batch_preds[sample_idx, 0].item()
                                             sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
-                                            sample_true_precursor = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
+                                            sample_true_prec = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
 
-                                            sample_cand_precursors = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
-                                            sample_pred_precursor = sample_cand_precursors[batch_preds[sample_idx]]
+                                            sample_cand_precs = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
+                                            sample_pred_prec = sample_cand_precs[ batch_preds[sample_idx] ]
+                                            sample_orig_prec = sample_cand_precs[ 0 ]
                                             logging.info(f'\ntrue product:            {sample_true_prod}')
-                                            logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_precursor}')
-                                            logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_precursor}\n')
+                                            logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
+                                            logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
+                                            logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
                                             break
                                 except:
                                     logging.info('\nIndex out of range (last minibatch)')

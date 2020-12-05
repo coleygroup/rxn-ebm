@@ -15,8 +15,12 @@ from rdkit import RDLogger
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
 
-from rxnebm.proposer.gln_config import gln_config
-from rxnebm.proposer.gln_proposer import GLNProposer
+from typing import Dict, List
+
+from tensorflow.compat.v1.keras import backend as K
+
+from rxnebm.proposer.mt_karpov_config import mt_karpov_config
+from rxnebm.proposer.mt_karpov_proposer import MTKarpovProposer
 
 def merge_train(
             topk: int = 50,
@@ -74,8 +78,8 @@ def gen_proposals(
         path to the folder that will contain the output dicts containing GLN's proposals 
         if None and if location is NOT 'COLAB', this defaults to the same folder as input_data_folder
         otherwise (i.e. we are at 'COLAB'), it defaults to a hardcoded gdrive folder 
-    '''
-    proposer = GLNProposer(gln_config)
+    ''' 
+    proposer = MTKarpovProposer(mt_karpov_config)
 
     clean_rxnsmis = {} 
     for phase in phases:
@@ -88,25 +92,29 @@ def gen_proposals(
         for i, rxn_smi in enumerate(
                                 tqdm(
                                     clean_rxnsmis[phase][ start_idx : end_idx ], 
-                                    desc=f'Generating GLN proposals for {phase}'
+                                    desc=f'Generating MT Karpov proposals for {phase}'
                                 )
                             ):
             prod_smi = rxn_smi.split('>>')[-1]
+            prod_mol = Chem.MolFromSmiles(prod_smi)
+            [atom.ClearProp('molAtomMapNumber') for atom in prod_mol.GetAtoms()]
+            prod_smi_nomap = Chem.MolToSmiles(prod_mol, True)
+
             rxn_type = ["UNK"]
 
-            curr_proposals = proposer.propose([prod_smi], rxn_type, topk=phase_topk, beam_size=beam_size)
-            phase_proposals[prod_smi] = curr_proposals[0] # curr_proposals is a list w/ 1 element (which is a dict)
+            results = proposer.propose([prod_smi_nomap], rxn_type, topk=phase_topk, beam_size=beam_size)
+            phase_proposals[prod_smi] = results[0] # results is a list, which itself contains topk lists, each a list [reactants, scores]
 
             if i > 0 and i % 4000 == 0: # checkpoint
                 logging.info(f'Checkpointing {i} for {phase}')
-                with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_{i + start_idx}.pickle', 'wb') as handle:
+                with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_{i + start_idx}.pickle', 'wb') as handle:
                     pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
         if start_idx == 0 and end_idx is None:
-            with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle', 'wb') as handle:
+            with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle', 'wb') as handle:
                 pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
         else:
-            with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_start{start_idx}_end{end_idx}.pickle', 'wb') as handle:
+            with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_start{start_idx}_end{end_idx}.pickle', 'wb') as handle:
                 pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
         logging.info(f'Successfully finished {phase}!')
 
@@ -130,10 +138,10 @@ def compile_into_csv(
         logging.info(f'Processing {phase} of {phases}')
 
         if (output_folder / 
-            f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle'
+            f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle'
         ).exists(): # file already exists
             with open(output_folder / 
-                f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle', 'rb'
+                f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle', 'rb'
             ) as handle:
                 proposals_phase = pickle.load(handle) 
         else:
@@ -154,7 +162,13 @@ def compile_into_csv(
             prod_smiles_mapped_phase.append(prod_smi)
             
             # value for each prod_smi is a dict, where key = 'reactants' retrieves the predicted precursors
-            precursors = proposals_phase[prod_smi]['reactants']
+            precursors = []
+            results = proposals_phase[prod_smi]
+            for pred in results:
+                this_precs, scores = pred
+                this_precs = '.'.join(this_precs)
+                precursors.append(this_precs)
+
             # remove duplicate predictions 
             seen = []
             for prec in precursors:
@@ -235,7 +249,7 @@ def compile_into_csv(
 
         phase_dataframe.to_csv(
             output_folder / 
-            f'GLN_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.csv',
+            f'MT_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.csv',
             index=False
         )
 
@@ -303,7 +317,13 @@ def analyse_proposed(
     total_proposed, min_proposed, max_proposed = 0, float('+inf'), float('-inf')
     key_count = 0
     for key, mapped_key in zip(prod_smiles_phase, prod_smiles_mapped_phase): 
-        precursors = proposals_phase[mapped_key]['reactants']
+        precursors = []
+        results = proposals_phase[mapped_key]
+        for pred in results:
+            this_precs, scores = pred
+            this_precs = '.'.join(this_precs)
+            precursors.append(this_precs)
+
         precursors_count = len(precursors)
         total_proposed += precursors_count
         if precursors_count > max_proposed:
@@ -329,15 +349,17 @@ def analyse_proposed(
     return 
 
 def parse_args():
-    parser = argparse.ArgumentParser("gen_gln.py")
+    parser = argparse.ArgumentParser("gen_MT.py")
     parser.add_argument('-f') # filler for COLAB
     
-    parser.add_argument("--log_file", help="log_file", type=str, default="gen_gln")
+    parser.add_argument("--log_file", help="log_file", type=str, default="gen_mt_karpov")
     parser.add_argument("--input_folder", help="input folder", type=str)
     parser.add_argument("--input_file_prefix", help="input file prefix of atom-mapped rxn smiles", type=str,
                         default="50k_clean_rxnsmi_noreagent_allmapped")
     parser.add_argument("--output_folder", help="output folder", type=str)
     parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="COLAB")
+    parser.add_argument("--compile", help="Whether to compile proposed precursor SMILES (& corresponding rxn_smiles data) into CSV file", 
+                        action='store_true')
 
     parser.add_argument("--train", help="whether to generate on train data", action="store_true")
     parser.add_argument("--valid", help="whether to generate on valid data", action="store_true")
@@ -352,7 +374,14 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    args = parse_args() 
+    args = parse_args()
+
+    # hardcode args as tensorflow/keras isn't working on bash SOMEHOW 
+    args.test = True 
+    args.location = 'LOCAL'
+    args.beam_size = 5 # 50 
+    args.topk = 5 # 50
+    args.maxk = 5 # 50
 
     RDLogger.DisableLog("rdApp.warning")
 
@@ -375,7 +404,7 @@ if __name__ == "__main__":
         input_folder = Path(args.input_folder)
     if args.output_folder is None:
         if args.location == 'COLAB':
-            output_folder = Path('/content/gdrive/MyDrive/rxn_ebm/datasets/Retro_Reproduction/GLN_proposals/')
+            output_folder = Path('/content/gdrive/MyDrive/rxn_ebm/datasets/Retro_Reproduction/MT_proposals/')
         else:
             output_folder = input_folder
     else:
@@ -421,13 +450,14 @@ if __name__ == "__main__":
     #     output_folder=output_folder
     # )
 
-    # compile_into_csv(
-    #     topk=args.topk,
-    #     maxk=args.maxk,
-    #     beam_size=args.beam_size,
-    #     phases=phases,
-    #     input_folder=input_folder,
-    #     input_file_prefix=args.input_file_prefix,
-    #     output_folder=output_folder
-    # )
+    if args.compile:
+        compile_into_csv(
+            topk=args.topk,
+            maxk=args.maxk,
+            beam_size=args.beam_size,
+            phases=phases,
+            input_folder=input_folder,
+            input_file_prefix=args.input_file_prefix,
+            output_folder=output_folder
+        )
  
