@@ -56,7 +56,8 @@ def gen_proposals(
             end_idx : Optional[int] = None, 
             input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
             input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped',
-            output_folder: Optional[Union[str, bytes, os.PathLike]] = None
+            output_folder: Optional[Union[str, bytes, os.PathLike]] = None,
+            checkpoint_every: Optional[int] = 4000,
             ):
     '''
     Parameters
@@ -78,6 +79,8 @@ def gen_proposals(
         path to the folder that will contain the output dicts containing GLN's proposals 
         if None and if location is NOT 'COLAB', this defaults to the same folder as input_data_folder
         otherwise (i.e. we are at 'COLAB'), it defaults to a hardcoded gdrive folder 
+    checkpoint_every : Optional[int] (Default = 4000)
+        save checkpoint of proposed precursor smiles every N prod_smiles
     ''' 
     proposer = MTKarpovProposer(mt_karpov_config)
 
@@ -105,7 +108,7 @@ def gen_proposals(
             results = proposer.propose([prod_smi_nomap], rxn_type, topk=phase_topk, beam_size=beam_size)
             phase_proposals[prod_smi] = results[0] # results is a list, which itself contains topk lists, each a list [reactants, scores]
 
-            if i > 0 and i % 4000 == 0: # checkpoint
+            if i > 0 and i % checkpoint_every == 0: # checkpoint
                 logging.info(f'Checkpointing {i} for {phase}')
                 with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_{i + start_idx}.pickle', 'wb') as handle:
                     pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -366,6 +369,8 @@ def parse_args():
     parser.add_argument("--test", help="whether to generate on test data", action="store_true")
     parser.add_argument("--start_idx", help="Start idx (train)", type=int, default=0)
     parser.add_argument("--end_idx", help="End idx (train)", type=int)
+    parser.add_argument("--checkpoint_every", help="Save checkpoint of proposed smiles every N product smiles",
+                        type=int, default=4000)
 
     parser.add_argument("--beam_size", help="Beam size", type=int, default=50)
     parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=50)
@@ -436,7 +441,8 @@ if __name__ == "__main__":
         end_idx=end_idx, 
         input_folder=input_folder,
         input_file_prefix=args.input_file_prefix,
-        output_folder=output_folder
+        output_folder=output_folder,
+        checkpoint_every=args.checkpoint_every
     ) 
 
     # HELPER FUNC TO COMBINE 3 TRAIN SPLITS INTO 1 TRAIN FILE
