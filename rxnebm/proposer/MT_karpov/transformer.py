@@ -16,15 +16,12 @@ from tensorflow.keras.utils import plot_model
 from tqdm import tqdm
 
 #custom layers
-from MT_karpov.layers import (LayerNormalization, MaskLayerLeft,
+from rxnebm.proposer.MT_karpov.layers import (LayerNormalization, MaskLayerLeft,
                               MaskLayerRight, MaskLayerTriangular,
                               PositionLayer, SelfLayer)
 
 #suppress INFO, WARNING, and ERROR messages of Tensorflow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
-
-
 
 #seed = 0;
 #tf.random.set_random_seed(seed);
@@ -255,7 +252,7 @@ def gen_greedy(mdl_encoder, mdl_decoder, T, product):
    return ["", 0.0];
 
 
-def gen_beam(mdl_encoder, mdl_decoder, T, product, beam_size = 1):
+def gen_beam(mdl_encoder, mdl_decoder, T, product, beam_size = 1, topk = 5): # added topk as argument
 
    product_encoded, product_mask = mdl_encoder(product);
    if beam_size == 1:
@@ -312,10 +309,11 @@ def gen_beam(mdl_encoder, mdl_decoder, T, product, beam_size = 1):
    for i in range(len(final_beams)):
       final_beams[i][1] = final_beams[i][1] / len(final_beams[i][0]);
 
-   final_beams = list(sorted(final_beams, key=lambda x:x[1]))[:5];
+   # add reverse = True otherwise scores are in ascending order which is wrong
+   final_beams = list(sorted(final_beams, key=lambda x:x[1], reverse=True))[: topk ]; # used to be hardcoded as 5
    answer = [];
 
-   for k in range(5):
+   for k in range(topk): # used to be hardcoded as 5
       reags = set(final_beams[k][0].split("."));
       sms = set();
 
