@@ -317,9 +317,12 @@ class Retrosim:
         Sets self.all_proposed_smiles upon successful execution 
         '''
         if (self.output_folder / 
-            f'all_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle'
+            f'retrosim_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle'
             ).exists(): # file already exists
-            self.all_proposed_smiles = pickle.load(handle)
+            with open(self.output_folder / 
+                f'retrosim_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle'
+                ) as handle:
+                self.all_proposed_smiles = pickle.load(handle)
             self._compile_into_csv() 
         
         else:
@@ -348,12 +351,12 @@ class Retrosim:
                     all_proposed_smiles[prod_smi] = self.propose_one(prod_smi, self.topk, self.max_prec)
 
                     if i % 4000 == 0: # checkpoint temporary files
-                        with open(self.output_folder / f'all_proposed_smiles_{i}.pickle', 'wb') as handle:
+                        with open(self.output_folder / f'retrosim_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec_{i}.pickle', 'wb') as handle:
                             pickle.dump(all_proposed_smiles, handle, protocol=pickle.HIGHEST_PROTOCOL)
                     
             with open(
                     self.output_folder / 
-                    f'all_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle', 'wb'
+                    f'retrosim_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle', 'wb'
                 ) as handle:
                 pickle.dump(all_proposed_smiles, handle, protocol=pickle.HIGHEST_PROTOCOL)
                 
@@ -371,7 +374,7 @@ class Retrosim:
         if self.all_proposed_smiles is None:
             with open(
                     self.output_folder / 
-                    f'all_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle', 'rb'
+                    f'retrosim_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle', 'rb'
                 ) as handle:
                 self.all_proposed_smiles = pickle.load(handle)
         
@@ -502,7 +505,7 @@ class Retrosim:
         if self.all_proposed_smiles is None:
             with open(
                     self.output_folder / 
-                    f'all_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle', 'rb'
+                    f'retrosim_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle', 'rb'
                 ) as handle:
                 self.all_proposed_smiles = pickle.load(handle)
 
@@ -526,8 +529,12 @@ class Retrosim:
         print(f'Min precursors: {min_proposed} for {prod_smi_min}')
         print(f'Max precursors: {max_proposed} for {prod_smi_max})')
 
-        print(f'Most common 20: {proposed_counter.most_common(20)}')
-        print(f'Least common 20: {proposed_counter.most_common(20)[-20:]}')
+        print(f'\nMost common 20:')
+        for i in proposed_counter.most_common(20):
+            print(f'{i}')
+        print(f'\nLeast common 20:')
+        for i in proposed_counter.most_common()[-20:]:
+            print(f'{i}')
 
 if __name__ == '__main__': 
     retrosim_model = Retrosim(topk=200, max_prec=200, similarity_type='Tanimoto',
