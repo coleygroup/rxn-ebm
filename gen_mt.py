@@ -26,6 +26,7 @@ def merge_chunks(
             topk: int = 50,
             maxk: int = 100,
             beam_size: int = 50,
+            temperature: float = 1.3,
             phase: str = 'train',
             start_idxs : List[int] = [0, 13000, 26000],
             end_idxs : List[int] = [13000, 26000, None],
@@ -33,7 +34,7 @@ def merge_chunks(
             input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped',
             output_folder: Optional[Union[str, bytes, os.PathLike]] = None
             ):
-    """ Helper func to combine 3 train splits into 1 train pickle file
+    """ Helper func to combine separatedly computed chunks into a single chunk, for the specified phase
     """
     merged = {} 
     logging.info(f'Merging start_idxs {start_idxs} and end_idxs {end_idxs}')
@@ -51,7 +52,7 @@ def merge_chunks(
 def gen_proposals(
             topk: int = 50,
             maxk: int = 100, 
-            beam_size: Optional[int] = 50,
+            beam_size: int = 50,
             temperature: Optional[float] = 1.3, 
             phases: Optional[List[str]] = ['train', 'valid', 'test'],
             start_idx : Optional[int] = 0,
@@ -146,7 +147,7 @@ def gen_proposals(
 def compile_into_csv(
                 topk: int = 50,
                 maxk: int = 100,
-                beam_size: Optional[int] = 50,
+                beam_size: int = 50,
                 temperature: Optional[float] = 1.3,
                 phases: Optional[List[str]] = ['train', 'valid', 'test'],
                 input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -466,6 +467,7 @@ if __name__ == "__main__":
         merge_chunks(
             topk=args.topk,
             beam_size=args.beam_size,
+            temperature=args.temperature,
             phase=args.phase_to_merge,
             start_idxs=[0, 13000, 26000],
             end_idxs=[13000, 26000, None],
@@ -479,6 +481,7 @@ if __name__ == "__main__":
             topk=args.topk,
             maxk=args.maxk,
             beam_size=args.beam_size,
+            temperature=args.temperature,
             phases=phases,
             input_folder=input_folder,
             input_file_prefix=args.input_file_prefix,

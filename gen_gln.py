@@ -22,16 +22,17 @@ def merge_train(
             topk: int = 50,
             maxk: int = 100,
             beam_size: int = 50,
+            phase: str = 'train',
             start_idxs : List[int] = [0, 13000, 26000],
             end_idxs : List[int] = [13000, 26000, None],
             input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
             input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped',
             output_folder: Optional[Union[str, bytes, os.PathLike]] = None
             ):
-    """ Helper func to combine 3 train splits into 1 train pickle file
+    """ Helper func to combine separatedly computed chunks into a single chunk, for the specified phase
     """
     merged = {} 
-    phase = 'train'
+    logging.info(f'Merging start_idxs {start_idxs} and end_idxs {end_idxs}')
     for start_idx, end_idx in zip(start_idxs, end_idxs):
         with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_start{start_idx}_end{end_idx}.pickle', 'rb') as handle:
             chunk = pickle.load(handle)
@@ -40,7 +41,7 @@ def merge_train(
     
     with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle', 'wb') as handle:
         pickle.dump(merged, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    logging.info('Merged all chunks of train!')
+    logging.info(f'Merged all chunks of {phase}!')
     return 
 
 def gen_proposals(
@@ -52,7 +53,8 @@ def gen_proposals(
             end_idx : Optional[int] = None, 
             input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
             input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped',
-            output_folder: Optional[Union[str, bytes, os.PathLike]] = None
+            output_folder: Optional[Union[str, bytes, os.PathLike]] = None,
+            checkpoint_every: Optional[int] = 4000,
             ):
     '''
     Parameters
@@ -73,7 +75,9 @@ def gen_proposals(
     output_folder : Optional[Union[str, bytes, os.PathLike]] (Default = None)
         path to the folder that will contain the output dicts containing GLN's proposals 
         if None and if location is NOT 'COLAB', this defaults to the same folder as input_data_folder
-        otherwise (i.e. we are at 'COLAB'), it defaults to a hardcoded gdrive folder 
+        otherwise (i.e. we are at 'COLAB'), it defaults to a hardcoded gdrive folder
+    checkpoint_every : Optional[int] (Default = 4000)
+        save checkpoint of proposed precursor smiles every N prod_smiles
     '''
     proposer = GLNProposer(gln_config)
 
@@ -91,13 +95,13 @@ def gen_proposals(
                                     desc=f'Generating GLN proposals for {phase}'
                                 )
                             ):
-            prod_smi = rxn_smi.split('>>')[-1]
+            prod_smi_mapped = rxn_smi.split('>>')[-1]
             rxn_type = ["UNK"]
 
-            curr_proposals = proposer.propose([prod_smi], rxn_type, topk=phase_topk, beam_size=beam_size)
-            phase_proposals[prod_smi] = curr_proposals[0] # curr_proposals is a list w/ 1 element (which is a dict)
+            curr_proposals = proposer.propose([prod_smi_mapped], rxn_type, topk=phase_topk, beam_size=beam_size)
+            phase_proposals[prod_smi_mapped] = curr_proposals[0] # curr_proposals is a list w/ 1 element (which is a dict)
 
-            if i > 0 and i % 4000 == 0: # checkpoint
+            if i > 0 and i % checkpoint_every == 0: # checkpoint
                 logging.info(f'Checkpointing {i} for {phase}')
                 with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_{i + start_idx}.pickle', 'wb') as handle:
                     pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -344,6 +348,13 @@ def parse_args():
     parser.add_argument("--test", help="whether to generate on test data", action="store_true")
     parser.add_argument("--start_idx", help="Start idx (train)", type=int, default=0)
     parser.add_argument("--end_idx", help="End idx (train)", type=int)
+    parser.add_argument("--checkpoint_every", help="Save checkpoint of proposed smiles every N product smiles",
+                        type=int, default=4000)
+
+    parser.add_argument("--merge_chunks", help="Whether to merge already computed chunks", action="store_true")
+    parser.add_argument("--phase_to_merge", help="Phase to merge chunks of (only supports phase at a time)", type=str)
+    parser.add_argument("--compile", help="Whether to compile proposed precursor SMILES (& corresponding rxn_smiles data) into CSV file", 
+                        action='store_true')
 
     parser.add_argument("--beam_size", help="Beam size", type=int, default=50)
     parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=50)
@@ -380,53 +391,52 @@ if __name__ == "__main__":
     else:
         output_folder = Path(args.output_folder)
 
-    phases = []
-    start_idx, end_idx = None, None
+    phases = [] 
     if args.train:
         logging.info('Appending train')
-        phases.append('train')
-        start_idx = args.start_idx
-        end_idx = args.end_idx  
+        phases.append('train') 
     if args.valid:
         logging.info('Appending valid')
         phases.append('valid')
     if args.test:
         logging.info('Appending test')
-        phases.append('test')
-    if start_idx is None:
-        start_idx = 0
-        end_idx = None 
+        phases.append('test') 
+
+    logging.info(args)
 
     gen_proposals(
         maxk=args.maxk,
         topk=args.topk,
         beam_size=args.beam_size,
         phases=phases,
-        start_idx=start_idx,
-        end_idx=end_idx, 
+        start_idx=args.start_idx,
+        end_idx=args.end_idx, 
         input_folder=input_folder,
         input_file_prefix=args.input_file_prefix,
-        output_folder=output_folder
+        output_folder=output_folder,
+        checkpoint_every=args.checkpoint_every
     ) 
 
-    # HELPER FUNC TO COMBINE 3 TRAIN SPLITS INTO 1 TRAIN FILE
-    # merge_train(
-    #     topk=args.topk,
-    #     beam_size=args.beam_size,
-    #     start_idxs=[0, 13000, 26000],
-    #     end_idxs=[13000, 26000, None],
-    #     input_folder=input_folder,
-    #     input_file_prefix=args.input_file_prefix,
-    #     output_folder=output_folder
-    # )
+    if args.merge_chunks:
+        merge_chunks(
+            topk=args.topk,
+            beam_size=args.beam_size,
+            phase=args.phase_to_merge,
+            start_idxs=[0, 13000, 26000],
+            end_idxs=[13000, 26000, None],
+            input_folder=input_folder,
+            input_file_prefix=args.input_file_prefix,
+            output_folder=output_folder
+        )
 
-    # compile_into_csv(
-    #     topk=args.topk,
-    #     maxk=args.maxk,
-    #     beam_size=args.beam_size,
-    #     phases=phases,
-    #     input_folder=input_folder,
-    #     input_file_prefix=args.input_file_prefix,
-    #     output_folder=output_folder
-    # )
+    if args.compile:
+        compile_into_csv(
+            topk=args.topk,
+            maxk=args.maxk,
+            beam_size=args.beam_size,
+            phases=phases,
+            input_folder=input_folder,
+            input_file_prefix=args.input_file_prefix,
+            output_folder=output_folder
+        )
  
