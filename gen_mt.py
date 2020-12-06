@@ -22,10 +22,11 @@ from tensorflow.compat.v1.keras import backend as K
 from rxnebm.proposer.mt_karpov_config import mt_karpov_config
 from rxnebm.proposer.mt_karpov_proposer import MTKarpovProposer
 
-def merge_train(
+def merge_chunks(
             topk: int = 50,
             maxk: int = 100,
             beam_size: int = 50,
+            phase: str = 'train',
             start_idxs : List[int] = [0, 13000, 26000],
             end_idxs : List[int] = [13000, 26000, None],
             input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -35,22 +36,23 @@ def merge_train(
     """ Helper func to combine 3 train splits into 1 train pickle file
     """
     merged = {} 
-    phase = 'train'
+    logging.info(f'Merging start_idxs {start_idxs} and end_idxs {end_idxs}')
     for start_idx, end_idx in zip(start_idxs, end_idxs):
-        with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_start{start_idx}_end{end_idx}.pickle', 'rb') as handle:
+        with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{temperature}T_{phase}_start{start_idx}_end{end_idx}.pickle', 'rb') as handle:
             chunk = pickle.load(handle)
         for key, value in chunk.items(): 
             merged[key] = value
     
-    with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle', 'wb') as handle:
+    with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{temperature}T_{phase}.pickle', 'wb') as handle:
         pickle.dump(merged, handle, protocol=pickle.HIGHEST_PROTOCOL)
-    logging.info('Merged all chunks of train!')
+    logging.info(f'Merged all chunks of {phase}!')
     return 
 
 def gen_proposals(
             topk: int = 50,
             maxk: int = 100, 
             beam_size: Optional[int] = 50,
+            temperature: Optional[float] = 1.3, 
             phases: Optional[List[str]] = ['train', 'valid', 'test'],
             start_idx : Optional[int] = 0,
             end_idx : Optional[int] = None, 
@@ -67,7 +69,9 @@ def gen_proposals(
     maxk : int (Default = 100)
         for each product, how many proposals to put in valid/test 
     beam_size : int (Default = 50)  
-        beam size to use for ranking generated proposals
+        beam size for ranking generated proposals
+    temperature : float (Default = 1.3)
+        temperature for decoding
     phases : List[str] (Default = ['train', 'valid', 'test'])
         phases to generate GLN proposals for
     input_folder : Optional[Union[str, bytes, os.PathLike]] (Default = None)
@@ -91,6 +95,7 @@ def gen_proposals(
 
         phase_proposals = {} # key = prod_smi, value = Dict[template, reactants, scores]
         logging.info(f'Calculting for start_idx: {start_idx}, end_idx: {end_idx}')
+        logging.info(f'Using T={temperature}, beam_size={beam_size}, topk={topk}, maxk={maxk}')
         phase_topk = topk if phase == 'train' else maxk
         for i, rxn_smi in enumerate(
                                 tqdm(
@@ -105,19 +110,29 @@ def gen_proposals(
 
             rxn_type = ["UNK"]
 
-            results = proposer.propose([prod_smi_nomap], rxn_type, topk=phase_topk, beam_size=beam_size)
+            results = proposer.propose([prod_smi_nomap], 
+                                        rxn_type, 
+                                        topk=phase_topk,
+                                        beam_size=beam_size, 
+                                        temperature=temperature)
             phase_proposals[prod_smi] = results[0] # results is a list, which itself contains topk lists, each a list [reactants, scores]
 
             if i > 0 and i % checkpoint_every == 0: # checkpoint
                 logging.info(f'Checkpointing {i} for {phase}')
-                with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_{i + start_idx}.pickle', 'wb') as handle:
+                with open(output_folder / 
+                        f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{temperature}T_{phase}_start{start_idx}_end{i + start_idx}.pickle', 
+                        'wb') as handle:
                     pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
         if start_idx == 0 and end_idx is None:
-            with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle', 'wb') as handle:
+            with open(output_folder / 
+                    f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{temperature}T_{phase}.pickle', 
+                    'wb') as handle:
                 pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
         else:
-            with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_start{start_idx}_end{end_idx}.pickle', 'wb') as handle:
+            with open(output_folder / 
+                    f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_{temperature}T_start{start_idx}_end{end_idx}.pickle', 
+                    'wb') as handle:
                 pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
         logging.info(f'Successfully finished {phase}!')
 
@@ -132,6 +147,7 @@ def compile_into_csv(
                 topk: int = 50,
                 maxk: int = 100,
                 beam_size: Optional[int] = 50,
+                temperature: Optional[float] = 1.3,
                 phases: Optional[List[str]] = ['train', 'valid', 'test'],
                 input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
                 input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped',
@@ -141,10 +157,10 @@ def compile_into_csv(
         logging.info(f'Processing {phase} of {phases}')
 
         if (output_folder / 
-            f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle'
+            f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{temperature}T_{phase}.pickle'
         ).exists(): # file already exists
             with open(output_folder / 
-                f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle', 'rb'
+                f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{temperature}T_{phase}.pickle', 'rb'
             ) as handle:
                 proposals_phase = pickle.load(handle) 
         else:
@@ -252,7 +268,7 @@ def compile_into_csv(
 
         phase_dataframe.to_csv(
             output_folder / 
-            f'MT_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.csv',
+            f'MT_{topk}topk_{maxk}maxk_{beam_size}beam_{temperature}T_{phase}.csv',
             index=False
         )
 
@@ -352,17 +368,15 @@ def analyse_proposed(
     return 
 
 def parse_args():
-    parser = argparse.ArgumentParser("gen_MT.py")
+    parser = argparse.ArgumentParser("gen_mt.py")
     parser.add_argument('-f') # filler for COLAB
     
-    parser.add_argument("--log_file", help="log_file", type=str, default="gen_mt_karpov")
+    parser.add_argument("--log_file", help="log_file", type=str, default="gen_mt")
     parser.add_argument("--input_folder", help="input folder", type=str)
     parser.add_argument("--input_file_prefix", help="input file prefix of atom-mapped rxn smiles", type=str,
                         default="50k_clean_rxnsmi_noreagent_allmapped")
     parser.add_argument("--output_folder", help="output folder", type=str)
     parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="COLAB")
-    parser.add_argument("--compile", help="Whether to compile proposed precursor SMILES (& corresponding rxn_smiles data) into CSV file", 
-                        action='store_true')
 
     parser.add_argument("--train", help="whether to generate on train data", action="store_true")
     parser.add_argument("--valid", help="whether to generate on valid data", action="store_true")
@@ -371,22 +385,28 @@ def parse_args():
     parser.add_argument("--end_idx", help="End idx (train)", type=int)
     parser.add_argument("--checkpoint_every", help="Save checkpoint of proposed smiles every N product smiles",
                         type=int, default=4000)
+    
+    parser.add_argument("--merge_chunks", help="Whether to merge already computed chunks", action="store_true")
+    parser.add_argument("--phase_to_merge", help="Phase to merge chunks of (only supports phase at a time)", type=str)
+    parser.add_argument("--compile", help="Whether to compile proposed precursor SMILES (& corresponding rxn_smiles data) into CSV file", 
+                        action='store_true')
 
     parser.add_argument("--beam_size", help="Beam size", type=int, default=50)
     parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=50)
     parser.add_argument("--maxk", help="How many top-k proposals to generate and put in valid/test (not guaranteed)", type=int, default=100)
+    parser.add_argument("--temperature", help="Temperature for decoding", type=float, default=1.3)
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
 
-    # hardcode args as tensorflow/keras isn't working on bash SOMEHOW 
-    args.test = True 
-    args.location = 'LOCAL'
-    args.beam_size = 5 # 50 
-    args.topk = 5 # 50
-    args.maxk = 5 # 50
+    # TODO: tensorflow/keras isn't working on bash SOMEHOW 
+    # args.test = True 
+    # args.location = 'LOCAL'
+    # args.beam_size = 5 # 50 
+    # args.topk = 5 # 50
+    # args.maxk = 5 # 50
 
     RDLogger.DisableLog("rdApp.warning")
 
@@ -394,8 +414,7 @@ if __name__ == "__main__":
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
 
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    # logger.propagate = False
+    logger.setLevel(logging.INFO) 
     fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
     fh.setLevel(logging.INFO)
     sh = logging.StreamHandler(sys.stdout)
@@ -415,46 +434,45 @@ if __name__ == "__main__":
     else:
         output_folder = Path(args.output_folder)
 
-    phases = []
-    start_idx, end_idx = None, None
+    phases = [] 
     if args.train:
         logging.info('Appending train')
         phases.append('train')
-        start_idx = args.start_idx
-        end_idx = args.end_idx  
     if args.valid:
         logging.info('Appending valid')
         phases.append('valid')
     if args.test:
         logging.info('Appending test')
         phases.append('test')
-    if start_idx is None:
-        start_idx = 0
-        end_idx = None 
+    
+    logging.info(args) 
 
-    gen_proposals(
-        maxk=args.maxk,
-        topk=args.topk,
-        beam_size=args.beam_size,
-        phases=phases,
-        start_idx=start_idx,
-        end_idx=end_idx, 
-        input_folder=input_folder,
-        input_file_prefix=args.input_file_prefix,
-        output_folder=output_folder,
-        checkpoint_every=args.checkpoint_every
-    ) 
-
-    # HELPER FUNC TO COMBINE 3 TRAIN SPLITS INTO 1 TRAIN FILE
-    # merge_train(
-    #     topk=args.topk,
-    #     beam_size=args.beam_size,
-    #     start_idxs=[0, 13000, 26000],
-    #     end_idxs=[13000, 26000, None],
-    #     input_folder=input_folder,
-    #     input_file_prefix=args.input_file_prefix,
-    #     output_folder=output_folder
-    # )
+    if phases:
+        gen_proposals(
+            maxk=args.maxk,
+            topk=args.topk,
+            beam_size=args.beam_size,
+            temperature=args.temperature,
+            phases=phases,
+            start_idx=args.start_idx,
+            end_idx=args.end_idx, 
+            input_folder=input_folder,
+            input_file_prefix=args.input_file_prefix,
+            output_folder=output_folder,
+            checkpoint_every=args.checkpoint_every
+        ) 
+    
+    if args.merge_chunks:
+        merge_chunks(
+            topk=args.topk,
+            beam_size=args.beam_size,
+            phase=args.phase_to_merge,
+            start_idxs=[0, 13000, 26000],
+            end_idxs=[13000, 26000, None],
+            input_folder=input_folder,
+            input_file_prefix=args.input_file_prefix,
+            output_folder=output_folder
+        )
 
     if args.compile:
         compile_into_csv(

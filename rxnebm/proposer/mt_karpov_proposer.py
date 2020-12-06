@@ -28,14 +28,15 @@ class MTKarpovProposer(Proposer):
                 rxn_types: List[str],
                 topk: int = 1,
                 beam_size: int = 5,
-                **kwargs) -> List[Dict[str, List]]:
+                temperature: float = 1.3
+                **kwargs) -> List[List[List[List[str], float]]]:
 
         results = []
         with self.sess.as_default():
             for smi in input_smiles:
                 result = gen_beam(mdl_encoder=self.mdl_encoder,
                                   mdl_decoder=self.mdl_decoder,
-                                  T=1.3,
+                                  T=temperature,
                                   product=smi,
                                   beam_size=beam_size,
                                   topk=topk)

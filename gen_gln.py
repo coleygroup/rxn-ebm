@@ -360,8 +360,7 @@ if __name__ == "__main__":
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
 
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    # logger.propagate = False
+    logger.setLevel(logging.INFO) 
     fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
     fh.setLevel(logging.INFO)
     sh = logging.StreamHandler(sys.stdout)

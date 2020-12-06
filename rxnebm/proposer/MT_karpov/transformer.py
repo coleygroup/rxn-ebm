@@ -10,7 +10,10 @@ import h5py
 import numpy as np
 import tensorflow.compat.v1 as tf
 from rdkit import Chem
-from tensorflow.keras import backend as K
+from tensorflow.keras import backend as K # original 
+# from tensorflow.python.keras import backend as K
+# from tensorflow.compat.v1.keras import backend as K
+
 from tensorflow.keras import layers
 from tensorflow.keras.utils import plot_model
 from tqdm import tqdm
@@ -28,7 +31,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 #np.random.seed(seed);
 
 config = tf.ConfigProto()
-config.gpu_options.allow_growth = True;
+config.gpu_options.allow_growth = True; 
 K.set_session(tf.Session(config=config))
 
 class suppress_stderr(object):
@@ -277,10 +280,14 @@ def gen_beam(mdl_encoder, mdl_decoder, T, product, beam_size = 1, topk = 5): # a
          cb = len(lines);
          nr = np.zeros(( cb * vocab_size, 2));
          for i in range(cb):
-            p = mdl_decoder(lines[i], product_encoded, product_mask, T);
-            for j in range(vocab_size):
-               nr[ i* vocab_size + j, 0] = -math.log10(p[j]) + scores[i];
-               nr[ i* vocab_size + j, 1] = i * 100 + j;
+            try:
+               p = mdl_decoder(lines[i], product_encoded, product_mask, T);
+               for j in range(vocab_size):
+                  nr[ i* vocab_size + j, 0] = -math.log10(p[j]) + scores[i];
+                  nr[ i* vocab_size + j, 1] = i * 100 + j;
+            except Exception as e:
+               print(e)
+               continue 
 
       y = nr [ nr[:, 0].argsort() ] ;
 
@@ -315,7 +322,7 @@ def gen_beam(mdl_encoder, mdl_decoder, T, product, beam_size = 1, topk = 5): # a
 
    to_search = min(topk, len(final_beams)) # added to prevent index out of range error with larger topk (e.g. 50) 
 
-   for k in range(topk): # used to be hardcoded as 5
+   for k in range(to_search): # used to be hardcoded as 5
       reags = set(final_beams[k][0].split("."));
       sms = set();
 
