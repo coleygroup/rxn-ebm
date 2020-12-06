@@ -92,8 +92,11 @@ def gen_left(data):
     for cnt in range(batch_size):
         product = "^" + data[cnt] + "$";
         for i, p in enumerate(product):
-           x[cnt, i] = char_to_ix[ p] ;
-           px[cnt, i] = GEO[i+1, :EMBEDDING_SIZE ];
+            try:
+               x[cnt, i] = char_to_ix[ p] ;
+               px[cnt, i] = GEO[i+1, :EMBEDDING_SIZE ];
+            except Exception as e:
+               print(e)
         mx[cnt, :i+1] = 1;
     return x, mx, px;
 
@@ -108,8 +111,11 @@ def gen_right(data):
     for cnt in range(batch_size):
         reactants = "^" + data[cnt];
         for i, p in enumerate(reactants):
-           y[cnt, i] = char_to_ix[p];
-           py[cnt, i] = GEO[i+1, :EMBEDDING_SIZE ];
+            try:
+               y[cnt, i] = char_to_ix[p];
+               py[cnt, i] = GEO[i+1, :EMBEDDING_SIZE ];
+            except Exception as e:
+               print(e)
         my[cnt, :i+1] =1;
     return y, my, py;
 

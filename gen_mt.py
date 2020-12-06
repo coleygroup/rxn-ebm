@@ -110,13 +110,17 @@ def gen_proposals(
             prod_smi_nomap = Chem.MolToSmiles(prod_mol, True)
 
             rxn_type = ["UNK"]
-
-            results = proposer.propose([prod_smi_nomap], 
-                                        rxn_type, 
-                                        topk=phase_topk,
-                                        beam_size=beam_size, 
-                                        temperature=temperature)
-            phase_proposals[prod_smi] = results[0] # results is a list, which itself contains topk lists, each a list [reactants, scores]
+            try:
+                results = proposer.propose([prod_smi_nomap], 
+                                            rxn_type, 
+                                            topk=phase_topk,
+                                            beam_size=beam_size, 
+                                            temperature=temperature)
+                phase_proposals[prod_smi] = results[0] # results is a list, which itself contains topk lists, each a list [reactants, scores]
+            except Exception as e:
+                logging.info(f'At index {i} for {prod_smi_nomap}: {e}')
+                # put empty list if MT could not propose
+                phase_proposals[prod_smi] = []
 
             if i > 0 and i % checkpoint_every == 0: # checkpoint
                 logging.info(f'Checkpointing {i} for {phase}')
@@ -430,6 +434,7 @@ if __name__ == "__main__":
     if args.output_folder is None:
         if args.location == 'COLAB':
             output_folder = Path('/content/gdrive/MyDrive/rxn_ebm/datasets/Retro_Reproduction/MT_proposals/')
+            os.makedirs(output_folder, exist_ok=True)
         else:
             output_folder = input_folder
     else:

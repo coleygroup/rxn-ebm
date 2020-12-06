@@ -386,6 +386,7 @@ if __name__ == "__main__":
     if args.output_folder is None:
         if args.location == 'COLAB':
             output_folder = Path('/content/gdrive/MyDrive/rxn_ebm/datasets/Retro_Reproduction/GLN_proposals/')
+            os.makedirs(output_folder, exist_ok=True)
         else:
             output_folder = input_folder
     else:
