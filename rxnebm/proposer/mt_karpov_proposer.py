@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Union
 
 from tensorflow.compat.v1.keras import backend as K
 
@@ -28,8 +28,8 @@ class MTKarpovProposer(Proposer):
                 rxn_types: List[str],
                 topk: int = 1,
                 beam_size: int = 5,
-                temperature: float = 1.3
-                **kwargs) -> List[List[List[List[str], float]]]:
+                temperature: float = 1.3,
+                **kwargs) -> List[List[List[Union[List[str], float]]]]:
 
         results = []
         with self.sess.as_default():
