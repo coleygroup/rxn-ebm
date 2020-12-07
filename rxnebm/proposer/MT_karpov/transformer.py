@@ -321,9 +321,8 @@ def gen_beam(mdl_encoder, mdl_decoder, T, product, beam_size = 1, topk = 5): # a
 
    for i in range(len(final_beams)):
       final_beams[i][1] = final_beams[i][1] / len(final_beams[i][0]);
-
-   # add reverse = True otherwise scores are in ascending order which is wrong
-   final_beams = list(sorted(final_beams, key=lambda x:x[1], reverse=True))[: topk ]; # used to be hardcoded as 5
+ 
+   final_beams = list(sorted(final_beams, key=lambda x:x[1]))[: topk ] # used to be hardcoded as 5
    answer = [];
 
    to_search = min(topk, len(final_beams)) # added to prevent index out of range error with larger topk (e.g. 50) 
