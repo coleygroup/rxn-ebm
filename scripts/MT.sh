@@ -1,4 +1,4 @@
-python gen_mt_karpov.py \
+python gen_mt.py \
     --test \
     --topk=20 \
     --maxk=20 \
