@@ -15,18 +15,19 @@ from rdkit import RDLogger
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
 
-from rxnebm.proposer.gln_config import gln_config
-from rxnebm.proposer.gln_proposer import GLNProposer
+try: #placeholder to just process proposals locally on windows w/o installing gln
+    from rxnebm.proposer.gln_config import gln_config
+    from rxnebm.proposer.gln_proposer import GLNProposer
+except Exception as e:
+    print(e)
 
-def merge_train(
+def merge_chunks(
             topk: int = 50,
             maxk: int = 100,
             beam_size: int = 50,
             phase: str = 'train',
             start_idxs : List[int] = [0, 13000, 26000],
-            end_idxs : List[int] = [13000, 26000, None],
-            input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
-            input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped',
+            end_idxs : List[int] = [13000, 26000, None], 
             output_folder: Optional[Union[str, bytes, os.PathLike]] = None
             ):
     """ Helper func to combine separatedly computed chunks into a single chunk, for the specified phase
@@ -34,7 +35,8 @@ def merge_train(
     merged = {} 
     logging.info(f'Merging start_idxs {start_idxs} and end_idxs {end_idxs}')
     for start_idx, end_idx in zip(start_idxs, end_idxs):
-        with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_start{start_idx}_end{end_idx}.pickle', 'rb') as handle:
+        with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_start{start_idx}_end{end_idx}.pickle', 
+        'rb') as handle:
             chunk = pickle.load(handle)
         for key, value in chunk.items(): 
             merged[key] = value
@@ -79,7 +81,7 @@ def gen_proposals(
     checkpoint_every : Optional[int] (Default = 4000)
         save checkpoint of proposed precursor smiles every N prod_smiles
     '''
-    proposer = GLNProposer(gln_config)
+    # proposer = GLNProposer(gln_config)
 
     clean_rxnsmis = {} 
     for phase in phases:
@@ -147,8 +149,10 @@ def compile_into_csv(
             clean_rxnsmi_phase = pickle.load(handle)
  
         proposed_precs_phase, prod_smiles_phase, rcts_smiles_phase = [], [], []
+        proposed_precs_phase_withdups = [] # true representation of model predictions, for calc_accs() 
         prod_smiles_mapped_phase = [] # helper for analyse_proposed() 
         phase_topk = topk if phase == 'train' else maxk
+        dup_count = 0
         for rxn_smi in tqdm(clean_rxnsmi_phase, desc='Processing rxn_smi'):     
             prod_smi = rxn_smi.split('>>')[-1]
             prod_mol = Chem.MolFromSmiles(prod_smi)
@@ -164,12 +168,15 @@ def compile_into_csv(
             for prec in precursors:
                 if prec not in seen:
                     seen.append(prec)
+                else:
+                    dup_count += 1
 
             if len(seen) < phase_topk:
                 seen.extend(['9999'] * (phase_topk - len(seen)))
             else:
                 seen = seen[ : phase_topk]
             proposed_precs_phase.append(seen)
+            proposed_precs_phase_withdups.append(precursors)
 
             rcts_smi = rxn_smi.split('>>')[0]
             rcts_mol = Chem.MolFromSmiles(rcts_smi)
@@ -178,16 +185,18 @@ def compile_into_csv(
             # Sometimes stereochem takes another canonicalization...
             rcts_smi_nomap = Chem.MolToSmiles(Chem.MolFromSmiles(rcts_smi_nomap), True) 
             rcts_smiles_phase.append(rcts_smi_nomap)
-
+        dup_count /= len(clean_rxnsmi_phase)
+        logging.info(f'Avg # dups per product: {dup_count}')
         # logging.info(f'len(precursors): {len(precursors)}')
 
         ranks_dict = calc_accs( 
             [phase],
             clean_rxnsmi_phase,
             rcts_smiles_phase,
-            proposed_precs_phase,
+            proposed_precs_phase_withdups,
         )
         ranks_phase = ranks_dict[phase]
+
         analyse_proposed(
             prod_smiles_phase,
             prod_smiles_mapped_phase,
@@ -290,7 +299,7 @@ def calc_accs(
         ranks[phase] = phase_ranks
 
         logging.info('\n')
-        for n in [1, 3, 5, 10, 20, 50]:
+        for n in [1, 3, 5, 10, 20, 50, 100, 200]:
             total = float(len(ranks[phase]))
             acc = sum([r+1 <= n for r in ranks[phase]]) / total
             logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
@@ -343,9 +352,10 @@ def parse_args():
     parser.add_argument("--output_folder", help="output folder", type=str)
     parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="COLAB")
 
-    parser.add_argument("--train", help="whether to generate on train data", action="store_true")
-    parser.add_argument("--valid", help="whether to generate on valid data", action="store_true")
-    parser.add_argument("--test", help="whether to generate on test data", action="store_true")
+    parser.add_argument("--propose", help='Whether to generate proposals (or just compile)', action="store_true")
+    parser.add_argument("--train", help="Whether to generate and/or compile train preds", action="store_true")
+    parser.add_argument("--valid", help="Whether to generate and/or compile valid preds", action="store_true")
+    parser.add_argument("--test", help="Whether to generate and/or compile test preds", action="store_true")
     parser.add_argument("--start_idx", help="Start idx (train)", type=int, default=0)
     parser.add_argument("--end_idx", help="End idx (train)", type=int)
     parser.add_argument("--checkpoint_every", help="Save checkpoint of proposed smiles every N product smiles",
@@ -353,6 +363,11 @@ def parse_args():
 
     parser.add_argument("--merge_chunks", help="Whether to merge already computed chunks", action="store_true")
     parser.add_argument("--phase_to_merge", help="Phase to merge chunks of (only supports phase at a time)", type=str)
+    parser.add_argument("--chunk_start_idxs", help="Start idxs of computed chunks, separate by commas e.g. 0,10000,20000", 
+                        type=str, default='0,15000,30000')
+    parser.add_argument("--chunk_end_idxs", help="End idxs of computed chunks, separate by commas, for 'None'\
+                        just type a comma not followed by any number e.g. 10000,20000,", type=str, default='15000,30000,')
+    
     parser.add_argument("--compile", help="Whether to compile proposed precursor SMILES (& corresponding rxn_smiles data) into CSV file", 
                         action='store_true')
 
@@ -405,28 +420,28 @@ if __name__ == "__main__":
 
     logging.info(args)
 
-    gen_proposals(
-        maxk=args.maxk,
-        topk=args.topk,
-        beam_size=args.beam_size,
-        phases=phases,
-        start_idx=args.start_idx,
-        end_idx=args.end_idx, 
-        input_folder=input_folder,
-        input_file_prefix=args.input_file_prefix,
-        output_folder=output_folder,
-        checkpoint_every=args.checkpoint_every
-    ) 
+    if args.propose:
+        gen_proposals(
+            maxk=args.maxk,
+            topk=args.topk,
+            beam_size=args.beam_size,
+            phases=phases,
+            start_idx=args.start_idx,
+            end_idx=args.end_idx, 
+            input_folder=input_folder,
+            input_file_prefix=args.input_file_prefix,
+            output_folder=output_folder,
+            checkpoint_every=args.checkpoint_every
+        ) 
 
     if args.merge_chunks:
         merge_chunks(
             topk=args.topk,
+            maxk=args.maxk,
             beam_size=args.beam_size,
-            phase=args.phase_to_merge,
-            start_idxs=[0, 13000, 26000],
-            end_idxs=[13000, 26000, None],
-            input_folder=input_folder,
-            input_file_prefix=args.input_file_prefix,
+            phase=args.phase_to_merge, 
+            start_idxs=[int(num) if num != '' else None for num in args.chunk_start_idxs.split(',')], # [0, 12000, 15000, 30000] 
+            end_idxs=[int(num) if num != '' else None for num in args.chunk_start_idxs.split(',')], # [12000, 15000, 30000, None], 
             output_folder=output_folder
         )
 

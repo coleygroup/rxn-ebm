@@ -406,13 +406,6 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    # TODO: tensorflow/keras isn't working on bash SOMEHOW 
-    # args.test = True 
-    # args.location = 'LOCAL'
-    # args.beam_size = 5 # 50 
-    # args.topk = 5 # 50
-    # args.maxk = 5 # 50
-
     RDLogger.DisableLog("rdApp.warning")
 
     os.makedirs("./logs", exist_ok=True)

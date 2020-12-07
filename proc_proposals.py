@@ -33,6 +33,8 @@ def parse_args():
     parser.add_argument("--output_file_prefix", help="Prefix of 3 output files containing proposals in chosen representation", type=str) # add graphs to prefix when necessary
     parser.add_argument("--helper_file_prefix", help="Prefix of helper files for count_mol_fps & mol_smi_to_fp", type=str) # add graphs to prefix when necessary
 
+    parser.add_argument("--split_every", help="Split train .npz every N steps to prevent out of memory error", type=int, default=10000)
+
     parser.add_argument("--proposer", help="Proposer ['retrosim', 'GLN']", type=str)
     parser.add_argument("--topk", help="No. of proposals Retrosim should try to generate per product SMILES (not guaranteed)", type=int, default=200)
 
@@ -75,6 +77,8 @@ def main(args):
     parallelize = args.parallelize
     rxn_smi_file_prefix = args.rxn_smi_file_prefix
     helper_file_prefix = args.helper_file_prefix
+    if args.split_every is None:
+        args.split_every = float('+inf')
 
     cleaned_data_root = args.cleaned_data_root 
     representation = args.representation
@@ -96,13 +100,11 @@ def main(args):
 
     if args.proposer == 'retrosim':
         proposals_file_prefix = f"retrosim_{topk}maxtest_{max_prec}maxprec" # do not change
-    elif args.proposer.upper() == 'GLN':
+    elif args.proposer == 'GLN':
         proposals_file_prefix = f"GLN_{topk}topk_{maxk}maxk_{beam_size}beam" # do not change
- 
-    if cleaned_data_root is None:
-        cleaned_data_root = Path(__file__).resolve().parents[0] / 'rxnebm/data/cleaned_data'
 
     if args.proposer == 'retrosim':
+        #TODO: move this to a different script: gen_proposals.py, merge gen_gln.py/gen_mt.py and handle all proposers over there
         for phase in ['train', 'valid', 'test']:
             logging.info(f"finding proposals CSV file at : {cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv'}")
             if not (cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv').exists():
@@ -114,14 +116,30 @@ def main(args):
                 retrosim_model.analyse_proposed() 
                 break # propose_all() settles all 3 of train, valid & test
 
-    elif args.proposer.upper() == 'GLN':
+    elif args.proposer == 'GLN' or args.proposer == 'MT': #TODO: fully implement MT 
         for phase in ['train', 'valid', 'test']:
+            files = os.listdir(cleaned_data_root)
+            if proposals_file_prefix not in files:
+                topk_pass, maxk_pass = False, False
+                for filename in files:
+                    if args.proposer in filename and 'train.csv' in filename and f'{beam_size}beam' in filename: 
+                        for kwarg in filename.split('_'): # split into ['GLN', '200topk', '200maxk', '200beam', 'valid.csv']
+                            if 'topk' in kwarg:
+                                if int(kwarg.strip('topk')) >= topk: 
+                                    topk_pass = True  # as long as proposal file's topk >= requested topk, we can load it
+                            if 'maxk' in kwarg:
+                                if int(kwarg.strip('maxk')) >= maxk:
+                                    maxk_pass = True
+                    if topk_pass and maxk_pass: 
+                        proposals_file_prefix = filename.replace('_train.csv', '')
+                        break
+
             logging.info(f"finding proposals CSV file at : {cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv'}")
             if not (cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv').exists():
-                raise RuntimeError('Could not find proposals CSV file by GLN! Please run gen_and_proc_GLN.py')
+                raise RuntimeError(f'Could not find proposals CSV file by {args.proposer}! Please run gen_gln.py or gen_mt.py')
 
     else:
-        raise ValueError(f'Unrecognized args.proposer {args.proposer}')
+        raise ValueError(f'Unrecognized proposer {args.proposer}')
 
     # check if ALL 3 files to be computed already exist in cleaned_data_root, if so, then just exit the function
     phases_to_compute = ['train', 'valid', 'test'] 
@@ -134,8 +152,9 @@ def main(args):
     if len(phases_to_compute) == 0: # all pre-computed, OK exit 
         return
     elif len(phases_to_compute) < 3: # corrupted 
-        raise RuntimeError('The retrosim proposal processing is most likely corrupted. Please delete existing files and restart!')
+        raise RuntimeError('The proposal processing is most likely corrupted. Please delete existing files and restart!')
     
+    logging.info(f'\n{args}\n')
     
     for phase in phases_to_compute:
         logging.info(f'Processing {phase}')
@@ -145,15 +164,15 @@ def main(args):
         proposals_trimmed = proposals.drop(['orig_rxn_smi', 'rank_of_true_precursor'], axis=1)
         proposals_numpy = proposals_trimmed.values
 
-        # TODO: merge proposals from multiple proposers 
+        # TODO: merge proposals from multiple proposers into a single file for training & testing
+        phase_topk = topk if phase == 'train' else maxk
         processed_rxn_smis = []
         for row in proposals_numpy:
             neg_rxn_smis = []
             pos_rxn_smi = row[1] + '>>' + row[0] # true_precursors>>prod_smi 
-            for neg_precursor in row[2:]:
-                # this neg_proposal and later ones in the same row are all N/A, therefore break the loop 
+            for neg_precursor in row[2:][:phase_topk]: # limit to just phase_topk proposals
                 if str(neg_precursor) == '9999': 
-                    break
+                    break # this neg_proposal and later ones in the same row are all N/A, therefore break the loop 
                 else:
                     neg_rxn_smi = neg_precursor + '>>' + row[0] #neg_precursors>>prod_smi 
                     neg_rxn_smis.append(neg_rxn_smi)
@@ -168,7 +187,7 @@ def main(args):
 
         elif representation == 'fingerprints':
             uniq_mol_smis = set() 
-            for rxn in processed_rxn_smis:
+            for rxn in tqdm(processed_rxn_smis, desc='Generating uniq mol smis'):
                 for rxn_smi in rxn:
                     rcts = rxn_smi.split(">")[0]
                     prod = rxn_smi.split(">")[-1] 
@@ -179,7 +198,7 @@ def main(args):
                         uniq_mol_smis.add(mol_smi)
 
             uniq_mol_smis = list(uniq_mol_smis)
-            logging.info('Generated unique mol_smis!')
+            logging.info('Generated unique mol smis!')
             time.sleep(0.5)
 
             mol_smi_to_fp_load = None
@@ -288,15 +307,22 @@ def main(args):
                     this_rxn_fps = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
                     # phase_rxn_fps[i] = sparse.hstack([pos_rxn_fp, *neg_rxn_fps]) # significantly slower! 
                     phase_rxn_fps.append(this_rxn_fps)
+                    
+                    if (i % args.split_every == 0 and i > 0) or (i == len(processed_rxn_smis) - 1):
+                        logging.info(f'Checkpointing {i}')
+                        phase_rxn_fps_checkpoint = sparse.vstack(phase_rxn_fps)
+                        sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}_{i}.npz", phase_rxn_fps_checkpoint)
+                        phase_rxn_fps = [] # reset to empty list 
+
             else: # do not assume pos_rxn_smi is inside 
-                for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn_fps...')):
+                for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
                     rxn_smis = rxn[1:] 
 
                     rxn_fps = []
                     for rxn_smi in rxn_smis:
                         try:
                             rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
-                            rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type)
+                            rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type) # log=True (take log(x+1) of rct & prodfps)
                             rxn_fps.append(rxn_fp)
                         except Exception as e:
                             logging.info(f'Error {e} at index {i}')
@@ -309,16 +335,38 @@ def main(args):
                             dummy_fp = np.zeros((1, fp_size * 3))
                         else: # diff 
                             dummy_fp = np.zeros((1, fp_size))
-                        rxn_fps.extend([dummy_fp] * (maxk - len(rxn_fps))) 
+                        rxn_fps.extend([dummy_fp] * (maxk - len(rxn_fps)))
 
                     this_rxn_fps = sparse.hstack(rxn_fps)
                     phase_rxn_fps.append(this_rxn_fps)
 
-            phase_rxn_fps = sparse.vstack(phase_rxn_fps)
-            sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}.npz", phase_rxn_fps)
+                phase_rxn_fps = sparse.vstack(phase_rxn_fps)
+                sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}.npz", phase_rxn_fps)
+                phase_rxn_fps = [] # reset to empty list 
         
         else:
             raise ValueError(f'{representation} not supported!')
+
+def merge_chunks(args):
+    logging.info(f'Merging chunks with idxs {args.split_idxs}') 
+    
+    chunk_A = sparse.load_npz(args.cleaned_data_root / f"{args.output_file_prefix}_{args.phase}_{args.split_idxs[0]}.npz")
+    chunk_B = sparse.load_npz(args.cleaned_data_root / f"{args.output_file_prefix}_{args.phase}_{args.split_idxs[1]}.npz")
+    combined = sparse.vstack([chunk_A, chunk_B])
+    del chunk_A, chunk_B
+    gc.collect() 
+
+    for idx in tqdm(args.split_idxs[2:]):
+        chunk = sparse.load_npz(args.cleaned_data_root / f"{args.output_file_prefix}_{args.phase}_{idx}.npz")
+        combined = sparse.vstack([combined, chunk])
+        del chunk 
+        gc.collect() 
+
+    sparse.save_npz(args.cleaned_data_root / f"{args.output_file_prefix}_{args.phase}.npz", combined)
+    logging.info(f'Successfully merged chunks of {args.phase}!')
+    del combined
+    gc.collect() 
+    return
 
 if __name__ == '__main__':
     args = parse_args()
@@ -339,42 +387,28 @@ if __name__ == '__main__':
     logger.addHandler(fh)
     logger.addHandler(sh)
 
-    # for fp_size in [512, 1024, 2048, 4096*2, 4096*4]:
-    #     args.fp_size = fp_size
-    #     args.output_file_prefix = f"retrosim_rxn_fps_{fp_size}"
-    #     logging.info(f'\nProcessing retrosim proposals into {fp_size}-dim diff fingerprints')
-    #     main(args) 
+    if args.cleaned_data_root is None:
+        args.cleaned_data_root = Path(__file__).resolve().parents[0] / 'rxnebm/data/cleaned_data'
+    else:
+        args.cleaned_data_root = Path(args.cleaned_data_root)
 
-    # for fp_size in [1024, 4096, 4096*4]:
-    #     args.fp_size = fp_size
-    #     args.rxn_type = 'sep'
-    #     args.output_file_prefix = f"retrosim_rxn_fps_{fp_size}_{args.rxn_type}"
-    #     logging.info(f'Processing retrosim proposals into {fp_size}-dim sep fingerprints\n')
-    #     main(args) 
-
-    # for fp_size in [1024, 4096, 4096*2, 4096*4]:
-    #     args.fp_size = fp_size
-    #     args.rxn_type = 'hybrid'
-    #     args.output_file_prefix = f"retrosim_rxn_fps_{fp_size}_{args.rxn_type}"
-    #     logging.info(f'Processing retrosim proposals into {fp_size}-dim hybrid fingerprints\n')
-    #     main(args) 
-
-    for fp_size in [4096*4]: #4096
-        args.proposer = 'GLN'
-        args.topk = 50
+    #TODO: implement parallelization (for count mol fp generation & rxn fp generation) 
+    for fp_size in [4096*4]:  
+        #NOTE: takes 8+12 min for valid & test each, and 1hr+2hrs for train :') 
+        args.proposer = 'GLN' 
+        args.topk = 200 # OOM if one shot, need to split into chunks
         args.maxk = 200
+        args.beam_size = 200
+        args.split_every = 10000 
         args.fp_size = fp_size
         args.rxn_type = 'hybrid_all' 
-        args.helper_file_prefix = f'{args.proposer}_{fp_size}'
-        args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{fp_size}_{args.rxn_type}"
-        logging.info(f'Processing {args.proposer} proposals into {fp_size}-dim {args.rxn_type} fingerprints\n')
-        main(args) 
+        args.helper_file_prefix = f'{fp_size}'
+        args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{args.beam_size}beam_{args.fp_size}_{args.rxn_type}"
+        logging.info(f'Processing {args.proposer} proposals into {args.fp_size}-dim {args.rxn_type} fingerprints\n')
+        main(args)
+
+        args.phase = 'train'
+        args.split_idxs = [0, 10000, 20000, 30000, 39713]
+        merge_chunks(args)
 
     logging.info('Processing finished successfully')
-
-    # for fp_size in [4096*4, 4096*2, 4096]:
-    #     args.fp_size = fp_size
-    #     args.rxn_type = 'hybrid_all'
-    #     args.output_file_prefix = f"retrosim_rxn_fps_{fp_size}_{args.rxn_type}"
-    #     logging.info(f'Processing retrosim proposals into {fp_size}-dim hybrid_all fingerprints\n')
-    #     main(args)  
