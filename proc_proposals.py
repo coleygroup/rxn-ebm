@@ -25,7 +25,7 @@ from rxnebm.proposer import retrosim_model
 def parse_args():
     parser = argparse.ArgumentParser("proc_proposals.py")
     # file names
-    parser.add_argument("--log_file", help="log_file", type=str, default="")
+    parser.add_argument("--log_file", help="log_file", type=str, default="proc_proposals")
     parser.add_argument("--cleaned_data_root", help="Path to cleaned_data folder (do not change)", type=str,
                         default=None) 
     parser.add_argument("--rxn_smi_file_prefix", help="Prefix of the 3 pickle files containing the train/valid/test reaction SMILES strings (do not change)", type=str,
@@ -33,7 +33,8 @@ def parse_args():
     parser.add_argument("--output_file_prefix", help="Prefix of 3 output files containing proposals in chosen representation", type=str) # add graphs to prefix when necessary
     parser.add_argument("--helper_file_prefix", help="Prefix of helper files for count_mol_fps & mol_smi_to_fp", type=str) # add graphs to prefix when necessary
 
-    parser.add_argument("--split_every", help="Split train .npz every N steps to prevent out of memory error", type=int, default=10000)
+    parser.add_argument("--split_every", help="Split train .npz every N steps to prevent out of memory error", 
+                        type=int, default=10000)
 
     parser.add_argument("--proposer", help="Proposer ['retrosim', 'GLN']", type=str)
     parser.add_argument("--topk", help="No. of proposals Retrosim should try to generate per product SMILES (not guaranteed)", type=int, default=200)
@@ -370,16 +371,12 @@ def merge_chunks(args):
 
 if __name__ == '__main__':
     args = parse_args()
-
-    # logger setup
+ 
     RDLogger.DisableLog("rdApp.warning")
-
     os.makedirs("./logs", exist_ok=True)
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
-
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    # logger.propagate = False
+    logger.setLevel(logging.INFO) 
     fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
     fh.setLevel(logging.INFO)
     sh = logging.StreamHandler(sys.stdout)

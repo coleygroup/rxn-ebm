@@ -19,8 +19,12 @@ from typing import Dict, List
 
 from tensorflow.compat.v1.keras import backend as K
 
-from rxnebm.proposer.mt_karpov_config import mt_karpov_config
-from rxnebm.proposer.mt_karpov_proposer import MTKarpovProposer
+try: #placeholder to just process proposals locally on windows w/o having to fix tensorflow
+    from rxnebm.proposer.mt_karpov_config import mt_karpov_config
+    from rxnebm.proposer.mt_karpov_proposer import MTKarpovProposer
+except Exception as e:
+    print(e)
+
 
 def merge_chunks(
             topk: int = 50,
@@ -38,8 +42,8 @@ def merge_chunks(
     """
     merged = {} 
     logging.info(f'Merging start_idxs {start_idxs} and end_idxs {end_idxs}')
-    for start_idx, end_idx in zip(start_idxs, end_idxs):
-        with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{temperature}T_{phase}_start{start_idx}_end{end_idx}.pickle', 'rb') as handle:
+    for start_idx, end_idx in zip(start_idxs, end_idxs): #TODO: fix placement of temperature flag
+        with open(output_folder / f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_{temperature}T_start{start_idx}_end{end_idx}.pickle', 'rb') as handle:
             chunk = pickle.load(handle)
         for key, value in chunk.items(): 
             merged[key] = value
@@ -136,7 +140,7 @@ def gen_proposals(
                 pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
         else:
             with open(output_folder / 
-                    f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_{temperature}T_start{start_idx}_end{end_idx}.pickle', 
+                    f'MT_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{temperature}T_{phase}_start{start_idx}_end{end_idx}.pickle', 
                     'wb') as handle:
                 pickle.dump(phase_proposals, handle, protocol=pickle.HIGHEST_PROTOCOL)
         logging.info(f'Successfully finished {phase}!')
@@ -176,7 +180,9 @@ def compile_into_csv(
  
         proposed_precs_phase, prod_smiles_phase, rcts_smiles_phase = [], [], []
         prod_smiles_mapped_phase = [] # helper for analyse_proposed() 
+        proposed_precs_phase_withdups = []
         phase_topk = topk if phase == 'train' else maxk
+        dup_count = 0
         for rxn_smi in tqdm(clean_rxnsmi_phase, desc='Processing rxn_smi'):     
             prod_smi = rxn_smi.split('>>')[-1]
             prod_mol = Chem.MolFromSmiles(prod_smi)
@@ -184,11 +190,10 @@ def compile_into_csv(
             prod_smi_nomap = Chem.MolToSmiles(prod_mol, True)
             prod_smiles_phase.append(prod_smi_nomap)
             prod_smiles_mapped_phase.append(prod_smi)
-            
-            # value for each prod_smi is a dict, where key = 'reactants' retrieves the predicted precursors
+             
             precursors = []
-            results = proposals_phase[prod_smi]
-            for pred in results:
+            results = proposals_phase[prod_smi]   
+            for pred in results[::-1]: # need to reverse
                 this_precs, scores = pred
                 this_precs = '.'.join(this_precs)
                 precursors.append(this_precs)
@@ -198,12 +203,15 @@ def compile_into_csv(
             for prec in precursors:
                 if prec not in seen:
                     seen.append(prec)
+                else:
+                    dup_count += 1
 
             if len(seen) < phase_topk:
                 seen.extend(['9999'] * (phase_topk - len(seen)))
             else:
                 seen = seen[ : phase_topk]
             proposed_precs_phase.append(seen)
+            proposed_precs_phase_withdups.append(precursors)
 
             rcts_smi = rxn_smi.split('>>')[0]
             rcts_mol = Chem.MolFromSmiles(rcts_smi)
@@ -212,14 +220,15 @@ def compile_into_csv(
             # Sometimes stereochem takes another canonicalization...
             rcts_smi_nomap = Chem.MolToSmiles(Chem.MolFromSmiles(rcts_smi_nomap), True) 
             rcts_smiles_phase.append(rcts_smi_nomap)
-
+        dup_count /= len(clean_rxnsmi_phase)
+        logging.info(f'Avg # dups per product: {dup_count}')
         # logging.info(f'len(precursors): {len(precursors)}')
 
         ranks_dict = calc_accs( 
             [phase],
             clean_rxnsmi_phase,
             rcts_smiles_phase,
-            proposed_precs_phase,
+            proposed_precs_phase_withdups,
         )
         ranks_phase = ranks_dict[phase]
         analyse_proposed(
@@ -393,9 +402,13 @@ def parse_args():
     
     parser.add_argument("--merge_chunks", help="Whether to merge already computed chunks", action="store_true")
     parser.add_argument("--phase_to_merge", help="Phase to merge chunks of (only supports phase at a time)", type=str)
+    parser.add_argument("--chunk_start_idxs", help="Start idxs of computed chunks, separate by commas e.g. 0,10000,20000", type=str)
+    parser.add_argument("--chunk_end_idxs", help="End idxs of computed chunks, separate by commas, for 'None'\
+                        just type a comma not followed by any number e.g. 10000,20000,", type=str)
+
     parser.add_argument("--compile", help="Whether to compile proposed precursor SMILES (& corresponding rxn_smiles data) into CSV file", 
                         action='store_true')
-
+    
     parser.add_argument("--beam_size", help="Beam size", type=int, default=50)
     parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=50)
     parser.add_argument("--maxk", help="How many top-k proposals to generate and put in valid/test (not guaranteed)", type=int, default=100)
@@ -446,29 +459,30 @@ if __name__ == "__main__":
     
     logging.info(args) 
 
-    if phases:
-        gen_proposals(
-            maxk=args.maxk,
-            topk=args.topk,
-            beam_size=args.beam_size,
-            temperature=args.temperature,
-            phases=phases,
-            start_idx=args.start_idx,
-            end_idx=args.end_idx, 
-            input_folder=input_folder,
-            input_file_prefix=args.input_file_prefix,
-            output_folder=output_folder,
-            checkpoint_every=args.checkpoint_every
-        ) 
+    # if phases:
+    #     gen_proposals(
+    #         maxk=args.maxk,
+    #         topk=args.topk,
+    #         beam_size=args.beam_size,
+    #         temperature=args.temperature,
+    #         phases=phases,
+    #         start_idx=args.start_idx,
+    #         end_idx=args.end_idx, 
+    #         input_folder=input_folder,
+    #         input_file_prefix=args.input_file_prefix,
+    #         output_folder=output_folder,
+    #         checkpoint_every=args.checkpoint_every
+    #     ) 
     
     if args.merge_chunks:
         merge_chunks(
             topk=args.topk,
+            maxk=args.maxk,
             beam_size=args.beam_size,
             temperature=args.temperature,
             phase=args.phase_to_merge,
-            start_idxs=[0, 13000, 26000],
-            end_idxs=[13000, 26000, None],
+            start_idxs=[int(num) if num != '' else None for num in args.chunk_start_idxs.split(',')],
+            end_idxs=[int(num) if num != '' else None for num in args.chunk_end_idxs.split(',')],
             input_folder=input_folder,
             input_file_prefix=args.input_file_prefix,
             output_folder=output_folder
