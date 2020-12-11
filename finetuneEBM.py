@@ -89,7 +89,10 @@ def args_to_dict(args, args_type: str) -> dict:
 
 def finetune(args):
     """finetune a trained EBM"""
-    logging.info("Setting up model and experiment") 
+    logging.info("Logging args")
+    logging.info(vars(args))
+    logging.info("Setting up model and experiment")
+
     train_args = args_to_dict(args, "train_args")
 
     old_checkpoint_folder = expt_utils.setup_paths(
@@ -99,6 +102,9 @@ def finetune(args):
     saved_model, saved_optimizer, saved_stats = expt_utils.load_model_opt_and_stats(
         saved_stats_filename, old_checkpoint_folder, args.model_name, train_args['optimizer']
     )
+    logging.info(f"Saved model {saved_model.model_repr} loaded, logging model summary")
+    logging.info(saved_model)
+    logging.info(f"\nModel #Params: {sum([x.nelement() for x in saved_model.parameters()]) / 1000} k")
 
     experiment = expt.Experiment(
         model=saved_model,

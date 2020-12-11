@@ -34,7 +34,9 @@ class FeedforwardSingle(base.Feedforward):
         rxn_type: Optional[str] = "diff",
         **kwargs
     ):
-        super(FeedforwardSingle, self).__init__(hidden_sizes, dropout, activation, output_size, rctfp_size, prodfp_size, rxn_type)
+        super().__init__(hidden_sizes, dropout, activation, output_size, rctfp_size, prodfp_size, rxn_type)
+        self.model_repr = "FeedforwardEBM"
+
         if rxn_type == "sep":
             input_dim = rctfp_size + prodfp_size
         elif rxn_type == "diff":
@@ -52,8 +54,10 @@ class FeedforwardSingle(base.Feedforward):
         )
         model_utils.initialize_weights(self)
 
-    def __repr__(self):
-        return "FeedforwardEBM"  # needed by experiment.py for saving model details
+    # ztu on 201211: commented out and modified expt.py accordingly
+    # as a general advice do not override __repr__. Pytorch module relies on __repr__ to get model summary
+    # def __repr__(self):
+    #     return "FeedforwardEBM"  # needed by experiment.py for saving model details
 
     def build(
         self,
@@ -125,7 +129,9 @@ class FeedforwardTriple3indiv3prod1cos(nn.Module):
         rxn_type: Optional[str] = "hybrid_all",
         **kwargs
     ):
-      super(FeedforwardTriple3indiv3prod1cos, self).__init__()
+      super().__init__()
+      self.model_repr = "FeedforwardTriple3indiv3prod1cos"
+
       if rxn_type == "hybrid_all": # [rcts_fp, prod_fp, diff_fp]
         self.rctfp_size = rctfp_size
         self.prodfp_size = prodfp_size
@@ -152,8 +158,6 @@ class FeedforwardTriple3indiv3prod1cos(nn.Module):
 
       model_utils.initialize_weights(self)
 
-    def __repr__(self):
-        return "FeedforwardTriple3indiv3prod1cos"  # needed by experiment.py for saving model details
 
     def build(self):
       pass 

@@ -111,6 +111,8 @@ def args_to_dict(args, args_type: str) -> dict:
 
 def train(args):
     """train EBM from scratch"""
+    logging.info("Logging args")
+    logging.info(vars(args))
 
     # hard-coded
     augmentations = {
@@ -144,6 +146,9 @@ def train(args):
     train_args = args_to_dict(args, "train_args")
 
     model = FF.FeedforwardSingle(**model_args, **fp_args)
+    logging.info(f"Model {model.model_repr} created, logging model summary")
+    logging.info(model)
+    logging.info(f"\nModel #Params: {sum([x.nelement() for x in model.parameters()]) / 1000} k")
 
     experiment = expt.Experiment(
         model=model,

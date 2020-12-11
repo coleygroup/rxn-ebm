@@ -146,7 +146,7 @@ class Experiment:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(self.device)
         self.model = model
-        self.model_name = repr(self.model)
+        self.model_name = self.model.model_repr
         self.model_args = model_args
         self.distributed = distributed  # TODO: affects how checkpoint is saved
 

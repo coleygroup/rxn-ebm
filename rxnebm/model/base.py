@@ -40,9 +40,6 @@ class Feedforward(nn.Module):
         )
         model_utils.initialize_weights(self)
 
-    def __repr__(self):
-        raise NotImplementedError  # needed by experiment.py for saving model details
-
     def build(
         self,
         **kwargs
