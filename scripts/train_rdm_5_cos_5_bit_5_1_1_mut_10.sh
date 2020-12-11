@@ -1,5 +1,9 @@
 #!/bin/sh 
 python trainEBM.py \
+  --do_pretrain \
+  --do_eval \
+  --do_test \
+  --do_get_energies_and_acc \
 	--log_file=rdm_5_cos_5_bit_5_1_1_mut_10.log \
 	--expt_name=rdm_5_cos_5_bit_5_1_1_mut_10 \
 	--precomp_file_prefix=50k_rdm_5_cos_5_bit_5_1_1_mut_10 \

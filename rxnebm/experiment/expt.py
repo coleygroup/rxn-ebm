@@ -53,11 +53,6 @@ class Experiment:
         model_args: dict,
         augmentations: dict,
         onthefly: Optional[bool] = False,
-        rxn_smis_file_prefix: Optional[str] = None,
-        smi_to_fp_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
-        fp_to_smi_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
-        mol_fps_filename: Optional[Union[str, bytes, os.PathLike]] = None,
-        search_index_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         debug: Optional[bool] = True, 
         device: Optional[str] = None,
         distributed: Optional[bool] = False,
@@ -146,11 +141,11 @@ class Experiment:
                 precomp_file_prefix=self.args.precomp_file_prefix,
                 proposals_csv_file_prefix=self.args.proposals_csv_file_prefix,
                 onthefly=onthefly,
-                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
-                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
-                mol_fps_filename=mol_fps_filename,
-                search_index_filename=search_index_filename,
-                rxn_smis_file_prefix=rxn_smis_file_prefix,
+                smi_to_fp_dict_filename=self.args.smi_to_fp_dict_filename,
+                fp_to_smi_dict_filename=self.args.fp_to_smi_dict_filename,
+                mol_fps_filename=self.args.mol_fps_filename,
+                search_index_filename=self.args.search_index_filename,
+                rxn_smis_file_prefix=self.args.rxn_smis_file_prefix
             )
 
         if load_checkpoint:
@@ -451,7 +446,6 @@ class Experiment:
             else:
                 self.wait = 0
                 self.max_val_acc = max(self.max_val_acc, val_acc_to_compare)
-
 
     def _update_stats(self):
         self.stats["train_time"] = (
