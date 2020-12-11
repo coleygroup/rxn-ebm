@@ -35,6 +35,8 @@ def parse_args():
     parser.add_argument("--rxn_smis_file_prefix", help="do not change", type=str,
                         default="50k_clean_rxnsmi_noreagent")
     parser.add_argument("--path_to_energies", help="do not change (folder to store array of energy values for train & test data)", type=str)
+    parser.add_argument("--proposals_csv_file_prefix", help="do not change (CSV file containing proposals from retro models)",
+                    type=str, default=None)
     # fingerprint params
     parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
     parser.add_argument("--rctfp_size", help="reactant fp size", type=int, default=4096)
@@ -81,25 +83,6 @@ def args_to_dict(args, args_type: str) -> dict:
                 "fp_radius",
                 "rxn_type",
                 "fp_type"]
-    elif args_type == "train_args":
-        keys = ["batch_size",
-                "optimizer",
-                "epochs",
-                "learning_rate",
-                "lr_scheduler",
-                "lr_scheduler_criteria",
-                "lr_scheduler_factor",
-                "lr_scheduler_patience",
-                "early_stop",
-                "early_stop_criteria",
-                "early_stop_patience",
-                "early_stop_min_delta",
-                "num_workers",
-                "checkpoint",
-                "random_seed",
-                "precomp_file_prefix",
-                "checkpoint_folder",
-                "expt_name"]
     else:
         raise ValueError(f"Unsupported args type: {args_type}")
 
@@ -143,7 +126,6 @@ def train(args):
     logging.info("Setting up model and experiment")
     model_args = FF_args
     fp_args = args_to_dict(args, "fp_args")
-    train_args = args_to_dict(args, "train_args")
 
     model = FF.FeedforwardSingle(**model_args, **fp_args)
     logging.info(f"Model {model.model_repr} created, logging model summary")
@@ -151,11 +133,10 @@ def train(args):
     logging.info(f"\nModel #Params: {sum([x.nelement() for x in model.parameters()]) / 1000} k")
 
     experiment = expt.Experiment(
+        args=args,
         model=model,
         model_args=model_args,
-        augmentations=augmentations,
-        **train_args,
-        **fp_args,
+        augmentations=augmentations
     )
 
     logging.info("Start training")

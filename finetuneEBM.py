@@ -55,70 +55,38 @@ def parse_args():
     return parser.parse_args()
 
 
-def args_to_dict(args, args_type: str) -> dict:
-    """parse args into dict, mainly for compatibility with Min Htoo's code"""
-    parsed_dict = {}
-    if args_type == "train_args":
-        keys = ["batch_size",
-                "optimizer",
-                "epochs",
-                "learning_rate",
-                "lr_scheduler",
-                "lr_scheduler_criteria",
-                "lr_scheduler_factor",
-                "lr_scheduler_patience",
-                "early_stop",
-                "early_stop_criteria",
-                "early_stop_patience",
-                "early_stop_min_delta",
-                "num_workers",
-                "checkpoint",
-                "random_seed",
-                "precomp_file_prefix",
-                "proposals_csv_file_prefix",
-                "checkpoint_folder",
-                "expt_name"]
-    else:
-        raise ValueError(f"Unsupported args type: {args_type}")
-
-    for key in keys:
-        parsed_dict[key] = getattr(args, key)
-
-    return parsed_dict
-
-
 def finetune(args):
     """finetune a trained EBM"""
     logging.info("Logging args")
     logging.info(vars(args))
     logging.info("Setting up model and experiment")
 
-    train_args = args_to_dict(args, "train_args")
-
     old_checkpoint_folder = expt_utils.setup_paths(
         "LOCAL", load_trained=True, date_trained=args.date_trained
     )
     saved_stats_filename = f'{args.model_name}_{args.old_expt_name}_stats.pkl'
     saved_model, saved_optimizer, saved_stats = expt_utils.load_model_opt_and_stats(
-        saved_stats_filename, old_checkpoint_folder, args.model_name, train_args['optimizer']
+        saved_stats_filename, old_checkpoint_folder, args.model_name, args.optimizer
     )
     logging.info(f"Saved model {saved_model.model_repr} loaded, logging model summary")
     logging.info(saved_model)
     logging.info(f"\nModel #Params: {sum([x.nelement() for x in saved_model.parameters()]) / 1000} k")
 
+    logging.info("Updating args with fp_args")
+    for k, v in saved_stats["fp_args"]:
+        setattr(args, k, v)
+
     experiment = expt.Experiment(
+        args=args,
         model=saved_model,
         model_args=saved_stats["model_args"],
-        **train_args,
-        **saved_stats["fp_args"],
         augmentations=saved_stats["augmentations"],
-        representation=args.representation,
         load_checkpoint=True, 
         saved_optimizer=saved_optimizer,
         saved_stats=saved_stats,
         saved_stats_filename=saved_stats_filename,
         begin_epoch=0,
-        debug=True,
+        debug=True
     )
 
     logging.info("Start finetuning")

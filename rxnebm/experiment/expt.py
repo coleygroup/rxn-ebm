@@ -48,36 +48,12 @@ class Experiment:
 
     def __init__(
         self,
+        args,
         model: nn.Module,
         model_args: dict,
-        batch_size: int,
-        epochs: int,
-        optimizer: str,
-        learning_rate: float,
-        num_workers: int,
-        checkpoint: bool,
-        random_seed: int,
-        precomp_file_prefix: str,
-        checkpoint_folder: Union[str, bytes, os.PathLike],
-        expt_name: str,
         augmentations: dict,
-        representation: str, 
-        early_stop: bool,
-        early_stop_criteria: Optional[str] = 'top1_acc', 
-        early_stop_patience: Optional[int] = 1,
-        early_stop_min_delta: Optional[float] = 0.05,  
-        lr_scheduler: Optional[str] = None,
-        lr_scheduler_criteria: Optional[str] = 'acc',
-        lr_scheduler_factor: Optional[float] = 0.3,
-        lr_scheduler_patience: Optional[int] = 1, 
-        proposals_csv_file_prefix: Optional[str] = None,
         onthefly: Optional[bool] = False,
         rxn_smis_file_prefix: Optional[str] = None,
-        rxn_type: Optional[str] = None,
-        fp_type: Optional[str] = None,
-        rctfp_size: Optional[int] = None,
-        prodfp_size: Optional[int] = None,
-        difffp_size: Optional[int] = None,
         smi_to_fp_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         fp_to_smi_dict_filename: Optional[Union[str, bytes, os.PathLike]] = None,
         mol_fps_filename: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -90,19 +66,20 @@ class Experiment:
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
         saved_stats: Optional[dict] = None,
         begin_epoch: Optional[int] = None,
-        **kwargs,
+        **kwargs
     ):
+        self.args = args
         self.debug = debug
-        self.batch_size = batch_size
-        self.learning_rate = learning_rate
-        self.epochs = epochs
+        self.batch_size = self.args.batch_size
+        self.learning_rate = self.args.learning_rate
+        self.epochs = self.args.epochs
         self.best_epoch = 0  # will be automatically assigned after 1 epoch
 
-        self.early_stop = early_stop
+        self.early_stop = self.args.early_stop
         if self.early_stop:
-            self.early_stop_criteria = early_stop_criteria
-            self.early_stop_min_delta = early_stop_min_delta
-            self.early_stop_patience = early_stop_patience
+            self.early_stop_criteria = self.args.early_stop_criteria
+            self.early_stop_min_delta = self.args.early_stop_min_delta
+            self.early_stop_patience = self.args.early_stop_patience
 
             self.min_val_loss = float("+inf")  
             self.max_val_acc = float("-inf") 
@@ -112,28 +89,28 @@ class Experiment:
             self.early_stop_min_delta = None
             self.early_stop_patience = None
 
-        self.num_workers = num_workers
-        self.checkpoint = checkpoint
-        self.random_seed = random_seed
+        self.num_workers = self.args.num_workers
+        self.checkpoint = self.args.checkpoint
+        self.random_seed = self.args.random_seed
 
         if root:
             self.root = Path(root)
         else:
             self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
-        self.checkpoint_folder = Path(checkpoint_folder)
+        self.checkpoint_folder = Path(self.args.checkpoint_folder)
 
-        self.expt_name = expt_name
+        self.expt_name = self.args.expt_name
         self.augmentations = augmentations
-        self.representation = representation
+        self.representation = self.args.representation
 
         ### fingerprint arguments ###
         if self.representation == 'fingerprint':
-            self.rxn_type = rxn_type
-            self.fp_type = fp_type
-            self.rctfp_size = rctfp_size
-            self.prodfp_size = prodfp_size
-            self.difffp_size = difffp_size
-            self.fp_radius = kwargs["fp_radius"] # just for record keeping purposes
+            self.rxn_type = self.args.rxn_type
+            self.fp_type = self.args.fp_type
+            self.rctfp_size = self.args.rctfp_size
+            self.prodfp_size = self.args.prodfp_size
+            self.difffp_size = None
+            self.fp_radius = self.args.fp_radius        # just for record keeping purposes
 
         if self.representation != 'fingerprint' and 'bit' in augmentations.keys():
             raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
@@ -151,14 +128,14 @@ class Experiment:
         self.distributed = distributed  # TODO: affects how checkpoint is saved
 
         if saved_optimizer is not None:
-            self.optimizer_name = str(optimizer).split(' ')[0]
+            self.optimizer_name = str(self.args.optimizer).split(' ')[0]
         else:
-            self.optimizer_name = optimizer
+            self.optimizer_name = self.args.optimizer
 
-        self.lr_scheduler_name = lr_scheduler
-        self.lr_scheduler_criteria = lr_scheduler_criteria
-        self.lr_scheduler_factor = lr_scheduler_factor
-        self.lr_scheduler_patience = lr_scheduler_patience
+        self.lr_scheduler_name = self.args.lr_scheduler
+        self.lr_scheduler_criteria = self.args.lr_scheduler_criteria
+        self.lr_scheduler_factor = self.args.lr_scheduler_factor
+        self.lr_scheduler_patience = self.args.lr_scheduler_patience
 
         self._collate_args()
 
@@ -166,8 +143,8 @@ class Experiment:
         # mol_fps_filename, (if cos: search_index_filename, fp_to_smi_dict_filename)
         if self.representation == 'fingerprint':
             self._init_fp_dataloaders(
-                precomp_file_prefix=precomp_file_prefix,
-                proposals_csv_file_prefix=proposals_csv_file_prefix,
+                precomp_file_prefix=self.args.precomp_file_prefix,
+                proposals_csv_file_prefix=self.args.proposals_csv_file_prefix,
                 onthefly=onthefly,
                 smi_to_fp_dict_filename=smi_to_fp_dict_filename,
                 fp_to_smi_dict_filename=fp_to_smi_dict_filename,
@@ -210,7 +187,7 @@ class Experiment:
         self.energies = {} # for self.get_topk_acc
         self.true_ranks = {} # for self.get_topk_acc (finetuning)
 
-        model_utils.seed_everything(random_seed)
+        model_utils.seed_everything(self.args.random_seed)
 
     def __repr__(self):
         return f"Experiment name: {self.expt_name}, \
@@ -230,7 +207,7 @@ class Experiment:
             "epochs": self.epochs,
             "batch_size": self.batch_size,
             "learning_rate": self.learning_rate,
-            "lr_scheduler": self.lr_scheduler_name,            
+            "lr_scheduler": self.lr_scheduler_name,
             "lr_scheduler_criteria": self.lr_scheduler_criteria,
             "lr_scheduler_factor": self.lr_scheduler_factor,
             "lr_scheduler_patience": self.lr_scheduler_patience,
