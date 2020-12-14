@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument("--do_finetune", help="whether to finetune (vs. pretrain)", action="store_true")
     parser.add_argument("--do_test", help="whether to test after training", action="store_true")
     parser.add_argument("--do_get_energies_and_acc", help="whether to test after training", action="store_true")
+    parser.add_argument("--do_compute_graph_feat", help="whether to compute graph features", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default="02_11_2020")
     parser.add_argument("--expt_name", help="experiment name", type=str, default="")
@@ -63,6 +64,7 @@ def parse_args():
                         help="precomputed augmentation file prefix, expt.py will append f'_{phase}.npz' to the end",
                         type=str, default="")
     parser.add_argument("--batch_size", help="batch_size", type=int, default=2048)
+    parser.add_argument("--minibatch_size", help="minibatch size for smiles representation", type=int, default=32)
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)

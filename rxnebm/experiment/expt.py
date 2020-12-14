@@ -147,23 +147,32 @@ class Experiment:
                 search_index_filename=args.search_index_filename,
                 rxn_smis_file_prefix=args.rxn_smis_file_prefix
             )
+            self.maxk = self.train_loader.dataset.data.shape[-1] // self.train_loader.dataset.input_dim
+        elif self.representation == "smiles":
+            self._init_smi_dataloaders(
+                precomp_file_prefix=None,
+                onthefly=onthefly,
+                smi_to_fp_dict_filename=args.smi_to_fp_dict_filename,
+                fp_to_smi_dict_filename=args.fp_to_smi_dict_filename,
+                mol_fps_filename=args.mol_fps_filename,
+                mut_smis_filename=args.mut_smis_filename,
+                rxn_smis_file_prefix=args.rxn_smis_file_prefix,
+                search_index_filename=args.search_index_filename
+            )
+            self.maxk = len(self.train_loader.dataset._augmented_rxn_smiles[0])
+        else:
+            raise NotImplementedError('Please add self.maxk for the current representation; '
+                                      'we need maxk to calculate topk_accs up to the maximum allowed value '
+                                      '(otherwise torch will raise index out of range)')
+            # e.g. we can't calculate top-50 acc if we only have 1 positive + 10 negatives per minibatch
 
         if load_checkpoint:
             self._load_checkpoint(saved_optimizer, saved_stats, begin_epoch)
         else:
             self._init_optimizer_and_stats()
+
         self.train_losses = []
         self.val_losses = []
-        
-        if self.representation == 'fingerprint':
-            self.maxk = self.train_loader.dataset.data.shape[-1] //  self.train_loader.dataset.input_dim
-        elif self.representation == 'smiles':
-            self.maxk = len(self.train_loader.dataset._augmented_rxn_smiles[0])
-        else:
-            raise NotImplementedError('Please add self.maxk for the current representation; \
-                                we need maxk to calculate topk_accs up to the maximum allowed value \
-                                (otherwise torch will raise index out of range)') 
-            # e.g. we can't calculate top-50 acc if we only have 1 positive + 10 negatives per minibatch
         self.train_topk_accs = {}  
         self.val_topk_accs = {}  
         self.test_topk_accs = {} 
@@ -405,7 +414,84 @@ class Experiment:
             pin_memory=pin_memory,
         )
         self.test_size = len(test_dataset)
-        del train_dataset, val_dataset, test_dataset  
+        del train_dataset, val_dataset, test_dataset
+
+    def _get_smi_dl(self,
+                    phase: str,
+                    rxn_smis_file_prefix: str,
+                    fp_to_smi_dict_filename: str,
+                    smi_to_fp_dict_filename: str,
+                    mol_fps_filename: str,
+                    mut_smis_filename: str,
+                    shuffle: bool = False):
+        rxn_smis_filename = f"{rxn_smis_file_prefix}_{phase}.pickle"
+        _data = dataset.ReactionDatasetSMILES(
+            self.args,
+            augmentations=self.augmentations,
+            precomp_rxnsmi_filename=None,
+            fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+            smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+            mol_fps_filename=mol_fps_filename,
+            rxn_smis_filename=rxn_smis_filename,
+            mut_smis_filename=mut_smis_filename,
+            onthefly=True,
+            seed=self.random_seed
+            )
+
+        pin_memory = True if torch.cuda.is_available() else False
+        _loader = DataLoader(
+            _data,
+            self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=shuffle,
+            # pin_memory=pin_memory,
+            collate_fn=dataset_utils.graph_collate_fn_builder(self.device, debug=False)
+        )
+
+        _size = len(_data)
+        del _data
+
+        return _loader, _size
+
+    def _init_smi_dataloaders(
+        self,
+        precomp_file_prefix: Optional[str],
+        onthefly: bool,
+        fp_to_smi_dict_filename: str,
+        smi_to_fp_dict_filename: str,
+        mol_fps_filename: str,
+        mut_smis_filename: str,
+        search_index_filename: str,
+        rxn_smis_file_prefix: Optional[str] = None
+    ):
+        logging.info("Initialising SMILES dataloaders...")
+        if onthefly:
+            self.train_loader, self.train_size = self._get_smi_dl(
+                phase="train",
+                rxn_smis_file_prefix=rxn_smis_file_prefix,
+                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+                mol_fps_filename=mol_fps_filename,
+                mut_smis_filename=mut_smis_filename,
+                shuffle=True)
+            self.val_loader, self.val_size = self._get_smi_dl(
+                phase="valid",
+                rxn_smis_file_prefix=rxn_smis_file_prefix,
+                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+                mol_fps_filename=mol_fps_filename,
+                mut_smis_filename=mut_smis_filename,
+                shuffle=False)
+            self.test_loader, self.test_size = self._get_smi_dl(
+                phase="test",
+                rxn_smis_file_prefix=rxn_smis_file_prefix,
+                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
+                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+                mol_fps_filename=mol_fps_filename,
+                mut_smis_filename=mut_smis_filename,
+                shuffle=False)
+        else:
+            raise NotImplementedError
 
     def _check_earlystop(self, current_epoch):
         if self.early_stop_criteria == 'loss': 

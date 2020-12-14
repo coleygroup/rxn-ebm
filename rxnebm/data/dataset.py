@@ -1,24 +1,60 @@
+import json
+import logging
+import nmslib
 import os
+import pandas as pd
 import pickle
+import scipy
+import time
+import torch
 from concurrent.futures import ProcessPoolExecutor as Pool
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
-
-import pandas as pd
-import numpy as np
-import logging
-import scipy
-import torch
+from rxnebm.data import augmentors
+from rxnebm.data.dataset_utils import get_features_per_graph
+from rxnebm.model import model_utils
 from scipy import sparse
+from typing import List, Optional, Tuple, Union
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-import nmslib
-from rxnebm.data import augmentors
-from rxnebm.model import model_utils
 
 sparse_fp = scipy.sparse.csr_matrix
 Tensor = torch.Tensor
+
+
+def get_features_per_graph_helper(_args: Tuple[List[str], int]):
+    rxn_smiles, i = _args
+    if i % 1000 == 0:
+        logging.info(f"Processing {i}th rxn_smi")
+
+    r_smi = rxn_smiles[0].split(">>")[0]
+    p_smis = [rxn_smi.split(">>")[-1] for rxn_smi in rxn_smiles]        # TODO: hardcoded, might be buggy for more crem
+
+    minibatch_smiles = [r_smi]
+    minibatch_smiles.extend(p_smis)
+
+    graphs_and_features = [get_features_per_graph(smi, use_rxn_class=False)
+                           for smi in minibatch_smiles]
+
+    return graphs_and_features
+
+
+def get_features_per_graph_helper_finetune(_args: Tuple[List[str], int]):
+    rxn_smiles, i = _args
+    if i % 1000 == 0:
+        logging.info(f"Processing {i}th rxn_smi")
+
+    p_smi = rxn_smiles[0].split(">>")[-1]
+    r_smis = [rxn_smi.split(">>")[0] for rxn_smi in rxn_smiles]
+
+    minibatch_smiles = [p_smi]
+    minibatch_smiles.extend(r_smis)
+
+    graphs_and_features = [get_features_per_graph(smi, use_rxn_class=False)
+                           for smi in minibatch_smiles]
+
+    return graphs_and_features
+
 
 class AugmentedDataFingerprints:
     """
@@ -78,6 +114,7 @@ class AugmentedDataFingerprints:
         mol_fps_filename: str,
         search_index_filename: Optional[str] = None,
         mut_smis_filename: Optional[str] = None,
+        representation: str = "fingerprint",
         rxn_type: Optional[str] = "diff",
         fp_type: Optional[str] = "count",
         fp_size: Optional[int] = 4096,
@@ -93,6 +130,7 @@ class AugmentedDataFingerprints:
         self.mol_fps_filename = mol_fps_filename
         self.search_index_filename = search_index_filename
         self.mut_smis_filename = mut_smis_filename
+        self.representation = representation
 
         if root is None:  # set root = path/to/rxn/ebm/
             root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
@@ -144,9 +182,10 @@ class AugmentedDataFingerprints:
             fp_to_smi_dict=self.fp_to_smi_dict,
             mol_fps=self.mol_fps,
             rxn_type=self.rxn_type,
-            fp_type=self.fp_type, 
+            fp_type=self.fp_type,
+            return_type="fp" if self.representation == "fingerprint" else "smi"
         )
-        self.augs.append(self.cosaugmentor.get_one_sample_fp)
+        self.augs.append(self.cosaugmentor.get_one_sample)
 
     def _init_random(self, num_neg: int):
         logging.info("Initialising Random Augmentor...")
@@ -156,9 +195,10 @@ class AugmentedDataFingerprints:
             fp_to_smi_dict=self.fp_to_smi_dict,
             mol_fps=self.mol_fps,
             rxn_type=self.rxn_type,
-            fp_type=self.fp_type,    
+            fp_type=self.fp_type,
+            return_type="fp" if self.representation == "fingerprint" else "smi"
         )
-        self.augs.append(self.rdmaugmentor.get_one_sample_fp)
+        self.augs.append(self.rdmaugmentor.get_one_sample)
 
     def _init_bit(
         self,
@@ -176,9 +216,10 @@ class AugmentedDataFingerprints:
             smi_to_fp_dict=self.smi_to_fp_dict,
             mol_fps=self.mol_fps,
             rxn_type=self.rxn_type,
-            fp_type=self.fp_type,    
+            fp_type=self.fp_type,
+            return_type="fp" if self.representation == "fingerprint" else "smi"
         ) 
-        self.augs.append(self.bitaugmentor.get_one_sample_fp) 
+        self.augs.append(self.bitaugmentor.get_one_sample)
 
     def _init_mutate(self, num_neg: int):
         logging.info("Initialising Mutate Augmentor...")
@@ -197,8 +238,9 @@ class AugmentedDataFingerprints:
             radius=self.radius,
             fp_size=self.fp_size,
             dtype=self.dtype,
+            return_type="fp" if self.representation == "fingerprint" else "smi"
         )
-        self.augs.append(self.mutaugmentor.get_one_sample_fp)
+        self.augs.append(self.mutaugmentor.get_one_sample)
 
     def get_one_minibatch(self, rxn_smi: str) -> sparse_fp:
         """prepares one minibatch of fingerprints: 1 pos_rxn + K neg_rxns
@@ -226,11 +268,9 @@ class AugmentedDataFingerprints:
         out = sparse.hstack([pos_rxn_fp, *minibatch_neg_rxn_fps])
         return out  # spy_sparse2torch_sparse(out)
 
-
     def __getitem__(self, idx: int) -> sparse_fp:
         """Called by ReactionDatasetFingerprints.__getitem__(idx)"""
         return self.get_one_minibatch(self.rxn_smis[idx])
-
 
     def precompute_helper(self):
         if hasattr(self, "cosaugmentor"):
@@ -452,7 +492,9 @@ class ReactionDatasetFingerprints(Dataset):
                 "Please provide precomp_rxnfp_filename or set onthefly = True!"
             )
 
-        if proposals_csv_filename is not '' and proposals_csv_filename is not None: # load csv file generated by gen_retrosim_proposals.py, only necessary for valid & test  
+        # load csv file generated by gen_retrosim_proposals.py, only necessary for valid & test
+        # if proposals_csv_filename is not '' and proposals_csv_filename is not None:
+        if proposals_csv_filename:
             self.proposals_data = pd.read_csv(root / proposals_csv_filename, index_col=None, dtype='str') 
             self.proposals_data = self.proposals_data.drop(['orig_rxn_smi'], axis=1).values 
         else:
@@ -478,6 +520,221 @@ class ReactionDatasetFingerprints(Dataset):
 
     def __len__(self):
         return self.data.shape[0]
+
+
+class ReactionDatasetSMILES(Dataset):
+    """Dataset class for SMILES representation of reactions"""
+    def __init__(
+        self,
+        args,
+        augmentations: dict,
+        precomp_rxnsmi_filename: Optional[str],
+        fp_to_smi_dict_filename: str,
+        smi_to_fp_dict_filename: str,
+        mol_fps_filename: str,
+        rxn_smis_filename: Optional[str] = None,
+        mut_smis_filename: Optional[str] = None,
+        onthefly: bool = False,
+        rxn_type: Optional[str] = "diff",
+        fp_type: Optional[str] = "count",
+        fp_size: Optional[int] = 4096,
+        radius: Optional[int] = 3,
+        dtype: Optional[str] = "int32",
+        seed: Optional[int] = 0,
+    ):
+        model_utils.seed_everything(seed)
+
+        self.args = args
+
+        self.precomp_rxnsmi_filename = precomp_rxnsmi_filename
+        self.fp_to_smi_dict_filename = fp_to_smi_dict_filename
+        self.smi_to_fp_dict_filename = smi_to_fp_dict_filename
+        self.mol_fps_filename = mol_fps_filename
+        self.mut_smis_filename = mut_smis_filename
+        self.rxn_smis_filename = rxn_smis_filename
+
+        self.rxn_type = rxn_type
+        self.fp_type = fp_type
+        self.fp_size = fp_size
+        self.radius = radius
+        self.dtype = dtype
+
+        self.p = None
+
+        if onthefly:
+            if args.do_pretrain:
+                logging.info("Generating augmentations on the fly...")
+                self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
+
+                with open(self.root / rxn_smis_filename, "rb") as handle:
+                    self.rxn_smis = pickle.load(handle)
+                with open(self.root / self.smi_to_fp_dict_filename, "rb") as handle:
+                    self.smi_to_fp_dict = pickle.load(handle)
+                with open(self.root / self.fp_to_smi_dict_filename, "rb") as handle:
+                    self.fp_to_smi_dict = pickle.load(handle)
+                self.mol_fps = sparse.load_npz(self.root / self.mol_fps_filename)
+
+                self.augs = []  # list of callables: Augmentor.get_one_sample
+                for key, value in augmentations.items():
+                    if value["num_neg"] == 0:
+                        continue
+                    elif key == "cos":
+                        self._init_cosine(**value)
+                    elif key == "rdm":
+                        self._init_random(**value)
+                    elif key == "mut" or key == "crem":
+                        self._init_mutate(**value)
+                    else:
+                        raise ValueError('Invalid augmentation!')
+            elif args.do_finetune:
+                with open(self.root / self.rxn_smis_filename, "r") as f:
+                    self.all_smiles = json.load(f)
+
+            self._rxn_smiles_with_negatives = []
+            self._graphs_and_features = []
+            self._masks = []
+            self.precompute()
+
+        else:
+            raise NotImplementedError
+
+    def _init_cosine(self, num_neg: int):
+        raise NotImplementedError
+
+    def _init_random(self, num_neg: int):
+        logging.info("Initialising Random Augmentor...")
+        self.rdmaugmentor = augmentors.Random(
+            num_neg=num_neg,
+            smi_to_fp_dict=self.smi_to_fp_dict,
+            fp_to_smi_dict=self.fp_to_smi_dict,
+            mol_fps=self.mol_fps,
+            rxn_type=self.rxn_type,
+            fp_type=self.fp_type,
+            return_type="smi"
+        )
+        self.augs.append(self.rdmaugmentor.get_one_sample)
+
+    def _init_mutate(self, num_neg: int):
+        logging.info("Initialising Mutate Augmentor...")
+        if Path(self.mut_smis_filename).suffix != ".pickle":
+            self.mut_smis_filename = str(self.mut_smis_filename) + ".pickle"
+        with open(self.root / self.mut_smis_filename, "rb") as handle:
+            mut_smis = pickle.load(handle)
+
+        self.mutaugmentor = augmentors.Mutate(
+            num_neg=num_neg,
+            mut_smis=mut_smis,
+            smi_to_fp_dict=self.smi_to_fp_dict,
+            mol_fps=self.mol_fps,
+            rxn_type=self.rxn_type,
+            fp_type=self.fp_type,
+            radius=self.radius,
+            fp_size=self.fp_size,
+            dtype=self.dtype,
+            return_type="smi"
+        )
+        self.augs.append(self.mutaugmentor.get_one_sample)
+
+    def get_smiles_and_masks(self):
+        if self.args.do_pretrain:
+            for rxn_smi in tqdm(self.rxn_smis):
+                minibatch_smiles = [rxn_smi]
+                for aug in self.augs:
+                    neg_rxn_smiles = aug(rxn_smi)
+                    minibatch_smiles.extend(neg_rxn_smiles)
+
+                # crem would give empty string
+                minibatch_masks = [bool(smi) for smi in minibatch_smiles]
+
+                self._rxn_smiles_with_negatives.append(minibatch_smiles)
+                self._masks.append(minibatch_masks)
+
+        elif self.args.do_finetune:
+            for rxn_smis_with_neg in tqdm(self.all_smiles):
+                minibatch_smiles = [rxn_smis_with_neg[0]]
+
+                for smi in rxn_smis_with_neg[1:]:
+                    minibatch_smiles.append(smi)
+                    if len(minibatch_smiles) == self.args.minibatch_size:
+                        minibatch_masks = [bool(smi) for smi in minibatch_smiles]
+                        self._rxn_smiles_with_negatives.append(minibatch_smiles)
+                        self._masks.append(minibatch_masks)
+                        minibatch_smiles = [rxn_smis_with_neg[0]]
+                        break
+
+                # pad last minibatch
+                if len(minibatch_smiles) == 1:
+                    continue
+                while len(minibatch_smiles) < self.args.minibatch_size:
+                    minibatch_smiles.append("")
+                minibatch_masks = [bool(smi) for smi in minibatch_smiles]
+
+                self._rxn_smiles_with_negatives.append(minibatch_smiles)
+                self._masks.append(minibatch_masks)
+
+        else:
+            raise ValueError("Either --do_pretrain or --do_finetune must be supplied!")
+
+    def precompute(self):
+        if self.args.do_compute_graph_feat:
+            # for graph, we want to cache since the pre-processing is very heavy
+            cache_smi = self.root / f"{self.rxn_smis_filename}.cache_smi"
+            cache_feat = self.root / f"{self.rxn_smis_filename}.cache_feat"
+            cache_mask = self.root / f"{self.rxn_smis_filename}.cache_mask"
+            if all(os.path.exists(cache) for cache in [cache_smi, cache_feat, cache_mask]):
+                logging.info(f"Found cache for reaction smiles, features and masks "
+                             f"for rxn_smis_fn {self.rxn_smis_filename}, loading")
+                with open(cache_smi, "rb") as f:
+                    self._rxn_smiles_with_negatives = pickle.load(f)
+                with open(cache_feat, "rb") as f:
+                    self._graphs_and_features = pickle.load(f)
+                with open(cache_mask, "rb") as f:
+                    self._masks = pickle.load(f)
+                logging.info("All loaded.")
+
+            else:
+                logging.info(f"Cache not found for rxn_smis_fn {self.rxn_smis_filename}, computing from scratch")
+                self.get_smiles_and_masks()
+
+                logging.info("Pre-computing graphs and features")
+                start = time.time()
+
+                if self.args.do_pretrain:
+                    helper = get_features_per_graph_helper
+                elif self.args.do_finetune:
+                    helper = get_features_per_graph_helper_finetune
+                else:
+                    raise ValueError("Either --do_pretrain or --do_finetune must be supplied!")
+
+                self.p = Pool(10)
+                self._graphs_and_features = self.p.map(
+                    helper,
+                    zip(self._rxn_smiles_with_negatives, range(len(self.rxn_smis))))
+                self._graphs_and_features = list(self._graphs_and_features)
+                # for i, minibatch_smiles in enumerate(self._augmented_rxn_smiles):
+                #     self._graphs_and_features.append(get_features_per_graph_helper((minibatch_smiles, i)))
+                logging.info(f"Completed, time: {time.time() - start: .3f} s")
+                logging.info(f"Caching...")
+                with open(cache_smi, "wb") as of:
+                    pickle.dump(self._rxn_smiles_with_negatives, of)
+                with open(cache_feat, "wb") as of:
+                    pickle.dump(self._graphs_and_features, of)
+                with open(cache_mask, "wb") as of:
+                    pickle.dump(self._masks, of)
+                logging.info("All cached.")
+        else:
+            # for transformer, preprocessing is light
+            logging.info(f"No graph features required, computing negatives from scratch")
+            self.get_smiles_and_masks()
+
+    def __getitem__(self, index) -> Tuple[List[str], List[bool]]:
+        if self.args.do_compute_graph_feat:
+            return self._graphs_and_features[index], self._masks[index]
+        else:
+            return self._rxn_smiles_with_negatives[index], self._masks[index]
+
+    def __len__(self):
+        return len(self._rxn_smiles_with_negatives)
 
 
 if __name__ == "__main__":
