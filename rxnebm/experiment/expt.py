@@ -65,16 +65,16 @@ class Experiment:
     ):
         self.args = args
         self.debug = debug
-        self.batch_size = self.args.batch_size
-        self.learning_rate = self.args.learning_rate
-        self.epochs = self.args.epochs
+        self.batch_size = args.batch_size
+        self.learning_rate = args.learning_rate
+        self.epochs = args.epochs
         self.best_epoch = 0  # will be automatically assigned after 1 epoch
 
-        self.early_stop = self.args.early_stop
+        self.early_stop = args.early_stop
         if self.early_stop:
-            self.early_stop_criteria = self.args.early_stop_criteria
-            self.early_stop_min_delta = self.args.early_stop_min_delta
-            self.early_stop_patience = self.args.early_stop_patience
+            self.early_stop_criteria = args.early_stop_criteria
+            self.early_stop_min_delta = args.early_stop_min_delta
+            self.early_stop_patience = args.early_stop_patience
 
             self.min_val_loss = float("+inf")  
             self.max_val_acc = float("-inf") 
@@ -84,9 +84,9 @@ class Experiment:
             self.early_stop_min_delta = None
             self.early_stop_patience = None
 
-        self.num_workers = self.args.num_workers
-        self.checkpoint = self.args.checkpoint
-        self.random_seed = self.args.random_seed
+        self.num_workers = args.num_workers
+        self.checkpoint = args.checkpoint
+        self.random_seed = args.random_seed
 
         if root:
             self.root = Path(root)
@@ -94,18 +94,18 @@ class Experiment:
             self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
         self.checkpoint_folder = Path(self.args.checkpoint_folder)
 
-        self.expt_name = self.args.expt_name
+        self.expt_name = args.expt_name
         self.augmentations = augmentations
-        self.representation = self.args.representation
+        self.representation = args.representation
 
         ### fingerprint arguments ###
         if self.representation == 'fingerprint':
-            self.rxn_type = self.args.rxn_type
-            self.fp_type = self.args.fp_type
-            self.rctfp_size = self.args.rctfp_size
-            self.prodfp_size = self.args.prodfp_size
+            self.rxn_type = args.rxn_type
+            self.fp_type = args.fp_type
+            self.rctfp_size = args.rctfp_size
+            self.prodfp_size = args.prodfp_size
             self.difffp_size = None
-            self.fp_radius = self.args.fp_radius        # just for record keeping purposes
+            self.fp_radius = args.fp_radius        # just for record keeping purposes
 
         if self.representation != 'fingerprint' and 'bit' in augmentations.keys():
             raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
@@ -125,12 +125,12 @@ class Experiment:
         if saved_optimizer is not None:
             self.optimizer_name = str(self.args.optimizer).split(' ')[0]
         else:
-            self.optimizer_name = self.args.optimizer
+            self.optimizer_name = args.optimizer
 
-        self.lr_scheduler_name = self.args.lr_scheduler
-        self.lr_scheduler_criteria = self.args.lr_scheduler_criteria
-        self.lr_scheduler_factor = self.args.lr_scheduler_factor
-        self.lr_scheduler_patience = self.args.lr_scheduler_patience
+        self.lr_scheduler_name = args.lr_scheduler
+        self.lr_scheduler_criteria = args.lr_scheduler_criteria
+        self.lr_scheduler_factor = args.lr_scheduler_factor
+        self.lr_scheduler_patience = args.lr_scheduler_patience
 
         self._collate_args()
 
@@ -138,14 +138,14 @@ class Experiment:
         # mol_fps_filename, (if cos: search_index_filename, fp_to_smi_dict_filename)
         if self.representation == 'fingerprint':
             self._init_fp_dataloaders(
-                precomp_file_prefix=self.args.precomp_file_prefix,
-                proposals_csv_file_prefix=self.args.proposals_csv_file_prefix,
+                precomp_file_prefix=args.precomp_file_prefix,
+                proposals_csv_file_prefix=args.proposals_csv_file_prefix,
                 onthefly=onthefly,
-                smi_to_fp_dict_filename=self.args.smi_to_fp_dict_filename,
-                fp_to_smi_dict_filename=self.args.fp_to_smi_dict_filename,
-                mol_fps_filename=self.args.mol_fps_filename,
-                search_index_filename=self.args.search_index_filename,
-                rxn_smis_file_prefix=self.args.rxn_smis_file_prefix
+                smi_to_fp_dict_filename=args.smi_to_fp_dict_filename,
+                fp_to_smi_dict_filename=args.fp_to_smi_dict_filename,
+                mol_fps_filename=args.mol_fps_filename,
+                search_index_filename=args.search_index_filename,
+                rxn_smis_file_prefix=args.rxn_smis_file_prefix
             )
 
         if load_checkpoint:
@@ -167,12 +167,12 @@ class Experiment:
         self.train_topk_accs = {}  
         self.val_topk_accs = {}  
         self.test_topk_accs = {} 
-        self.k_to_calc = [1, 5, 10, 50] # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...? 
+        self.k_to_calc = [1, 5, 10, 50]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
         k_not_to_calc = []
         for k in self.k_to_calc:
             if k > self.maxk:
                 k_not_to_calc.append(k)
-            else: # init empty lists; 1 value will be appended to each list per epoch 
+            else:   # init empty lists; 1 value will be appended to each list per epoch
                 self.train_topk_accs[k] = []
                 self.val_topk_accs[k] = []  
                 self.test_topk_accs[k] = None    
@@ -182,7 +182,7 @@ class Experiment:
         self.energies = {} # for self.get_topk_acc
         self.true_ranks = {} # for self.get_topk_acc (finetuning)
 
-        model_utils.seed_everything(self.args.random_seed)
+        model_utils.seed_everything(args.random_seed)
 
     def __repr__(self):
         return f"Experiment name: {self.expt_name}, \
@@ -237,13 +237,16 @@ class Experiment:
                 mode = 'max'
             elif self.lr_scheduler_criteria == 'loss':
                 mode = 'min'
+            else:
+                raise ValueError(f"Unsupported lr_scheduler_criteria {self.lr_scheduler_criteria}")
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
                 optimizer=self.optimizer, mode=mode, 
                 factor=self.lr_scheduler_factor, patience=self.lr_scheduler_patience, verbose=True
                 ) 
         else:
             self.lr_scheduler = None 
-        #NOTE/TODO: lr_scheduler.load_state_dict(checkpoint['scheduler']) https://discuss.pytorch.org/t/how-to-save-and-load-lr-scheduler-stats-in-pytorch/20208/2
+        # NOTE/TODO: lr_scheduler.load_state_dict(checkpoint['scheduler'])
+        # https://discuss.pytorch.org/t/how-to-save-and-load-lr-scheduler-stats-in-pytorch/20208/2
 
         if saved_stats is None:
             raise ValueError("load_checkpoint requires saved_stats!")
@@ -503,7 +506,9 @@ class Experiment:
             self.optimizer.step()
 
             return loss.item(), energies.cpu().detach() 
-        else: # if fine-tuning: validation/testing, cannot calculate loss naively, need the true_ranks of precursors from retrosynthesis models
+        else:
+            # if fine-tuning: validation/testing, cannot calculate loss naively
+            # need the true_ranks of precursors from retrosynthesis models
             return energies.cpu().detach() 
  
     def train(self):

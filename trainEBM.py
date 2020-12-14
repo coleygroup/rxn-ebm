@@ -22,7 +22,6 @@ def parse_args():
     parser.add_argument("--model_name", help="model name", type=str, default="FeedforwardEBM")
     parser.add_argument("--do_pretrain", help="whether to pretrain (vs. finetune)", action="store_true")
     parser.add_argument("--do_finetune", help="whether to finetune (vs. pretrain)", action="store_true")
-    parser.add_argument("--do_eval", help="whether to do validation per epoch", action="store_true")
     parser.add_argument("--do_test", help="whether to test after training", action="store_true")
     parser.add_argument("--do_get_energies_and_acc", help="whether to test after training", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
@@ -196,6 +195,11 @@ def main(args):
 
     if args.do_pretrain:
         logging.info("Start pretraining")
+        experiment.train()
+
+    if args.do_finetune:
+        assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
+        logging.info("Start finetuning")
         experiment.train()
 
     if args.do_test:
