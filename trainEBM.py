@@ -10,10 +10,10 @@ from datetime import datetime
 from rdkit import RDLogger
 from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_utils
-from rxnebm.model import FF, G2E, S2E
+from rxnebm.model import FF, G2E
 from rxnebm.model.FF_args import FF_args
 from rxnebm.model.G2E_args import G2E_args
-from rxnebm.model.S2E_args import S2E_args
+# from rxnebm.model.S2E_args import S2E_args
 
 torch.backends.cudnn.benchmark = True
 
@@ -27,6 +27,7 @@ def parse_args():
     parser.add_argument("--do_test", help="whether to test after training", action="store_true")
     parser.add_argument("--do_get_energies_and_acc", help="whether to test after training", action="store_true")
     parser.add_argument("--do_compute_graph_feat", help="whether to compute graph features", action="store_true")
+    parser.add_argument("--onthefly", help="whether to do on-the-fly computation", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default="02_11_2020")
     parser.add_argument("--expt_name", help="experiment name", type=str, default="")
@@ -129,7 +130,14 @@ def main(args):
         "bit": {"num_neg": 1, "num_bits": 1, "increment_bits": 1},
         "mut": {"num_neg": 1}
     }
+    augmentations = {
+        "rdm": {"num_neg": 2},
+        # "cos": {"num_neg": 0, "query_params": None},
+        # "bit": {"num_neg": 0, "num_bits": 3, "increment_bits": 1},
+        "mut": {"num_neg": 13}
+    }
 
+    '''
     if args.do_pretrain:
         logging.info("Precomputing augmentation")
         augmented_data = dataset.AugmentedDataFingerprints(
@@ -148,6 +156,7 @@ def main(args):
                 rxn_smis=f"{args.rxn_smis_file_prefix}_{phase}.pickle",
                 parallel=False
             )
+    '''
 
     if args.load_checkpoint:
         logging.info("Loading from checkpoint")
@@ -198,6 +207,7 @@ def main(args):
         model=model,
         model_args=model_args,
         augmentations=augmentations,
+        onthefly=args.onthefly,
         load_checkpoint=args.load_checkpoint,
         saved_optimizer=saved_optimizer,
         saved_stats=saved_stats,

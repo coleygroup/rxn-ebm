@@ -3,7 +3,7 @@ import networkx as nx
 import re
 import torch
 from rdkit import Chem
-from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM, get_atom_features_sparse, get_bond_features_sparse
+from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM, get_atom_features_sparse, get_bond_features
 from rxnebm.data.rxn_graphs import RxnGraph
 from typing import List, Tuple
 
@@ -40,7 +40,7 @@ def get_features_per_graph(smi: str, use_rxn_class: bool):
         atom_features.append(atom_feat)
 
     for u, v, attr in G.edges(data='label'):
-        bond_feat = get_bond_features_sparse(mol.GetBondBetweenAtoms(u, v))
+        bond_feat = get_bond_features(mol.GetBondBetweenAtoms(u, v))
         bond_feat = [u, v] + bond_feat
         bond_features.append(bond_feat)
 
@@ -52,6 +52,8 @@ def densify(features: List[List[int]], FDIM: List[int]) -> List[List[int]]:
     for feature in features:
         one_hot_feature = [0] * sum(FDIM)
         for i, idx in enumerate(feature):
+            if idx == 9999:         # padding
+                continue
             one_hot_feature[idx+sum(FDIM[:i])] = 1
 
         one_hot_features.append(one_hot_feature)
@@ -65,7 +67,7 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
         padded_features = get_atom_features_sparse(Chem.Atom("*"), use_rxn_class=use_rxn_class, rxn_class=0)
         padded_features = densify([padded_features], ATOM_FDIM)
         fnode = padded_features
-        fmess = [[0, 0] + [0] * sum(BOND_FDIM)]
+        fmess = [[0, 0] + [0] * BOND_FDIM]
         agraph, bgraph = [[]], [[]]
         unique_bonds = {(0, 0)}
 
@@ -76,7 +78,7 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
             graph, G, atom_features, bond_features = graphs_and_features
             # densify on the fly temporarily, TODO: to be fully converted into embedding based
             atom_features = densify(atom_features, ATOM_FDIM)
-            bond_features = densify(bond_features, BOND_FDIM)
+            # bond_features = densify(bond_features, BOND_FDIM)
 
             atom_offset = len(fnode)
             bond_offset = len(unique_bonds)

@@ -312,7 +312,7 @@ class G2E(nn.Module):
         self.args = args
 
         self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
-                                        n_bond_feat=sum(BOND_FDIM),
+                                        n_bond_feat=BOND_FDIM,
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
                                         depth=encoder_depth)
@@ -355,7 +355,8 @@ class G2E(nn.Module):
         batch_pooled_hmols = []
 
         mols_per_minibatch = len(hmol) // batch_size                    # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
-        assert mols_per_minibatch == self.args.minibatch_size + 1
+        assert mols_per_minibatch == self.args.minibatch_size + 1, \
+            f"calculated minibatch size: {mols_per_minibatch-1}, given in args: {self.args.minibatch_size}"
 
         # logging.info(f"{len(hmol)}, {batch_size}, {mols_per_minibatch}")
         for i in range(batch_size):

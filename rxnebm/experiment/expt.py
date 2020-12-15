@@ -99,7 +99,7 @@ class Experiment:
         self.representation = args.representation
 
         ### fingerprint arguments ###
-        if self.representation == 'fingerprint':
+        if self.representation == 'fingerprint' or self.representation == 'smiles':
             self.rxn_type = args.rxn_type
             self.fp_type = args.fp_type
             self.rctfp_size = args.rctfp_size
@@ -189,15 +189,14 @@ class Experiment:
                 with augmentations: {self.augmentations}" 
 
     def _collate_args(self): 
-        if self.representation == 'fingerprint':
-            self.fp_args = {
-                "rxn_type": self.rxn_type,
-                "fp_type": self.fp_type,
-                "rctfp_size": self.rctfp_size,
-                "prodfp_size": self.prodfp_size,
-                "difffp_size": self.difffp_size,
-                "fp_radius": self.fp_radius,
-            }
+        self.fp_args = {
+            "rxn_type": self.rxn_type,
+            "fp_type": self.fp_type,
+            "rctfp_size": self.rctfp_size,
+            "prodfp_size": self.prodfp_size,
+            "difffp_size": self.difffp_size,
+            "fp_radius": self.fp_radius,
+        }
         self.train_args = {
             "epochs": self.epochs,
             "batch_size": self.batch_size,
@@ -557,13 +556,18 @@ class Experiment:
             self.model.train()
             train_loss, train_correct_preds = 0, defaultdict(int)
             train_loader = tqdm(self.train_loader, desc='training...')
-            for batch in train_loader: 
-                batch_data = batch[0].to(self.device)
+            for batch in train_loader:
+                batch_data = batch[0]
+                if not isinstance(batch_data, tuple):
+                    batch_data = batch_data.to(self.device)
                 batch_mask = batch[1].to(self.device) 
                 batch_loss, batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=True
                 ) 
                 train_loss += batch_loss
+
+                # train_batch_size = batch[0].shape[0]
+                train_batch_size = batch_mask.shape[0]
 
                 for k in self.k_to_calc: # various top-k accuracies
                     # index with lowest energy is what the model deems to be the most feasible rxn 
@@ -572,16 +576,17 @@ class Experiment:
                     batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0]
                     train_correct_preds[k] += batch_correct_preds
                     if k == 1:
-                        batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                        batch_top1_acc = batch_correct_preds / train_batch_size
                     elif k == 5:
-                        batch_top5_acc = batch_correct_preds/batch[0].shape[0]
+                        batch_top5_acc = batch_correct_preds / train_batch_size
                     elif k == 10:
-                        batch_top10_acc = batch_correct_preds/batch[0].shape[0]
+                        batch_top10_acc = batch_correct_preds / train_batch_size
                 if 5 not in self.k_to_calc:
                     batch_top5_acc = np.nan 
                 if 10 not in self.k_to_calc:
                     batch_top10_acc = np.nan 
-                train_loader.set_description(f"training...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                # train_loader.set_description(f"training...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                train_loader.set_description(f"training...loss={batch_loss/train_batch_size:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                 train_loader.refresh()
             
             for k in self.k_to_calc:     
@@ -594,14 +599,20 @@ class Experiment:
                 val_loss, val_correct_preds = 0, defaultdict(int)
                 val_loader = tqdm(self.val_loader, desc='validating...')
                 for i, batch in enumerate(val_loader):
-                    batch_data = batch[0].to(self.device)
+                    batch_data = batch[0]
+                    if not isinstance(batch_data, tuple):
+                        batch_data = batch_data.to(self.device)
                     batch_mask = batch[1].to(self.device)
                     batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False
-                    )   
+                    )
+
+                    # val_batch_size = batch[0].shape[0]
+                    val_batch_size = batch_mask.shape[0]
 
                     # for validation/test data, true rxn may not be present! 
-                    if self.val_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
+                    if self.args.do_finetune and \
+                            self.val_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
                         batch_idx = batch[2]
                         batch_true_ranks_array = self.val_loader.dataset.proposals_data[batch_idx, 2].astype('int')
                         batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
@@ -661,33 +672,35 @@ class Experiment:
                             val_correct_preds[k] += batch_correct_preds
 
                             if k == 1:
-                                batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                                batch_top1_acc = batch_correct_preds / val_batch_size
                             elif k == 5:
-                                batch_top5_acc = batch_correct_preds/batch[0].shape[0]
+                                batch_top5_acc = batch_correct_preds / val_batch_size
                             elif k == 10:
-                                batch_top10_acc = batch_correct_preds/batch[0].shape[0]
+                                batch_top10_acc = batch_correct_preds / val_batch_size
                     if 5 not in self.k_to_calc:
                         batch_top5_acc = np.nan
                     if 10 not in self.k_to_calc:
                         batch_top10_acc = np.nan 
-                    val_loader.set_description(f"validating...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
-                    val_loader.refresh() 
+                    # val_loader.set_description(f"validating...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                    val_loader.set_description(f"validating...loss={batch_loss/val_batch_size:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                    val_loader.refresh()
                     
                     val_loss += batch_loss  
                 
                 for k in self.k_to_calc:
-                    self.val_topk_accs[k].append( val_correct_preds[k] / self.val_size )
+                    self.val_topk_accs[k].append(val_correct_preds[k] / self.val_size)
                 self.val_losses.append(val_loss / self.val_size)
 
             # track best_epoch to facilitate loading of best checkpoint
-            if self.early_stop_criteria == 'loss':
-                if self.val_losses[-1] < self.min_val_loss:
-                    self.best_epoch = epoch
-            elif self.early_stop_criteria.split('_')[-1] == 'acc':
-                k = int(self.early_stop_criteria.split('_')[0][-1:])
-                val_acc_to_compare = self.val_topk_accs[k][-1]
-                if val_acc_to_compare > self.max_val_acc:
-                    self.best_epoch = epoch 
+            if self.early_stop:
+                if self.early_stop_criteria == 'loss':
+                    if self.val_losses[-1] < self.min_val_loss:
+                        self.best_epoch = epoch
+                elif self.early_stop_criteria.split('_')[-1] == 'acc':
+                    k = int(self.early_stop_criteria.split('_')[0][-1:])
+                    val_acc_to_compare = self.val_topk_accs[k][-1]
+                    if val_acc_to_compare > self.max_val_acc:
+                        self.best_epoch = epoch
 
             self._update_stats()
             if self.checkpoint:
@@ -743,13 +756,19 @@ class Experiment:
         test_loader = tqdm(self.test_loader, desc='testing...')
         with torch.no_grad():
             for i, batch in enumerate(test_loader):
-                batch_data = batch[0].to(self.device)
+                batch_data = batch[0]
+                if not isinstance(batch_data, tuple):
+                    batch_data = batch_data.to(self.device)
                 batch_mask = batch[1].to(self.device)
                 batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=False
-                ) 
+                )
+                # test_batch_size = batch[0].shape[0]
+                test_batch_size = batch_mask.shape[0]
+
                 # for validation/test data, true rxn may not be present! 
-                if self.test_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
+                if self.args.do_finetune and \
+                        self.test_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
                     batch_idx = batch[2]
                     batch_true_ranks_array = self.test_loader.dataset.proposals_data[batch_idx, 2].astype('int')  
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
@@ -771,7 +790,7 @@ class Experiment:
                         test_correct_preds[k] += batch_correct_preds
 
                         if k == 1:
-                            batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                            batch_top1_acc = batch_correct_preds / test_batch_size
 
                             if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                 try:
@@ -794,9 +813,9 @@ class Experiment:
                                 except:
                                     logging.info('\nIndex out of range (last minibatch)')
                         elif k == 5:
-                            batch_top5_acc = batch_correct_preds/batch[0].shape[0]
+                            batch_top5_acc = batch_correct_preds / test_batch_size
                         elif k == 10:
-                            batch_top10_acc = batch_correct_preds/batch[0].shape[0]
+                            batch_top10_acc = batch_correct_preds / test_batch_size
 
                 else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                     batch_true_ranks = 0
@@ -809,16 +828,16 @@ class Experiment:
                         test_correct_preds[k] += batch_correct_preds
 
                         if k == 1:
-                            batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                            batch_top1_acc = batch_correct_preds / test_batch_size
                         elif k == 5:
-                            batch_top5_acc = batch_correct_preds/batch[0].shape[0]
+                            batch_top5_acc = batch_correct_preds / test_batch_size
                         elif k == 10:
-                            batch_top10_acc = batch_correct_preds/batch[0].shape[0]
+                            batch_top10_acc = batch_correct_preds / test_batch_size
                 if 5 not in self.k_to_calc:
                     batch_top5_acc = np.nan
                 if 10 not in self.k_to_calc:
                     batch_top10_acc = np.nan 
-                test_loader.set_description(f"testing...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
+                test_loader.set_description(f"testing...loss={batch_loss / test_batch_size:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                 test_loader.refresh() 
 
                 test_loss += batch_loss   
@@ -925,7 +944,9 @@ class Experiment:
             else: # pre-training
                 energies_combined = [] 
                 for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
-                    batch_data = batch[0].to(self.device)
+                    batch_data = batch[0]
+                    if not isinstance(batch_data, tuple):
+                        batch_data = batch_data.to(self.device)
                     batch_mask = batch[1].to(self.device)
                     
                     energies = self.model(batch_data)

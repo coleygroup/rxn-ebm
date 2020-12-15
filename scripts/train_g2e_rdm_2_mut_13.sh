@@ -2,6 +2,7 @@
 
 python trainEBM.py \
   --model_name="G2E" \
+  --onthefly \
   --do_compute_graph_feat \
   --do_pretrain \
   --do_test \
@@ -12,8 +13,12 @@ python trainEBM.py \
 	--representation="smiles" \
 	--random_seed=0 \
 	--batch_size=64 \
+	--minibatch_size=16 \
 	--learning_rate=5e-3 \
 	--optimizer="Adam" \
 	--epochs=1 \
+	--early_stop \
+	--early_stop_min_delta=1e-4 \
+	--early_stop_patience=2 \
 	--num_workers=0 \
 	--checkpoint
