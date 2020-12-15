@@ -306,23 +306,25 @@ class GraphFeatEncoder(nn.Module):
 
 
 class G2E(nn.Module):
-    def __init__(self, encoder_hidden_size, encoder_depth, **kwargs):
+    def __init__(self, args, encoder_hidden_size, encoder_depth, **kwargs):
         super().__init__()
+        self.model_repr = "GraphEBM"
+        self.args = args
+
         self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=sum(BOND_FDIM),
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
                                         depth=encoder_depth)
         self.output = nn.Linear(encoder_hidden_size * 4, 1)
-        logging.info(self)
-        logging.info(f"Model #Params: {sum([x.nelement() for x in self.parameters()]) / 1000} k")
-        logging.info("Setting self.reactant first to False for finetuning")
-        self.reactant_first = False
+        if args.do_finetune:
+            logging.info("Setting self.reactant first to False for finetuning")
+            self.reactant_first = False
+        else:
+            logging.info("Setting self.reactant first to True for pretraining")
+            self.reactant_first = True
         logging.info("Initializing weights")
         model_utils.initialize_weights(self)
-
-    def __repr__(self):
-        return "GraphEBM"  # needed by experiment.py for saving model details
 
     def forward(self, batch):
         """
@@ -347,47 +349,37 @@ class G2E(nn.Module):
         # want energies to be 2 * 32
         # list of 66 [n_molecules, 400] => [2, 32]
 
-        hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, 400] => list of [1, 400]
+        hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]
         # logging.info([h.size() for h in hmol])
 
-        normalized_hmols = []
+        batch_pooled_hmols = []
 
-        mols_per_minibatch = len(hmol) // batch_size                     # = (1) r + (32) p or (1) p + 32 (r)
+        mols_per_minibatch = len(hmol) // batch_size                    # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
+        assert mols_per_minibatch == self.args.minibatch_size + 1
+
         # logging.info(f"{len(hmol)}, {batch_size}, {mols_per_minibatch}")
         for i in range(batch_size):
-            if self.reactant_first:
-                r_hmol = hmol[i*mols_per_minibatch]                             # [1, 400]
-                r_hmols = r_hmol.repeat(mols_per_minibatch - 1, 1)              # [32, 400]
+            if self.reactant_first:                         # (1) r + mini_bsz p
+                r_hmol = hmol[i*mols_per_minibatch]                             # [1, h]
+                r_hmols = r_hmol.repeat(mols_per_minibatch - 1, 1)              # [mini_bsz, h]
                 p_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                p_hmols = torch.cat(p_hmols, 0)                                 # [32, 400]
+                p_hmols = torch.cat(p_hmols, 0)                                 # [mini_bsz, h]
             else:
-                p_hmols = hmol[i*mols_per_minibatch]
+                p_hmols = hmol[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
                 p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
                 r_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
                 r_hmols = torch.cat(r_hmols, 0)
 
-            diff = torch.abs(p_hmols - r_hmols)                             # [32, 400]
-            prod = r_hmols * p_hmols                                        # [32, 400]
+            diff = torch.abs(p_hmols - r_hmols)                                 # [mini_bsz, h]
+            prod = r_hmols * p_hmols                                            # [mini_bsz, h]
 
-            pooled_hmols = torch.cat([r_hmols, p_hmols, diff, prod], 1)     # [32, 1600]
+            pooled_hmols = torch.cat([r_hmols, p_hmols, diff, prod], 1)         # [mini_bsz, h*4]
+            pooled_hmols = torch.unsqueeze(pooled_hmols, 0)                     # [1, mini_bsz, h*4]
 
-            # pooled_hmols = torch.cat(
-            #     [p_hmol - r_hmol for p_hmol in p_hmols], 0)               # [32, 400]
-            pooled_hmols = torch.unsqueeze(pooled_hmols, 0)                 # [1, 32, 1600]
+            batch_pooled_hmols.append(pooled_hmols)
 
-            normalized_hmols.append(pooled_hmols)
-
-        normalized_hmols = torch.cat(normalized_hmols, 0)                   # [bsz, 32, 1600]
-        # logging.info(normalized_hmols.size())
-
-        #
-        # energies = self.output(hmol)
+        batch_pooled_hmols = torch.cat(batch_pooled_hmols, 0)                   # [bsz, mini_bsz, h*4]
+        energies = self.output(batch_pooled_hmols)                              # [bsz, mini_bsz, 1]
         # logging.info("-------energies-------")
         # logging.info(energies)
-
-        # atom_scope = scopes[0]                                  # [b*K, n_components, 2]
-        # molecular_lengths = [scope[-1][0] + scope[-1][1] - scope[0][0]
-        #                   for scope in atom_scope]              # [b]
-        #
-        energies = self.output(normalized_hmols)                        # [bsz, 32, 1]
-        return energies.squeeze(dim=-1)                                 # [bsz, 32]
+        return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]

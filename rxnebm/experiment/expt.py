@@ -149,16 +149,7 @@ class Experiment:
             )
             self.maxk = self.train_loader.dataset.data.shape[-1] // self.train_loader.dataset.input_dim
         elif self.representation == "smiles":
-            self._init_smi_dataloaders(
-                precomp_file_prefix=None,
-                onthefly=onthefly,
-                smi_to_fp_dict_filename=args.smi_to_fp_dict_filename,
-                fp_to_smi_dict_filename=args.fp_to_smi_dict_filename,
-                mol_fps_filename=args.mol_fps_filename,
-                mut_smis_filename=args.mut_smis_filename,
-                rxn_smis_file_prefix=args.rxn_smis_file_prefix,
-                search_index_filename=args.search_index_filename
-            )
+            self._init_smi_dataloaders(onthefly=onthefly)
             self.maxk = len(self.train_loader.dataset._rxn_smiles_with_negatives[0])
         else:
             raise NotImplementedError('Please add self.maxk for the current representation; '
@@ -416,27 +407,20 @@ class Experiment:
         self.test_size = len(test_dataset)
         del train_dataset, val_dataset, test_dataset
 
-    def _get_smi_dl(self,
-                    phase: str,
-                    rxn_smis_file_prefix: str,
-                    fp_to_smi_dict_filename: str,
-                    smi_to_fp_dict_filename: str,
-                    mol_fps_filename: str,
-                    mut_smis_filename: str,
-                    shuffle: bool = False):
-        rxn_smis_filename = f"{rxn_smis_file_prefix}_{phase}.pickle"
+    def _get_smi_dl(self, phase: str, shuffle: bool = False):
+        rxn_smis_filename = f"{self.args.rxn_smis_file_prefix}_{phase}.pickle"
         _data = dataset.ReactionDatasetSMILES(
             self.args,
             augmentations=self.augmentations,
             precomp_rxnsmi_filename=None,
-            fp_to_smi_dict_filename=fp_to_smi_dict_filename,
-            smi_to_fp_dict_filename=smi_to_fp_dict_filename,
-            mol_fps_filename=mol_fps_filename,
             rxn_smis_filename=rxn_smis_filename,
-            mut_smis_filename=mut_smis_filename,
-            onthefly=True,
-            seed=self.random_seed
-            )
+            onthefly=True
+        )
+
+        if self.args.do_compute_graph_feat:
+            collate_fn = dataset_utils.graph_collate_fn_builder(self.device, debug=False)
+        else:
+            collate_fn = dataset_utils.seq_collate_fn_builder(self.device, debug=False)
 
         pin_memory = True if torch.cuda.is_available() else False
         _loader = DataLoader(
@@ -445,7 +429,7 @@ class Experiment:
             num_workers=self.num_workers,
             shuffle=shuffle,
             # pin_memory=pin_memory,
-            collate_fn=dataset_utils.graph_collate_fn_builder(self.device, debug=False)
+            collate_fn=collate_fn
         )
 
         _size = len(_data)
@@ -453,43 +437,12 @@ class Experiment:
 
         return _loader, _size
 
-    def _init_smi_dataloaders(
-        self,
-        precomp_file_prefix: Optional[str],
-        onthefly: bool,
-        fp_to_smi_dict_filename: str,
-        smi_to_fp_dict_filename: str,
-        mol_fps_filename: str,
-        mut_smis_filename: str,
-        search_index_filename: str,
-        rxn_smis_file_prefix: Optional[str] = None
-    ):
+    def _init_smi_dataloaders(self, onthefly: bool):
         logging.info("Initialising SMILES dataloaders...")
         if onthefly:
-            self.train_loader, self.train_size = self._get_smi_dl(
-                phase="train",
-                rxn_smis_file_prefix=rxn_smis_file_prefix,
-                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
-                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
-                mol_fps_filename=mol_fps_filename,
-                mut_smis_filename=mut_smis_filename,
-                shuffle=True)
-            self.val_loader, self.val_size = self._get_smi_dl(
-                phase="valid",
-                rxn_smis_file_prefix=rxn_smis_file_prefix,
-                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
-                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
-                mol_fps_filename=mol_fps_filename,
-                mut_smis_filename=mut_smis_filename,
-                shuffle=False)
-            self.test_loader, self.test_size = self._get_smi_dl(
-                phase="test",
-                rxn_smis_file_prefix=rxn_smis_file_prefix,
-                fp_to_smi_dict_filename=fp_to_smi_dict_filename,
-                smi_to_fp_dict_filename=smi_to_fp_dict_filename,
-                mol_fps_filename=mol_fps_filename,
-                mut_smis_filename=mut_smis_filename,
-                shuffle=False)
+            self.train_loader, self.train_size = self._get_smi_dl(phase="train", shuffle=True)
+            self.val_loader, self.val_size = self._get_smi_dl(phase="valid", shuffle=False)
+            self.test_loader, self.test_size = self._get_smi_dl(phase="test", shuffle=False)
         else:
             raise NotImplementedError
 

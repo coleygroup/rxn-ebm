@@ -1,5 +1,6 @@
 import logging
 import networkx as nx
+import re
 import torch
 from rdkit import Chem
 from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM, get_atom_features_sparse, get_bond_features_sparse
@@ -46,15 +47,12 @@ def get_features_per_graph(smi: str, use_rxn_class: bool):
     return graph, G, atom_features, bond_features
 
 
-def densify(features: List[List[int]], FDIM: List[int]):
+def densify(features: List[List[int]], FDIM: List[int]) -> List[List[int]]:
     one_hot_features = []
     for feature in features:
         one_hot_feature = [0] * sum(FDIM)
         for i, idx in enumerate(feature):
-            if i == 0:
-                one_hot_feature[idx] = 1
-                continue
-            one_hot_feature[idx+sum(FDIM[:i-1])] = 1
+            one_hot_feature[idx+sum(FDIM[:i])] = 1
 
         one_hot_features.append(one_hot_feature)
 
@@ -66,7 +64,7 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
     if directed:
         padded_features = get_atom_features_sparse(Chem.Atom("*"), use_rxn_class=use_rxn_class, rxn_class=0)
         padded_features = densify([padded_features], ATOM_FDIM)
-        fnode = [padded_features]
+        fnode = padded_features
         fmess = [[0, 0] + [0] * sum(BOND_FDIM)]
         agraph, bgraph = [[]], [[]]
         unique_bonds = {(0, 0)}
@@ -137,7 +135,6 @@ def graph_collate_fn_builder(device, debug: bool):
     """Creates an 'collate_fn' closure to be passed to DataLoader, for graph encoders"""
     def collate_fn(data):           # list of bsz (list of K smiles)
         """The actual collate_fn"""
-
         batch_graphs_and_features = []
         batch_masks = []
 
@@ -165,6 +162,18 @@ def graph_collate_fn_builder(device, debug: bool):
         return (graph_tensors, scopes, batch_size), batch_masks
 
     return collate_fn
+
+
+def smi_tokenizer(smile):
+    """
+    Tokenize a SMILES molecule or reaction
+    taken from https://github.com/pschwllr/MolecularTransformer
+    """
+    pattern = r"(\[[^\]]+]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9])"
+    regex = re.compile(pattern)
+    tokens = [token for token in regex.findall(smile)]
+    assert smile == ''.join(tokens)
+    return tokens
 
 
 def seq_collate_fn_builder(device, debug: bool):

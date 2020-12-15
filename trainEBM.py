@@ -10,8 +10,10 @@ from datetime import datetime
 from rdkit import RDLogger
 from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_utils
-from rxnebm.model import FF
+from rxnebm.model import FF, G2E, S2E
 from rxnebm.model.FF_args import FF_args
+from rxnebm.model.G2E_args import G2E_args
+from rxnebm.model.S2E_args import S2E_args
 
 torch.backends.cudnn.benchmark = True
 
@@ -170,11 +172,20 @@ def main(args):
         begin_epoch = 0
         debug = True
     else:
-        logging.info("Not loading from checkpoint, creating model")
-        model_args = FF_args
-        fp_args = args_to_dict(args, "fp_args")
+        logging.info(f"Not loading from checkpoint, creating model {args.model_name}")
+        if args.model_name == "FeedforwardEBM":
+            model_args = FF_args
+            fp_args = args_to_dict(args, "fp_args")
+            model = FF.FeedforwardSingle(**model_args, **fp_args)
+        elif args.model_name == "G2E":              # Graph to energy
+            model_args = G2E_args
+            model = G2E.G2E(args, **model_args)
+        elif args.model_name == "S2E":              # Sequence to energy
+            model_args = S2E_args
+            model = S2E.S2E(args, **model_args)
+        else:
+            raise ValueError(f"Model {args.model_name} not supported!")
 
-        model = FF.FeedforwardSingle(**model_args, **fp_args)
         logging.info(f"Model {model.model_repr} created")
 
     logging.info("Logging model summary")

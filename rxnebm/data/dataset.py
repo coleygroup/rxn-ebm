@@ -529,28 +529,23 @@ class ReactionDatasetSMILES(Dataset):
         args,
         augmentations: dict,
         precomp_rxnsmi_filename: Optional[str],
-        fp_to_smi_dict_filename: str,
-        smi_to_fp_dict_filename: str,
-        mol_fps_filename: str,
         rxn_smis_filename: Optional[str] = None,
-        mut_smis_filename: Optional[str] = None,
         onthefly: bool = False,
         rxn_type: Optional[str] = "diff",
         fp_type: Optional[str] = "count",
         fp_size: Optional[int] = 4096,
         radius: Optional[int] = 3,
-        dtype: Optional[str] = "int32",
-        seed: Optional[int] = 0,
+        dtype: Optional[str] = "int32"
     ):
-        model_utils.seed_everything(seed)
+        model_utils.seed_everything(args.random_seed)
 
         self.args = args
 
         self.precomp_rxnsmi_filename = precomp_rxnsmi_filename
-        self.fp_to_smi_dict_filename = fp_to_smi_dict_filename
-        self.smi_to_fp_dict_filename = smi_to_fp_dict_filename
-        self.mol_fps_filename = mol_fps_filename
-        self.mut_smis_filename = mut_smis_filename
+        self.fp_to_smi_dict_filename = args.fp_to_smi_dict_filename
+        self.smi_to_fp_dict_filename = args.smi_to_fp_dict_filename
+        self.mol_fps_filename = args.mol_fps_filename
+        self.mut_smis_filename = args.mut_smis_filename
         self.rxn_smis_filename = rxn_smis_filename
 
         self.rxn_type = rxn_type
@@ -723,7 +718,7 @@ class ReactionDatasetSMILES(Dataset):
                     pickle.dump(self._masks, of)
                 logging.info("All cached.")
         else:
-            # for transformer, preprocessing is light
+            # for transformer, preprocessing is light so we do onthefly
             logging.info(f"No graph features required, computing negatives from scratch")
             self.get_smiles_and_masks()
 

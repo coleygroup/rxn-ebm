@@ -1,5 +1,8 @@
-#!/bin/sh 
+#!/bin/bash
+
 python trainEBM.py \
+  --model_name="G2E" \
+  --do_compute_graph_feat \
   --do_pretrain \
   --do_test \
   --do_get_energies_and_acc \
