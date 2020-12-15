@@ -31,6 +31,7 @@ NUM_Hs_DICT = {nH: i for i, nH in enumerate(NUM_Hs)}
 
 BOND_TYPES = [None, Chem.rdchem.BondType.SINGLE, Chem.rdchem.BondType.DOUBLE,
               Chem.rdchem.BondType.TRIPLE, Chem.rdchem.BondType.AROMATIC]
+BOND_DICT = {bond_type: i for i, bond_type in enumerate(BOND_TYPES[1:])}
 BOND_FLOAT_TO_TYPE = {
     0.0: BOND_TYPES[0],
     1.0: BOND_TYPES[1],
@@ -45,7 +46,9 @@ RXN_CLASSES = list(range(10))
 
 ATOM_FDIM = len(ATOM_LIST) + len(DEGREES) + len(FORMAL_CHARGE) + len(HYBRIDIZATION) \
             + len(VALENCE) + len(NUM_Hs) + 1
+ATOM_FDIM = 7           # undo one-hot to save space
 BOND_FDIM = 6
+BOND_FDIM = 3           # undo one-hot to save space
 BINARY_FDIM = 5 + BOND_FDIM
 INVALID_BOND = -1
 
@@ -177,4 +180,18 @@ def get_bond_features(bond: Chem.Bond) -> np.ndarray:
     bond_features = [float(bt == bond_type) for bond_type in BOND_TYPES[1:]]
     bond_features.extend([float(bond.GetIsConjugated()), float(bond.IsInRing())])
     bond_features = np.array(bond_features, dtype=np.float32)
+    return bond_features
+
+
+def get_bond_features_sparse(bond: Chem.Bond) -> List[int]:
+    """Get bond features as sparse idx.
+
+    Parameters
+    ----------
+    bond: Chem.Bond,
+        bond object
+    """
+    bt = bond.GetBondType()
+    bond_features = [BOND_DICT[bt], int(bond.GetIsConjugated()), int(bond.IsInRing())]
+
     return bond_features
