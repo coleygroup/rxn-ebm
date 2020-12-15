@@ -46,11 +46,13 @@ RXN_CLASSES = list(range(10))
 
 ATOM_FDIM = len(ATOM_LIST) + len(DEGREES) + len(FORMAL_CHARGE) + len(HYBRIDIZATION) \
             + len(VALENCE) + len(NUM_Hs) + 1
-ATOM_FDIM = 7           # undo one-hot to save space
+ATOM_FDIM = [len(ATOM_LIST), len(DEGREES), len(FORMAL_CHARGE), len(HYBRIDIZATION), len(VALENCE),
+             len(NUM_Hs), 2]            # undo one-hot to save space
 BOND_FDIM = 6
-BOND_FDIM = 3           # undo one-hot to save space
+BOND_FDIM = [4, 2, 2]                   # undo one-hot to save space
 BINARY_FDIM = 5 + BOND_FDIM
 INVALID_BOND = -1
+# ATOM_FDIM and BOND_FDIM now contains list of feature dimensions
 
 
 def onek_encoding_unk(x: Any, allowable_set: Union[List, Set]) -> List:

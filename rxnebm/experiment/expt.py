@@ -12,7 +12,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm 
 
-from rxnebm.data import dataset
+from rxnebm.data import dataset, dataset_utils
 from rxnebm.experiment import expt_utils
 from rxnebm.model import model_utils
 
@@ -159,7 +159,7 @@ class Experiment:
                 rxn_smis_file_prefix=args.rxn_smis_file_prefix,
                 search_index_filename=args.search_index_filename
             )
-            self.maxk = len(self.train_loader.dataset._augmented_rxn_smiles[0])
+            self.maxk = len(self.train_loader.dataset._rxn_smiles_with_negatives[0])
         else:
             raise NotImplementedError('Please add self.maxk for the current representation; '
                                       'we need maxk to calculate topk_accs up to the maximum allowed value '

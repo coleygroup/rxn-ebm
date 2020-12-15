@@ -2,7 +2,7 @@ import logging
 import networkx as nx
 import torch
 from rdkit import Chem
-from rxnebm.data.chem_utils import BOND_FDIM, get_atom_features_sparse, get_bond_features_sparse
+from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM, get_atom_features_sparse, get_bond_features_sparse
 from rxnebm.data.rxn_graphs import RxnGraph
 from typing import List, Tuple
 
@@ -46,11 +46,28 @@ def get_features_per_graph(smi: str, use_rxn_class: bool):
     return graph, G, atom_features, bond_features
 
 
+def densify(features: List[List[int]], FDIM: List[int]):
+    one_hot_features = []
+    for feature in features:
+        one_hot_feature = [0] * sum(FDIM)
+        for i, idx in enumerate(feature):
+            if i == 0:
+                one_hot_feature[idx] = 1
+                continue
+            one_hot_feature[idx+sum(FDIM[:i-1])] = 1
+
+        one_hot_features.append(one_hot_feature)
+
+    return one_hot_features
+
+
 def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = True,
                        use_rxn_class: bool = False) -> Tuple[Tuple, Tuple[List, List]]:
     if directed:
-        fnode = [get_atom_features_sparse(Chem.Atom("*"), use_rxn_class=use_rxn_class, rxn_class=0)]
-        fmess = [[0, 0] + [0] * BOND_FDIM]
+        padded_features = get_atom_features_sparse(Chem.Atom("*"), use_rxn_class=use_rxn_class, rxn_class=0)
+        padded_features = densify([padded_features], ATOM_FDIM)
+        fnode = [padded_features]
+        fmess = [[0, 0] + [0] * sum(BOND_FDIM)]
         agraph, bgraph = [[]], [[]]
         unique_bonds = {(0, 0)}
 
@@ -59,6 +76,9 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
 
         for bid, graphs_and_features in enumerate(batch_graphs_and_features):
             graph, G, atom_features, bond_features = graphs_and_features
+            # densify on the fly temporarily, TODO: to be fully converted into embedding based
+            atom_features = densify(atom_features, ATOM_FDIM)
+            bond_features = densify(bond_features, BOND_FDIM)
 
             atom_offset = len(fnode)
             bond_offset = len(unique_bonds)
@@ -99,8 +119,8 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
                     w_adj = w + atom_offset
                     bgraph[eid].append(edge_dict[(w_adj, u_adj)])
 
-        fnode = torch.tensor(fnode, dtype=torch.long)
-        fmess = torch.tensor(fmess, dtype=torch.long)
+        fnode = torch.tensor(fnode, dtype=torch.float)
+        fmess = torch.tensor(fmess, dtype=torch.float)
         agraph = create_pad_tensor(agraph)
         bgraph = create_pad_tensor(bgraph)
 

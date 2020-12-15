@@ -261,26 +261,10 @@ class GraphFeatEncoder(nn.Module):
         self.encoder = MPNEncoder(rnn_type=self.rnn_type,
                                   input_size=self.n_atom_feat + self.n_bond_feat,
                                   node_fdim=self.atom_size,
-                                  h_size=self.h_size, depth=self.depth)
+                                  h_size=self.h_size,
+                                  depth=self.depth)
 
-    @staticmethod
-    def embed_graph(graph_tensors: Tuple[torch.Tensor, ...]) -> Tuple[torch.Tensor, ...]:
-        """Replaces input graph tensors with corresponding feature vectors.
-
-        Parameters
-        ----------
-        graph_tensors: Tuple[torch.Tensor],
-            Tuple of graph tensors - Contains atom features, message vector details,
-            atom graph and bond graph for encoding neighborhood connectivity.
-        """
-        fnode, fmess, agraph, bgraph, _ = graph_tensors
-        hnode = fnode.clone()
-        fmess1 = hnode.index_select(index=fmess[:, 0].long(), dim=0)
-        fmess2 = fmess[:, 2:].clone()
-        hmess = torch.cat([fmess1, fmess2], dim=-1)
-        return hnode, hmess, agraph, bgraph
-
-    def forward(self, graph_tensors: Tuple[torch.Tensor], scopes) -> Tuple[torch.Tensor, ...]:
+    def forward(self, graph_tensors: Tuple[torch.Tensor, ...], scopes) -> Tuple[torch.Tensor, ...]:
         """
         Forward pass of the graph encoder. First the feature vectors are extracted,
         and then encoded.
@@ -294,10 +278,17 @@ class GraphFeatEncoder(nn.Module):
             Scopes is composed of atom and bond scopes, which keep track of
             atom and bond indices for each molecule in the 2D feature list
         """
-        tensors = self.embed_graph(graph_tensors)
-        hatom, _ = self.encoder(*tensors, mask=None)
+        fnode, fmess, agraph, bgraph, _ = graph_tensors
         atom_scope, bond_scope = scopes
-        # print(atom_scope)
+
+        # embed graph, note that for directed graph, fess[any, 0:2] = u, v
+        hnode = fnode.clone()
+        fmess1 = hnode.index_select(index=fmess[:, 0].long(), dim=0)
+        fmess2 = fmess[:, 2:].clone()
+        hmess = torch.cat([fmess1, fmess2], dim=-1)
+
+        # encode
+        hatom, _ = self.encoder(hnode, hmess, agraph, bgraph, mask=None)
 
         hmol = []
         if isinstance(atom_scope[0], list):
@@ -317,8 +308,8 @@ class GraphFeatEncoder(nn.Module):
 class G2E(nn.Module):
     def __init__(self, encoder_hidden_size, encoder_depth, **kwargs):
         super().__init__()
-        self.encoder = GraphFeatEncoder(n_atom_feat=ATOM_FDIM,
-                                        n_bond_feat=BOND_FDIM,
+        self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
+                                        n_bond_feat=sum(BOND_FDIM),
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
                                         depth=encoder_depth)
