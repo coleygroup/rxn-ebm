@@ -18,7 +18,7 @@ python trainEBM.py \
 	--representation="smiles" \
 	--random_seed=0 \
 	--batch_size=64 \
-	--minibatch_size=32 \
+	--minibatch_size=16 \
 	--learning_rate=5e-3 \
 	--optimizer="Adam" \
 	--epochs=1 \

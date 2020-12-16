@@ -10,10 +10,10 @@ from datetime import datetime
 from rdkit import RDLogger
 from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_utils
-from rxnebm.model import FF, G2E
+from rxnebm.model import FF, G2E, S2E
 from rxnebm.model.FF_args import FF_args
 from rxnebm.model.G2E_args import G2E_args
-# from rxnebm.model.S2E_args import S2E_args
+from rxnebm.model.S2E_args import S2E_args
 
 torch.backends.cudnn.benchmark = True
 

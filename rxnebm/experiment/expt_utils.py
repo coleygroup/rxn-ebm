@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 from datetime import date
@@ -9,7 +10,7 @@ import torch
 from torch.utils.data import get_worker_info
 
 import nmslib
-from rxnebm.model import FF, G2E, model_utils
+from rxnebm.model import FF, G2E, S2E, model_utils
 
 def setup_paths(
     location: str = "LOCAL",
@@ -119,9 +120,11 @@ def load_model_opt_and_stats(
             saved_model = FF.FeedforwardTriple3indiv3prod1cos(**saved_stats["model_args"], **saved_stats["fp_args"])
         elif model_name == "GraphEBM":
             saved_model = G2E.G2E(args, **saved_stats["model_args"])
+        elif model_name == "TransformerEBM":
+            saved_model = S2E.S2E(args, **saved_stats["model_args"])
         else:
-            print("Only FeedforwardSingle and FeedforwardTriple3indiv3prod1cos are supported currently!")
-            return
+            raise ValueError("Only FeedforwardSingle, FeedforwardTriple3indiv3prod1cos, "
+                             "GraphEBM and TransformerEBM are supported currently!")
 
         # override bug in name of optimizer when saving checkpoint
         saved_stats["train_args"]["optimizer"] = model_utils.get_optimizer(optimizer_name)
@@ -141,8 +144,8 @@ def load_model_opt_and_stats(
                         state[k] = v.cuda()
 
     except Exception as e:
-        print(e)
-        print("best_epoch: {}".format(saved_stats["best_epoch"]))
+        logging.info(e.__traceback__)
+        logging.info("best_epoch: {}".format(saved_stats["best_epoch"]))
 
     return saved_model, saved_optimizer, saved_stats
 

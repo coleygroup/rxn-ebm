@@ -426,7 +426,7 @@ class Experiment:
         if self.args.do_compute_graph_feat:
             collate_fn = dataset_utils.graph_collate_fn_builder(self.device, debug=False)
         else:
-            collate_fn = dataset_utils.seq_collate_fn_builder(self.device, debug=False)
+            collate_fn = dataset_utils.seq_collate_fn_builder(self.device, self.vocab, self.max_seq_len, debug=False)
 
         pin_memory = True if torch.cuda.is_available() else False
         _loader = DataLoader(

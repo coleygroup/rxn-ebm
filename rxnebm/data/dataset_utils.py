@@ -5,7 +5,7 @@ import torch
 from rdkit import Chem
 from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM, get_atom_features_sparse, get_bond_features
 from rxnebm.data.rxn_graphs import RxnGraph
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 
 def get_graph_from_smiles(smi: str):
@@ -135,7 +135,7 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
 
 def graph_collate_fn_builder(device, debug: bool):
     """Creates an 'collate_fn' closure to be passed to DataLoader, for graph encoders"""
-    def collate_fn(data):           # list of bsz (list of K smiles)
+    def collate_fn(data):           # list of bsz (list of K)
         """The actual collate_fn"""
         batch_graphs_and_features = []
         batch_masks = []
@@ -168,59 +168,70 @@ def graph_collate_fn_builder(device, debug: bool):
     return collate_fn
 
 
-def smi_tokenizer(smile):
+def smi_tokenizer(smiles: str) -> List[str]:
     """
     Tokenize a SMILES molecule or reaction
     taken from https://github.com/pschwllr/MolecularTransformer
     """
     pattern = r"(\[[^\]]+]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9])"
     regex = re.compile(pattern)
-    tokens = [token for token in regex.findall(smile)]
-    assert smile == ''.join(tokens)
+    tokens = [token for token in regex.findall(smiles)]
+    assert smiles == "".join(tokens)
     return tokens
 
 
-def seq_collate_fn_builder(device, debug: bool):
-    """Creates an 'collate_fn' closure to be passed to DataLoader, for graph encoders"""
-    def collate_fn(data):           # list of bsz (list of K smiles)
+def get_seq_features_per_minibatch(minibatch_smiles: List[str],
+                                   vocab: Dict[str, int],
+                                   max_seq_len: int) -> Tuple[List[List[int]], List[int]]:
+    minibatch_token_ids = []
+    minibatch_lens = []
+
+    for smi in minibatch_smiles:
+        tokens = smi_tokenizer(smi)
+        token_ids = [vocab["_CLS"]]
+        token_ids.extend([vocab[token] if token in vocab else vocab["_UNK"]
+                          for token in tokens])
+        token_ids = token_ids[:max_seq_len-1]
+        token_ids.append(vocab["_SEP"])
+        seq_len = len(token_ids)
+
+        # padding
+        while len(token_ids) < max_seq_len:
+            token_ids.append(vocab["_PAD"])
+
+        minibatch_token_ids.append(token_ids)
+        minibatch_lens.append(seq_len)
+
+    return minibatch_token_ids, minibatch_lens
+
+
+def seq_collate_fn_builder(device, vocab: Dict[str, int], max_seq_len: int = 512, debug: bool = False):
+    """Creates an 'collate_fn' closure to be passed to DataLoader, for transformer encoders"""
+    def collate_fn(data):           # list of bsz (list of K)
         """The actual collate_fn"""
-
-        '''
-        batch_smis = []
+        batch_token_ids = []
+        batch_lens = []
         batch_masks = []
-        for rxn_smiles, masks in data:
-            r_smi = rxn_smiles[0].split(">>")[0]
-            p_smis = [rxn_smi.split(">>")[-1] for rxn_smi in rxn_smiles]
+        batch_idxs = []
 
-            batch_smis.append(r_smi)
-            batch_smis.extend(p_smis)
-            batch_masks.append([bool(smi) for smi in p_smis])
-        '''
+        for rxn_smiles_with_negatives, masks, idx in data:
+            minibatch_token_ids, minibatch_lens = get_seq_features_per_minibatch(
+                rxn_smiles_with_negatives, vocab=vocab, max_seq_len=max_seq_len)
+            batch_token_ids.extend(minibatch_token_ids)
+            batch_lens.extend(minibatch_lens)
 
-        batch_graphs_and_features = []
-        batch_masks = []
-
-        # each graphs_and_features is a minibatch
-        # each masks is a minibatch too
-        for graphs_and_features, masks in data:
-            batch_graphs_and_features.extend(graphs_and_features)
             batch_masks.append(masks)
+            batch_idxs.append(idx)
 
         batch_size = len(data)
+        batch_token_ids = torch.tensor(batch_token_ids, dtype=torch.long, device=device)
+        batch_lens = torch.tensor(batch_lens, dtype=torch.long, device=device)
         batch_masks = torch.tensor(batch_masks, dtype=torch.bool, device=device)
-        graph_tensors, scopes = get_graph_features(batch_graphs_and_features=batch_graphs_and_features,
-                                                   use_rxn_class=False)
-        graph_tensors = [tensor.to(device) for tensor in graph_tensors[:4]]
-        graph_tensors.append(None)
 
         if debug:
-            # logging.info("-------graph tensors-------")
-            # logging.info(graph_tensors)
-            logging.info("-------scopes-------")
-            logging.info(scopes)
-            logging.info("-------batch_masks-------")
-            logging.info(batch_masks)
+            logging.info("-------token_id tensors-------")
+            logging.info(batch_token_ids)
 
-        return (graph_tensors, scopes, batch_size), batch_masks
+        return (batch_token_ids, batch_lens, batch_size), batch_masks, batch_idxs
 
     return collate_fn

@@ -524,7 +524,7 @@ class ReactionDatasetFingerprints(Dataset):
 
 
 class ReactionDatasetSMILES(Dataset):
-    """Dataset class for SMILES representation of reactions"""
+    """Dataset class for SMILES representation of reactions, should be good for both GNN and Transformer"""
     def __init__(
         self,
         args,
@@ -610,7 +610,7 @@ class ReactionDatasetSMILES(Dataset):
                         for j in range(1, 201):
                             try:
                                 cand = row[f"cand_precursor_{j}"]
-                            except:
+                            except:     # somehow the schema is not consistent across train/val/test
                                 cand = row[f"neg_precursor_{j}"]
                             if cand == r_smi_true:
                                 continue
