@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import get_worker_info
 
 import nmslib
-from rxnebm.model import FF, model_utils
+from rxnebm.model import FF, G2E, model_utils
 
 def setup_paths(
     location: str = "LOCAL",
@@ -62,6 +62,7 @@ def setup_paths(
 
 
 def load_model_opt_and_stats(
+    args,
     saved_stats_filename: Union[str, bytes, os.PathLike],
     checkpoint_folder: Union[str, bytes, os.PathLike],
     model_name: str = "FeedforwardFingerprint",
@@ -116,6 +117,8 @@ def load_model_opt_and_stats(
             saved_model = FF.FeedforwardSingle(**saved_stats["model_args"], **saved_stats["fp_args"])
         elif model_name == 'FeedforwardTriple3indiv3prod1cos':
             saved_model = FF.FeedforwardTriple3indiv3prod1cos(**saved_stats["model_args"], **saved_stats["fp_args"])
+        elif model_name == "GraphEBM":
+            saved_model = G2E.G2E(args, **saved_stats["model_args"])
         else:
             print("Only FeedforwardSingle and FeedforwardTriple3indiv3prod1cos are supported currently!")
             return

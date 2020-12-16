@@ -1,16 +1,20 @@
 #!/bin/bash
 
 python trainEBM.py \
+  --load_checkpoint \
   --model_name="GraphEBM" \
-  --rxn_smis_file_prefix="50k_clean_rxnsmi_noreagent" \
+  --proposals_csv_file_prefix="retrosim_200maxtest_200maxprec" \
   --onthefly \
   --do_compute_graph_feat \
-  --do_pretrain \
+  --do_finetune \
   --do_test \
   --do_get_energies_and_acc \
-	--log_file=g2e_rdm_2_mut_13.log \
-	--expt_name=g2e_rdm_2_mut_13 \
+	--log_file=g2e_rdm_2_mut_13_FINETUNE.log \
+	--expt_name=g2e_rdm_2_mut_13_FINETUNE \
 	--precomp_file_prefix="" \
+	--old_expt_name=g2e_rdm_2_mut_13 \
+	--expt_name=g2e_rdm_2_mut_13_FINETUNE \
+	--date_trained=15_12_2020 \
 	--representation="smiles" \
 	--random_seed=0 \
 	--batch_size=64 \

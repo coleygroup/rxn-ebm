@@ -407,12 +407,19 @@ class Experiment:
         del train_dataset, val_dataset, test_dataset
 
     def _get_smi_dl(self, phase: str, shuffle: bool = False):
-        rxn_smis_filename = f"{self.args.rxn_smis_file_prefix}_{phase}.pickle"
+        rxn_smis_filename, proposals_csv_filename = None, None
+
+        if self.args.do_pretrain:
+            rxn_smis_filename = f"{self.args.rxn_smis_file_prefix}_{phase}.pickle"
+        elif self.args.do_finetune:
+            proposals_csv_filename = f"{self.args.proposals_csv_file_prefix}_{phase}.csv"
+
         _data = dataset.ReactionDatasetSMILES(
             self.args,
             augmentations=self.augmentations,
             precomp_rxnsmi_filename=None,
             rxn_smis_filename=rxn_smis_filename,
+            proposals_csv_filename=proposals_csv_filename,
             onthefly=True
         )
 

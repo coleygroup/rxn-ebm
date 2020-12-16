@@ -165,11 +165,11 @@ def main(args):
         )
         saved_stats_filename = f'{args.model_name}_{args.old_expt_name}_stats.pkl'
         saved_model, saved_optimizer, saved_stats = expt_utils.load_model_opt_and_stats(
-            saved_stats_filename, old_checkpoint_folder, args.model_name, args.optimizer
+            args, saved_stats_filename, old_checkpoint_folder, args.model_name, args.optimizer
         )
         logging.info(f"Saved model {saved_model.model_repr} loaded")
         logging.info("Updating args with fp_args")
-        for k, v in saved_stats["fp_args"]:
+        for k, v in saved_stats["fp_args"].items():
             setattr(args, k, v)
 
         model = saved_model
@@ -186,10 +186,10 @@ def main(args):
             model_args = FF_args
             fp_args = args_to_dict(args, "fp_args")
             model = FF.FeedforwardSingle(**model_args, **fp_args)
-        elif args.model_name == "G2E":              # Graph to energy
+        elif args.model_name == "GraphEBM":                 # Graph to energy
             model_args = G2E_args
             model = G2E.G2E(args, **model_args)
-        elif args.model_name == "S2E":              # Sequence to energy
+        elif args.model_name == "TransformerEBM":           # Sequence to energy
             model_args = S2E_args
             model = S2E.S2E(args, **model_args)
         else:

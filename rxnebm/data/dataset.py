@@ -1,3 +1,4 @@
+import csv
 import json
 import logging
 import nmslib
@@ -530,6 +531,7 @@ class ReactionDatasetSMILES(Dataset):
         augmentations: dict,
         precomp_rxnsmi_filename: Optional[str],
         rxn_smis_filename: Optional[str] = None,
+        proposals_csv_filename: Optional[str] = None,
         onthefly: bool = False,
         rxn_type: Optional[str] = "diff",
         fp_type: Optional[str] = "count",
@@ -540,13 +542,18 @@ class ReactionDatasetSMILES(Dataset):
         model_utils.seed_everything(args.random_seed)
 
         self.args = args
+        self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
 
         self.precomp_rxnsmi_filename = precomp_rxnsmi_filename
         self.fp_to_smi_dict_filename = args.fp_to_smi_dict_filename
         self.smi_to_fp_dict_filename = args.smi_to_fp_dict_filename
         self.mol_fps_filename = args.mol_fps_filename
         self.mut_smis_filename = args.mut_smis_filename
-        self.rxn_smis_filename = rxn_smis_filename
+
+        if args.do_pretrain:
+            self.rxn_smis_filename = rxn_smis_filename
+        else:
+            self.rxn_smis_filename = proposals_csv_filename
 
         self.rxn_type = rxn_type
         self.fp_type = fp_type
@@ -559,8 +566,6 @@ class ReactionDatasetSMILES(Dataset):
         if onthefly:
             if args.do_pretrain:
                 logging.info("Generating augmentations on the fly...")
-                self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
-
                 with open(self.root / rxn_smis_filename, "rb") as handle:
                     self.rxn_smis = pickle.load(handle)
                 with open(self.root / self.smi_to_fp_dict_filename, "rb") as handle:
@@ -582,8 +587,30 @@ class ReactionDatasetSMILES(Dataset):
                     else:
                         raise ValueError('Invalid augmentation!')
             elif args.do_finetune:
-                with open(self.root / self.rxn_smis_filename, "r") as f:
-                    self.all_smiles = json.load(f)
+                logging.info(f"Converting {self.rxn_smis_filename} into json (list of list)")
+                self.all_smiles = []
+
+                with open(self.root / self.rxn_smis_filename, "r") as csv_file:
+                    csv_reader = csv.DictReader(csv_file)
+                    for i, row in enumerate(tqdm(csv_reader)):
+                        if i == 0:
+                            continue
+                        p_smi = row["prod_smi"]
+                        r_smi_true = row["true_precursors"]
+                        smiles = [f"{r_smi_true}>>{p_smi}"]
+
+                        for j in range(1, 201):
+                            try:
+                                cand = row[f"cand_precursor_{j}"]
+                            except:
+                                cand = row[f"neg_precursor_{j}"]
+                            if cand == r_smi_true:
+                                continue
+                            if cand.isnumeric() and int(cand) == 9999:
+                                continue
+                            smiles.append(f"{cand}>>{p_smi}")
+
+                        self.all_smiles.append(smiles)
 
             self._rxn_smiles_with_negatives = []
             self._graphs_and_features = []
@@ -704,7 +731,7 @@ class ReactionDatasetSMILES(Dataset):
                 self.p = Pool(10)
                 self._graphs_and_features = self.p.map(
                     helper,
-                    zip(self._rxn_smiles_with_negatives, range(len(self.rxn_smis))))
+                    zip(self._rxn_smiles_with_negatives, range(len(self._rxn_smiles_with_negatives))))
                 self._graphs_and_features = list(self._graphs_and_features)
                 # for i, minibatch_smiles in enumerate(self._augmented_rxn_smiles):
                 #     self._graphs_and_features.append(get_features_per_graph_helper((minibatch_smiles, i)))
