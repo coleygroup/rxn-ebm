@@ -70,6 +70,10 @@ class Experiment:
         self.epochs = args.epochs
         self.best_epoch = 0  # will be automatically assigned after 1 epoch
 
+        self.vocab = {}
+        if self.args.vocab_file is not None:
+            self.load_or_create_vocab()
+
         self.early_stop = args.early_stop
         if self.early_stop:
             self.early_stop_criteria = args.early_stop_criteria
@@ -424,9 +428,11 @@ class Experiment:
         )
 
         if self.args.do_compute_graph_feat:
-            collate_fn = dataset_utils.graph_collate_fn_builder(self.device, debug=False)
+            collate_fn = dataset_utils.graph_collate_fn_builder(
+                self.device, debug=False)
         else:
-            collate_fn = dataset_utils.seq_collate_fn_builder(self.device, self.vocab, self.max_seq_len, debug=False)
+            collate_fn = dataset_utils.seq_collate_fn_builder(
+                self.device, self.vocab, self.args.max_seq_len, debug=False)
 
         pin_memory = True if torch.cuda.is_available() else False
         _loader = DataLoader(
@@ -494,6 +500,15 @@ class Experiment:
             else:
                 self.wait = 0
                 self.max_val_acc = max(self.max_val_acc, val_acc_to_compare)
+
+    def load_or_create_vocab(self):
+        """Currently only supports loading. The vocab is small enough that a single universal vocab suffices"""
+        root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
+
+        with open(root / self.args.vocab_file, "r") as f:
+            for i, line in enumerate(f):
+                token = line.strip()
+                self.vocab[token] = i
 
     def _update_stats(self):
         self.stats["train_time"] = (

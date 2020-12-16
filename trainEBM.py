@@ -55,6 +55,7 @@ def parse_args():
     parser.add_argument("--proposals_csv_file_prefix",
                         help="do not change (CSV file containing proposals from retro models)", type=str,
                         default=None)
+    parser.add_argument("--vocab_file", help="vocab file for Transformer encoder", type=str, default=None)
     # fingerprint params
     parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
     parser.add_argument("--rctfp_size", help="reactant fp size", type=int, default=4096)
@@ -68,6 +69,7 @@ def parse_args():
                         type=str, default="")
     parser.add_argument("--batch_size", help="batch_size", type=int, default=2048)
     parser.add_argument("--minibatch_size", help="minibatch size for smiles representation", type=int, default=32)
+    parser.add_argument("--max_seq_len", help="max sequence length for smiles representation", type=int, default=512)
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
@@ -190,6 +192,7 @@ def main(args):
             model_args = G2E_args
             model = G2E.G2E(args, **model_args)
         elif args.model_name == "TransformerEBM":           # Sequence to energy
+            assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
             model_args = S2E_args
             model = S2E.S2E(args, **model_args)
         else:
