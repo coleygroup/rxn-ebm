@@ -617,21 +617,24 @@ class Experiment:
                     # val_batch_size = batch[0].shape[0]
                     val_batch_size = batch_mask.shape[0]
 
-                    # for validation/test data, true rxn may not be present! 
-                    if self.args.do_finetune and \
-                            self.val_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
+                    # for validation/test data, true rxn may not be present!
+                    # only provide for finetuning step on retro proposals
+                    # TODO: temporarily turn off this block
+                    # if self.args.do_finetune and self.val_loader.dataset.proposals_data is not None:
+                    if False:
                         batch_idx = batch[2]
                         batch_true_ranks_array = self.val_loader.dataset.proposals_data[batch_idx, 2].astype('int')
                         batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                        # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
+                        # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
+                        # (bcos nothing in the numerator, loss is undefined)
                         loss_numerator = batch_energies[
-                                                                np.arange(batch_energies.shape[0])[ batch_true_ranks_array != 9999 ], 
-                                                                batch_true_ranks_array[ batch_true_ranks_array != 9999 ]
-                                                            ]
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999],
+                            batch_true_ranks_array[batch_true_ranks_array != 9999]
+                        ]
                         loss_denominator = batch_energies[
-                                                                np.arange(batch_energies.shape[0])[ batch_true_ranks_array != 9999 ], 
-                                                                :
-                                                            ]
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999],
+                            :
+                        ]
                         batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
 
                         for k in self.k_to_calc:
@@ -641,34 +644,35 @@ class Experiment:
                             val_correct_preds[k] += batch_correct_preds
 
                             if k == 1:
-                                batch_top1_acc = batch_correct_preds/batch[0].shape[0]
+                                batch_top1_acc = batch_correct_preds / val_batch_size
                         
                                 if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                     try:
                                         for j in range(i * self.batch_size, (i+1) * self.batch_size):
                                             if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
-                                                sample_idx = random.sample( list(range(self.batch_size)), k=1 )
+                                                sample_idx = random.sample(list(range(self.batch_size)), k=1)
                                                 sample_true_rank = batch_true_ranks_array[sample_idx][0]
                                                 sample_pred_rank = batch_preds[sample_idx, 0].item() 
-                                                sample_true_prod = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 0 ]
-                                                sample_true_prec = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 1 ]  
+                                                sample_true_prod = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
+                                                sample_true_prec = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 1]
 
-                                                sample_cand_precs = self.val_loader.dataset.proposals_data[ batch_idx[sample_idx], 3: ] 
-                                                sample_pred_prec = sample_cand_precs[ batch_preds[sample_idx] ]
+                                                sample_cand_precs = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 3:]
+                                                sample_pred_prec = sample_cand_precs[ batch_preds[sample_idx]]
                                                 sample_orig_prec = sample_cand_precs[ 0 ]
                                                 logging.info(f'\ntrue product:            {sample_true_prod}')
                                                 logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
                                                 logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
                                                 logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
                                                 break
-                                    except: # do nothing 
+                                    except Exception as e:      # do nothing
+                                        logging.info(e.__traceback__)
                                         logging.info('\nIndex out of range (last minibatch)') 
                             elif k == 5:
-                                batch_top5_acc = batch_correct_preds/batch[0].shape[0] 
+                                batch_top5_acc = batch_correct_preds / val_batch_size
                             elif k == 10:
-                                batch_top10_acc = batch_correct_preds/batch[0].shape[0]                       
+                                batch_top10_acc = batch_correct_preds / val_batch_size
                     
-                    else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
+                    else:       # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                         batch_true_ranks = 0
                         batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
 
@@ -773,21 +777,24 @@ class Experiment:
                 # test_batch_size = batch[0].shape[0]
                 test_batch_size = batch_mask.shape[0]
 
-                # for validation/test data, true rxn may not be present! 
-                if self.args.do_finetune and \
-                        self.test_loader.dataset.proposals_data is not None: # only provide for finetuning step on retro proposals
+                # for validation/test data, true rxn may not be present!
+                # only provide for finetuning step on retro proposals
+                # TODO: temporarily turn off this block
+                # if self.args.do_finetune and self.test_loader.dataset.proposals_data is not None:
+                if False:
                     batch_idx = batch[2]
                     batch_true_ranks_array = self.test_loader.dataset.proposals_data[batch_idx, 2].astype('int')  
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator, loss is undefined)
+                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
+                    # (bcos nothing in the numerator, loss is undefined)
                     loss_numerator = batch_energies[
-                                                            np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999], 
-                                                            batch_true_ranks_array[batch_true_ranks_array != 9999]
-                                                        ]
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999],
+                        batch_true_ranks_array[batch_true_ranks_array != 9999]
+                    ]
                     loss_denominator = batch_energies[
-                                                            np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999], 
-                                                            :
-                                                        ]
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999],
+                        :
+                    ]
                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
 
                     for k in self.k_to_calc:
@@ -817,7 +824,8 @@ class Experiment:
                                             logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
                                             logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
                                             break
-                                except:
+                                except Exception as e:
+                                    logging.info(e.__traceback__)
                                     logging.info('\nIndex out of range (last minibatch)')
                         elif k == 5:
                             batch_top5_acc = batch_correct_preds / test_batch_size
@@ -920,11 +928,15 @@ class Experiment:
 
         self.model.eval()
         with torch.no_grad():
-            if finetune and phase != 'train': # for training, we know positive rxn is always the 0th-index, even during finetuning
+            # TODO: temporarily turn off this block
+            # if finetune and phase != 'train': # for training, we know positive rxn is always the 0th-index, even during finetuning
+            if False:
                 energies_combined, true_ranks = [], []
                 loss = 0
                 for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
-                    batch_data = batch[0].to(self.device)
+                    batch_data = batch[0]
+                    if not isinstance(batch_data, tuple):
+                        batch_data = batch_data.to(self.device)
                     batch_mask = batch[1].to(self.device)
                     batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False
@@ -935,9 +947,9 @@ class Experiment:
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator)
                     loss_numerator = batch_energies[
-                                                            np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999], 
-                                                            batch_true_ranks[batch_true_ranks != 9999]
-                                                        ]
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999],
+                        batch_true_ranks[batch_true_ranks != 9999]
+                    ]
                     loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
                     loss += batch_loss
@@ -984,8 +996,10 @@ class Experiment:
         if save_energies:
             logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
             torch.save(energies_combined, Path(path_to_energies / name_energies))
- 
-        if finetune and phase != 'train':
+
+        # TODO: temporarily turn off this block
+        # if finetune and phase != 'train':
+        if False:
             self.energies[phase] = energies_combined
             self.true_ranks[phase] = true_ranks.unsqueeze(dim=-1)
             return energies_combined, loss, true_ranks
