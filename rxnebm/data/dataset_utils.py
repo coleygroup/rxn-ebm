@@ -173,10 +173,11 @@ def smi_tokenizer(smiles: str) -> List[str]:
     Tokenize a SMILES molecule or reaction
     taken from https://github.com/pschwllr/MolecularTransformer
     """
-    pattern = r"(\[[^\]]+]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9])"
+    pattern = "(\[[^\]]+]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9])"
     regex = re.compile(pattern)
     tokens = [token for token in regex.findall(smiles)]
-    assert smiles == "".join(tokens)
+    assert smiles == "".join(tokens), \
+        f"Tokenization error. SMILES: {smiles}, tokenized: {tokens}"
     return tokens
 
 

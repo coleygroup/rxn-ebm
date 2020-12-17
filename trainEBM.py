@@ -160,6 +160,7 @@ def main(args):
             )
     '''
 
+    vocab = {}
     if args.load_checkpoint:
         logging.info("Loading from checkpoint")
         old_checkpoint_folder = expt_utils.setup_paths(
@@ -182,6 +183,9 @@ def main(args):
         saved_stats_filename = saved_stats_filename
         begin_epoch = 0
         debug = True
+
+        if args.vocab_file is not None:
+            vocab = expt_utils.load_or_create_vocab(args)
     else:
         logging.info(f"Not loading from checkpoint, creating model {args.model_name}")
         if args.model_name == "FeedforwardEBM":
@@ -193,8 +197,10 @@ def main(args):
             model = G2E.G2E(args, **model_args)
         elif args.model_name == "TransformerEBM":           # Sequence to energy
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
+            vocab = expt_utils.load_or_create_vocab(args)
+
             model_args = S2E_args
-            model = S2E.S2E(args, **model_args)
+            model = S2E.S2E(args, vocab, **model_args)
         else:
             raise ValueError(f"Model {args.model_name} not supported!")
 
@@ -216,7 +222,8 @@ def main(args):
         saved_stats=saved_stats,
         saved_stats_filename=saved_stats_filename,
         begin_epoch=begin_epoch,
-        debug=debug
+        debug=debug,
+        vocab=vocab
     )
 
     if args.do_pretrain:

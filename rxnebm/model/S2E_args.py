@@ -1,10 +1,10 @@
 S2E_args = {
-    "embed_size": 256,
+    "embed_size": 64,
     "num_layers": 4,
-    "hidden_size": 256,
+    "hidden_size": 64,
     "num_heads": 4,
-    "filter_size": 2048,
+    "filter_size": 256,
     "dropout": 0.2,
     "attention_dropout": 0.1,
-    "pooling_method": "CLS"
+    "pooling_method": "mean"
 }

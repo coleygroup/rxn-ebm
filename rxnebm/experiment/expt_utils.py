@@ -62,6 +62,19 @@ def setup_paths(
     return checkpoint_folder #scores_folder #cleaned_data_folder #raw_data_folder
 
 
+def load_or_create_vocab(args):
+    """Currently only supports loading. The vocab is small enough that a single universal vocab suffices"""
+    root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
+
+    vocab = {}
+    with open(root / args.vocab_file, "r") as f:
+        for i, line in enumerate(f):
+            token = line.strip()
+            vocab[token] = i
+
+    return vocab
+
+
 def load_model_opt_and_stats(
     args,
     saved_stats_filename: Union[str, bytes, os.PathLike],
@@ -121,7 +134,9 @@ def load_model_opt_and_stats(
         elif model_name == "GraphEBM":
             saved_model = G2E.G2E(args, **saved_stats["model_args"])
         elif model_name == "TransformerEBM":
-            saved_model = S2E.S2E(args, **saved_stats["model_args"])
+            assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
+            vocab = load_or_create_vocab(args)
+            saved_model = S2E.S2E(args, vocab, **saved_stats["model_args"])
         else:
             raise ValueError("Only FeedforwardSingle, FeedforwardTriple3indiv3prod1cos, "
                              "GraphEBM and TransformerEBM are supported currently!")
@@ -144,7 +159,7 @@ def load_model_opt_and_stats(
                         state[k] = v.cuda()
 
     except Exception as e:
-        logging.info(e.__traceback__)
+        logging.info(e)
         logging.info("best_epoch: {}".format(saved_stats["best_epoch"]))
 
     return saved_model, saved_optimizer, saved_stats

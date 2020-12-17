@@ -4,7 +4,7 @@ import random
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -61,6 +61,7 @@ class Experiment:
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
         saved_stats: Optional[dict] = None,
         begin_epoch: Optional[int] = None,
+        vocab: Dict[str, int] = None,
         **kwargs
     ):
         self.args = args
@@ -69,10 +70,7 @@ class Experiment:
         self.learning_rate = args.learning_rate
         self.epochs = args.epochs
         self.best_epoch = 0  # will be automatically assigned after 1 epoch
-
-        self.vocab = {}
-        if self.args.vocab_file is not None:
-            self.load_or_create_vocab()
+        self.vocab = vocab
 
         self.early_stop = args.early_stop
         if self.early_stop:
@@ -500,15 +498,6 @@ class Experiment:
             else:
                 self.wait = 0
                 self.max_val_acc = max(self.max_val_acc, val_acc_to_compare)
-
-    def load_or_create_vocab(self):
-        """Currently only supports loading. The vocab is small enough that a single universal vocab suffices"""
-        root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
-
-        with open(root / self.args.vocab_file, "r") as f:
-            for i, line in enumerate(f):
-                token = line.strip()
-                self.vocab[token] = i
 
     def _update_stats(self):
         self.stats["train_time"] = (
