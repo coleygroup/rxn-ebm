@@ -2,6 +2,7 @@ import csv
 import json
 import logging
 import nmslib
+import numpy as np
 import os
 import pandas as pd
 import pickle
@@ -23,8 +24,8 @@ sparse_fp = scipy.sparse.csr_matrix
 Tensor = torch.Tensor
 
 
-def get_features_per_graph_helper(_args: Tuple[List[str], int]):
-    rxn_smiles, i = _args
+def get_features_per_graph_helper(_args: Tuple[int, List[str]]):
+    i, rxn_smiles = _args
     if i % 1000 == 0:
         logging.info(f"Processing {i}th rxn_smi")
 
@@ -34,14 +35,30 @@ def get_features_per_graph_helper(_args: Tuple[List[str], int]):
     minibatch_smiles = [r_smi]
     minibatch_smiles.extend(p_smis)
 
-    graphs_and_features = [get_features_per_graph(smi, use_rxn_class=False)
-                           for smi in minibatch_smiles]
+    # graphs_and_features = [get_features_per_graph(smi, use_rxn_class=False)
+    #                        for smi in minibatch_smiles]
 
-    return graphs_and_features
+    a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
+        a_features, a_features_lens, b_features, b_features_lens = \
+        zip(*(get_features_per_graph(smi, use_rxn_class=False)
+              for smi in minibatch_smiles))
+
+    a_scopes = np.concatenate(a_scopes, axis=0)
+    b_scopes = np.concatenate(b_scopes, axis=0)
+    predecessors = np.concatenate(predecessors, axis=0)
+    a_features = np.concatenate(a_features, axis=0)
+    b_features = np.concatenate(b_features, axis=0)
+
+    n_smi_per_minibatch = len(minibatch_smiles)
+    minibatch_mol_indexes = np.arange(i*n_smi_per_minibatch, (i+1)*n_smi_per_minibatch)
+
+    # return graphs_and_features
+    return a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
+        a_features, a_features_lens, b_features, b_features_lens, minibatch_mol_indexes
 
 
-def get_features_per_graph_helper_finetune(_args: Tuple[List[str], int]):
-    rxn_smiles, i = _args
+def get_features_per_graph_helper_finetune(_args: Tuple[int, List[str]]):
+    i, rxn_smiles = _args
     if i % 1000 == 0:
         logging.info(f"Processing {i}th rxn_smi")
 
@@ -51,10 +68,26 @@ def get_features_per_graph_helper_finetune(_args: Tuple[List[str], int]):
     minibatch_smiles = [p_smi]
     minibatch_smiles.extend(r_smis)
 
-    graphs_and_features = [get_features_per_graph(smi, use_rxn_class=False)
-                           for smi in minibatch_smiles]
+    # graphs_and_features = [get_features_per_graph(smi, use_rxn_class=False)
+    #                        for smi in minibatch_smiles]
 
-    return graphs_and_features
+    a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
+        a_features, a_features_lens, b_features, b_features_lens = \
+        zip(*(get_features_per_graph(smi, use_rxn_class=False)
+              for smi in minibatch_smiles))
+
+    a_scopes = np.concatenate(a_scopes, axis=0)
+    b_scopes = np.concatenate(b_scopes, axis=0)
+    predecessors = np.concatenate(predecessors, axis=0)
+    a_features = np.concatenate(a_features, axis=0)
+    b_features = np.concatenate(b_features, axis=0)
+
+    n_smi_per_minibatch = len(minibatch_smiles)
+    minibatch_mol_indexes = np.arange(i*n_smi_per_minibatch, (i+1)*n_smi_per_minibatch)
+
+    # return graphs_and_features
+    return a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
+        a_features, a_features_lens, b_features, b_features_lens, minibatch_mol_indexes
 
 
 class AugmentedDataFingerprints:
@@ -621,8 +654,13 @@ class ReactionDatasetSMILES(Dataset):
                         self.all_smiles.append(smiles)
 
             self._rxn_smiles_with_negatives = []
-            self._graphs_and_features = []
             self._masks = []
+            self.minibatch_mol_indexes = []
+            self.a_scopes, self.a_scopes_indexes = [], []
+            self.b_scopes, self.b_scopes_indexes = [], []
+            self.predecessors, self.predecessors_indexes = [], []
+            self.a_features, self.a_features_indexes = [], []
+            self.b_features, self.b_features_indexes = [], []
             self.precompute()
 
         else:
@@ -667,7 +705,7 @@ class ReactionDatasetSMILES(Dataset):
 
     def get_smiles_and_masks(self):
         if self.args.do_pretrain:
-            for rxn_smi in tqdm(self.rxn_smis):
+            for rxn_smi in tqdm(self.rxn_smis[:1000]):
                 minibatch_smiles = [rxn_smi]
                 for aug in self.augs:
                     neg_rxn_smiles = aug(rxn_smi)
@@ -675,6 +713,9 @@ class ReactionDatasetSMILES(Dataset):
 
                 # crem would give empty string
                 minibatch_masks = [bool(smi) for smi in minibatch_smiles]
+
+                # hardcode, seems that "" will just make the indexing more difficult
+                minibatch_smiles = [smi if smi else "CC" for smi in minibatch_smiles]
 
                 self._rxn_smiles_with_negatives.append(minibatch_smiles)
                 self._masks.append(minibatch_masks)
@@ -699,6 +740,9 @@ class ReactionDatasetSMILES(Dataset):
                     minibatch_smiles.append("")
                 minibatch_masks = [bool(smi) for smi in minibatch_smiles]
 
+                # hardcode, seems that "" will just make the indexing more difficult
+                minibatch_smiles = [smi if smi else "CC" for smi in minibatch_smiles]
+
                 self._rxn_smiles_with_negatives.append(minibatch_smiles)
                 self._masks.append(minibatch_masks)
 
@@ -708,18 +752,25 @@ class ReactionDatasetSMILES(Dataset):
     def precompute(self):
         if self.args.do_compute_graph_feat:
             # for graph, we want to cache since the pre-processing is very heavy
-            cache_smi = self.root / f"{self.rxn_smis_filename}.cache_smi"
-            cache_feat = self.root / f"{self.rxn_smis_filename}.cache_feat"
-            cache_mask = self.root / f"{self.rxn_smis_filename}.cache_mask"
-            if all(os.path.exists(cache) for cache in [cache_smi, cache_feat, cache_mask]):
-                logging.info(f"Found cache for reaction smiles, features and masks "
+            cache_smi = self.root / f"{self.rxn_smis_filename}.cache_smi.pkl"
+            cache_mask = self.root / f"{self.rxn_smis_filename}.cache_mask.pkl"
+            cache_feat = self.root / f"{self.rxn_smis_filename}.cache_feat.npz"
+            cache_feat_index = self.root / f"{self.rxn_smis_filename}.cache_feat_index.npz"
+            if all(os.path.exists(cache) for cache in [cache_smi, cache_mask, cache_feat, cache_feat_index]):
+                logging.info(f"Found cache for reaction smiles, masks, features and feature indexes "
                              f"for rxn_smis_fn {self.rxn_smis_filename}, loading")
                 with open(cache_smi, "rb") as f:
                     self._rxn_smiles_with_negatives = pickle.load(f)
-                with open(cache_feat, "rb") as f:
-                    self._graphs_and_features = pickle.load(f)
                 with open(cache_mask, "rb") as f:
                     self._masks = pickle.load(f)
+
+                feat = np.load(cache_feat)
+                feat_index = np.load(cache_feat_index)
+                for attr in ["a_scopes", "b_scopes", "predecessors", "a_features", "b_features"]:
+                    setattr(self, attr, feat[attr])
+                    setattr(self, f"{attr}_indexes", feat_index[f"{attr}_indexes"])
+                self.minibatch_mol_indexes = feat_index["minibatch_mol_indexes"]
+
                 logging.info("All loaded.")
 
             else:
@@ -737,21 +788,56 @@ class ReactionDatasetSMILES(Dataset):
                     raise ValueError("Either --do_pretrain or --do_finetune must be supplied!")
 
                 self.p = Pool(10)
-                self._graphs_and_features = self.p.map(
-                    helper,
-                    zip(self._rxn_smiles_with_negatives, range(len(self._rxn_smiles_with_negatives))))
-                self._graphs_and_features = list(self._graphs_and_features)
-                # for i, minibatch_smiles in enumerate(self._augmented_rxn_smiles):
-                #     self._graphs_and_features.append(get_features_per_graph_helper((minibatch_smiles, i)))
+                _features_and_lengths = self.p.map(helper, enumerate(self._rxn_smiles_with_negatives))
+
+                a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
+                    a_features, a_features_lens, b_features, b_features_lens, minibatch_mol_indexes = \
+                    zip(*_features_and_lengths)
+
+                self.minibatch_mol_indexes = np.stack(minibatch_mol_indexes, axis=0)
+
+                self.a_scopes = np.concatenate(a_scopes, axis=0)
+                self.b_scopes = np.concatenate(b_scopes, axis=0)
+                self.predecessors = np.concatenate(predecessors, axis=0)
+                self.a_features = np.concatenate(a_features, axis=0)
+                self.b_features = np.concatenate(b_features, axis=0)
+
+                def _lengths2indexes(lens):
+                    end_indexes = np.cumsum(np.concatenate(lens, axis=0))
+                    start_indexes = np.concatenate([[0], end_indexes[:-1]], axis=0)
+                    indexes = np.stack([start_indexes, end_indexes], axis=1)
+                    return indexes
+
+                self.a_scopes_indexes = _lengths2indexes(a_scopes_lens)
+                self.b_scopes_indexes = _lengths2indexes(b_scopes_lens)
+                self.predecessors_indexes = _lengths2indexes(predecessors_lens)
+                self.a_features_indexes = _lengths2indexes(a_features_lens)
+                self.b_features_indexes = _lengths2indexes(b_features_lens)
+
                 logging.info(f"Completed, time: {time.time() - start: .3f} s")
                 logging.info(f"Caching...")
                 with open(cache_smi, "wb") as of:
                     pickle.dump(self._rxn_smiles_with_negatives, of)
-                with open(cache_feat, "wb") as of:
-                    pickle.dump(self._graphs_and_features, of)
                 with open(cache_mask, "wb") as of:
                     pickle.dump(self._masks, of)
+
+                np.savez(cache_feat,
+                         a_scopes=self.a_scopes,
+                         b_scopes=self.b_scopes,
+                         predecessors=self.predecessors,
+                         a_features=self.a_features,
+                         b_features=self.b_features)
+                np.savez(cache_feat_index,
+                         minibatch_mol_indexes=self.minibatch_mol_indexes,
+                         a_scopes_indexes=self.a_scopes_indexes,
+                         b_scopes_indexes=self.b_scopes_indexes,
+                         predecessors_indexes=self.predecessors_indexes,
+                         a_features_indexes=self.a_features_indexes,
+                         b_features_indexes=self.b_features_indexes)
+
                 logging.info("All cached.")
+
+                self.p.shutdown(wait=True)          # equivalent to p.close() then p.join()
         else:
             # for transformer, preprocessing is light so we do onthefly
             logging.info(f"No graph features required, computing negatives from scratch")

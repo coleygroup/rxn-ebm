@@ -1,11 +1,34 @@
 import logging
 import networkx as nx
+import numpy as np
 import re
 import torch
 from rdkit import Chem
 from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM, get_atom_features_sparse, get_bond_features
 from rxnebm.data.rxn_graphs import RxnGraph
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
+
+
+def update_atom_scope(offset: int, atom_scope: List[Tuple[int, int]]) -> Union[List, Tuple]:
+    """Updates the atom indices by the offset.
+    This is the static version of RxnElement.update_atom_scope()."""
+    if isinstance(atom_scope, list):
+        atom_scope = [(st + offset, le) for (st, le) in atom_scope]
+    else:
+        st, le = atom_scope
+        atom_scope = (st + offset, le)
+    return atom_scope
+
+
+def update_bond_scope(offset: int, bond_scope: List[Tuple[int, int]]) -> Union[List, Tuple]:
+    """Updates the atom indices by the offset.
+    This is the static version of RxnElement.update_bond_scope()."""
+    if isinstance(bond_scope, list):
+        bond_scope = [(st + offset, le) for (st, le) in bond_scope]
+    else:
+        st, le = bond_scope
+        bond_scope = (st + offset, le)
+    return bond_scope
 
 
 def get_graph_from_smiles(smi: str):
@@ -25,6 +48,7 @@ def create_pad_tensor(alist):
 def get_features_per_graph(smi: str, use_rxn_class: bool):
     atom_features = []
     bond_features = []
+    predecessors = []
 
     graph = get_graph_from_smiles(smi).reac_mol
 
@@ -38,13 +62,32 @@ def get_features_per_graph(smi: str, use_rxn_class: bool):
                                              use_rxn_class=use_rxn_class,
                                              rxn_class=graph.rxn_class)
         atom_features.append(atom_feat)
+        predecessor = list(G.predecessors(v))
+        assert len(predecessor) < 8, f"Do we really have more than 7 bonds for: {smi}?"
+        while len(predecessor) < 7:             # padding to get a nicely shaped ndarray later
+            predecessor.append(v)
+
+        predecessors.append(predecessor)
 
     for u, v, attr in G.edges(data='label'):
         bond_feat = get_bond_features(mol.GetBondBetweenAtoms(u, v))
         bond_feat = [u, v] + bond_feat
         bond_features.append(bond_feat)
 
-    return graph, G, atom_features, bond_features
+    a_scopes = np.array(graph.atom_scope, dtype=np.int32)
+    a_scopes_lens = a_scopes.shape[0]
+    b_scopes = np.array(graph.bond_scope, dtype=np.int32)
+    b_scopes_lens = b_scopes.shape[0]
+    predecessors = np.array(predecessors, dtype=np.int32)
+    predecessors_lens = predecessors.shape[0]
+    a_features = np.array(atom_features, dtype=np.int32)
+    a_features_lens = a_features.shape[0]
+    b_features = np.array(bond_features, dtype=np.int32)
+    b_features_lens = b_features.shape[0]
+
+    # return graph.atom_scope, graph.bond_scope, predecessor_dict, atom_features, bond_features
+    return a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
+        a_features, a_features_lens, b_features, b_features_lens
 
 
 def densify(features: List[List[int]], FDIM: List[int]) -> List[List[int]]:
@@ -75,15 +118,18 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
         edge_dict = {}
 
         for bid, graphs_and_features in enumerate(batch_graphs_and_features):
-            graph, G, atom_features, bond_features = graphs_and_features
+            # graph, G, atom_features, bond_features = graphs_and_features
+            a_scope, b_scope, predecessor_dict, atom_features, bond_features = graphs_and_features
             # densify on the fly temporarily, TODO: to be fully converted into embedding based
             atom_features = densify(atom_features, ATOM_FDIM)
             # bond_features = densify(bond_features, BOND_FDIM)
 
             atom_offset = len(fnode)
             bond_offset = len(unique_bonds)
-            atom_scope.append(graph.update_atom_scope(atom_offset))
-            bond_scope.append(graph.update_bond_scope(bond_offset))
+            # atom_scope.append(graph.update_atom_scope(atom_offset))
+            # bond_scope.append(graph.update_bond_scope(bond_offset))
+            atom_scope.append(update_atom_scope(atom_offset, atom_scope=a_scope))
+            bond_scope.append(update_bond_scope(bond_offset, bond_scope=b_scope))
 
             # node iteration is reduced to an extend
             fnode.extend(atom_features)
@@ -102,7 +148,7 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
 
                 fmess.append(mess_vec)
                 edge_dict[(u_adj, v_adj)] = eid = len(edge_dict) + 1
-                G[u][v]['mess_idx'] = eid
+                # G[u][v]['mess_idx'] = eid           # seems not used anywhere
                 agraph[v_adj].append(eid)
                 bgraph.append([])
 
@@ -113,7 +159,8 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
                 v_adj = v + atom_offset
 
                 eid = edge_dict[(u_adj, v_adj)]
-                for w in G.predecessors(u):
+                # for w in G.predecessors(u):
+                for w in predecessor_dict[u]:
                     if w == v:
                         continue
                     w_adj = w + atom_offset

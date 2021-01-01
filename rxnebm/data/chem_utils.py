@@ -180,8 +180,10 @@ def get_bond_features(bond: Chem.Bond) -> np.ndarray:
         bond object
     """
     bt = bond.GetBondType()
-    bond_features = [float(bt == bond_type) for bond_type in BOND_TYPES[1:]]
-    bond_features.extend([float(bond.GetIsConjugated()), float(bond.IsInRing())])
+    # bond_features = [float(bt == bond_type) for bond_type in BOND_TYPES[1:]]
+    # bond_features.extend([float(bond.GetIsConjugated()), float(bond.IsInRing())])
+    bond_features = [int(bt == bond_type) for bond_type in BOND_TYPES[1:]]
+    bond_features.extend([int(bond.GetIsConjugated()), int(bond.IsInRing())])
     # bond_features = np.array(bond_features, dtype=np.float32)
     return bond_features
 
