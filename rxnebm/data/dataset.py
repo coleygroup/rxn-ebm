@@ -843,9 +843,36 @@ class ReactionDatasetSMILES(Dataset):
             logging.info(f"No graph features required, computing negatives from scratch")
             self.get_smiles_and_masks()
 
-    def __getitem__(self, idx: int) -> Tuple[List[str], List[bool], int]:
+    def __getitem__(self, idx: int) -> Tuple[List, List[bool], int]:
         if self.args.do_compute_graph_feat:
-            return self._graphs_and_features[idx], self._masks[idx], idx
+            minibatch_mol_index = self.minibatch_mol_indexes[idx]
+            minibatch_graph_features = []
+
+            for mol_index in minibatch_mol_index:
+                # sanity check
+                assert self.predecessors_indexes[mol_index][0] == self.a_features_indexes[mol_index][0]
+                assert self.predecessors_indexes[mol_index][1] == self.a_features_indexes[mol_index][1]
+
+                start, end = self.a_scopes_indexes[mol_index]
+                a_scope = self.a_scopes[start:end]
+
+                start, end = self.b_scopes_indexes[mol_index]
+                b_scope = self.b_scopes[start:end]
+
+                start, end = self.predecessors_indexes[mol_index]
+                predecessor = self.predecessors[start:end]
+
+                start, end = self.a_features_indexes[mol_index]
+                a_feature = self.a_features[start:end]
+
+                start, end = self.b_features_indexes[mol_index]
+                b_feature = self.b_features[start:end]
+
+                graph_feature = (a_scope, b_scope, predecessor, a_feature, b_feature)
+                minibatch_graph_features.append(graph_feature)
+
+            # return self._graphs_and_features[idx], self._masks[idx], idx
+            return minibatch_graph_features, self._masks[idx], idx
         else:
             return self._rxn_smiles_with_negatives[idx], self._masks[idx], idx
 

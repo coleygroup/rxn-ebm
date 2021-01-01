@@ -6,28 +6,22 @@ import torch
 from rdkit import Chem
 from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM, get_atom_features_sparse, get_bond_features
 from rxnebm.data.rxn_graphs import RxnGraph
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple
 
 
-def update_atom_scope(offset: int, atom_scope: List[Tuple[int, int]]) -> Union[List, Tuple]:
+def update_atom_scope(offset: int, atom_scope: np.ndarray) -> np.ndarray:
     """Updates the atom indices by the offset.
     This is the static version of RxnElement.update_atom_scope()."""
-    if isinstance(atom_scope, list):
-        atom_scope = [(st + offset, le) for (st, le) in atom_scope]
-    else:
-        st, le = atom_scope
-        atom_scope = (st + offset, le)
+    atom_scope[:, 0] += offset
+
     return atom_scope
 
 
-def update_bond_scope(offset: int, bond_scope: List[Tuple[int, int]]) -> Union[List, Tuple]:
+def update_bond_scope(offset: int, bond_scope: np.ndarray) -> np.ndarray:
     """Updates the atom indices by the offset.
     This is the static version of RxnElement.update_bond_scope()."""
-    if isinstance(bond_scope, list):
-        bond_scope = [(st + offset, le) for (st, le) in bond_scope]
-    else:
-        st, le = bond_scope
-        bond_scope = (st + offset, le)
+    bond_scope[:, 0] += offset
+
     return bond_scope
 
 
@@ -65,7 +59,7 @@ def get_features_per_graph(smi: str, use_rxn_class: bool):
         predecessor = list(G.predecessors(v))
         assert len(predecessor) < 8, f"Do we really have more than 7 bonds for: {smi}?"
         while len(predecessor) < 7:             # padding to get a nicely shaped ndarray later
-            predecessor.append(v)
+            predecessor.append(9999)
 
         predecessors.append(predecessor)
 
@@ -119,7 +113,7 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
 
         for bid, graphs_and_features in enumerate(batch_graphs_and_features):
             # graph, G, atom_features, bond_features = graphs_and_features
-            a_scope, b_scope, predecessor_dict, atom_features, bond_features = graphs_and_features
+            a_scope, b_scope, predecessor, atom_features, bond_features = graphs_and_features
             # densify on the fly temporarily, TODO: to be fully converted into embedding based
             atom_features = densify(atom_features, ATOM_FDIM)
             # bond_features = densify(bond_features, BOND_FDIM)
@@ -136,6 +130,8 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
             agraph.extend([[] for _ in range(len(atom_features))])
 
             # first edge iteration
+            # logging.info(bond_features)
+            # logging.info(bond_features.shape)
             for bond_feat in bond_features:
                 u, v = bond_feat[:2]
                 u_adj = u + atom_offset
@@ -144,7 +140,8 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
                 unique_bonds.add(bond)
 
                 # do not use assign for list or it'll be passed by reference
-                mess_vec = [u_adj, v_adj] + bond_feat[2:]
+                # mess_vec = [u_adj, v_adj] + bond_feat[2:]
+                mess_vec = np.concatenate([[u_adj, v_adj], bond_feat[2:]], axis=0)
 
                 fmess.append(mess_vec)
                 edge_dict[(u_adj, v_adj)] = eid = len(edge_dict) + 1
@@ -160,8 +157,8 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
 
                 eid = edge_dict[(u_adj, v_adj)]
                 # for w in G.predecessors(u):
-                for w in predecessor_dict[u]:
-                    if w == v:
+                for w in predecessor[u]:
+                    if w == v or w == 9999:             # exclude input bond or padding
                         continue
                     w_adj = w + atom_offset
                     bgraph[eid].append(edge_dict[(w_adj, u_adj)])
