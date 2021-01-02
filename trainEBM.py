@@ -78,14 +78,18 @@ def parse_args():
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
-    parser.add_argument("--lr_scheduler", help="learning rate schedule", type=str, default="ReduceLROnPlateau")
+    parser.add_argument("--lr_scheduler", help="learning rate schedule ['ReduceLROnPlateau', 'CosineAnnealingWarmRestarts']", 
+                        type=str, default="ReduceLROnPlateau")
     parser.add_argument("--lr_scheduler_criteria",
-                        help="criteria for learning rate scheduler ['loss', 'acc']", type=str, default='acc')
+                        help="criteria for ReduceLROnPlateau ['loss', 'acc']", type=str, default='acc')
     parser.add_argument("--lr_scheduler_factor",
-                        help="factor by which learning rate will be reduced", type=float, default=0.2)
+                        help="factor by which to reduce LR (ReduceLROnPlateau)", type=float, default=0.2)
     parser.add_argument("--lr_scheduler_patience",
-                        help="num. of epochs with no improvement after which learning rate will be reduced",
+                        help="num. of epochs with no improvement after which to reduce LR (ReduceLROnPlateau)",
                         type=int, default=0)
+    parser.add_argument("--lr_scheduler_T_0",
+                        help="num. of iters (epochs) for first restart (CosineAnnealingWarmRestarts)",
+                        type=int, default=8)
     parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") # type=bool, default=True) 
     parser.add_argument("--early_stop_criteria",
                         help="criteria for early stopping ['loss', 'top1_acc', 'top5_acc', 'top10_acc', 'top50_acc']",

@@ -20,20 +20,9 @@ from rxnebm.model import model_utils
 
 Tensor = torch.Tensor
 
-"""
-NOTE: the way python's imports work, is that I cannot run scripts on their own from that directory
-(e.g. I cannot do python FF.py because FF.py imports functions from model.model_utils, and at the time of
-executing FF.py, python has no knowledge of this package level information (i.e. __package__ is None))
-therefore, I have to run/import all these files/functions from a script in the main directory,
-i.e. same folder as trainEBM.py by doing: from model import FF; from experiment import expt etc
-
-To run this script from terminal/interpreter, go to root/of/rxnebm/ then execute python -m rxnebm.experiment.expt
-"""
-
-
 class Experiment:
     """
-    TODO: representation: ['graph', 'string'] 
+    TODO: representation: ['graph']
     TODO: wandb/tensorboard for hyperparameter tuning
 
     Parameters
@@ -79,7 +68,6 @@ class Experiment:
             self.early_stop_criteria = args.early_stop_criteria
             self.early_stop_min_delta = args.early_stop_min_delta
             self.early_stop_patience = args.early_stop_patience
-
             self.min_val_loss = float("+inf")  
             self.max_val_acc = float("-inf") 
             self.wait = 0  # counter for _check_earlystop()
@@ -87,6 +75,9 @@ class Experiment:
             self.early_stop_criteria = None
             self.early_stop_min_delta = None
             self.early_stop_patience = None
+            self.min_val_loss = None
+            self.max_val_acc = None
+            self.wait = None
 
         self.num_workers = args.num_workers
         self.checkpoint = args.checkpoint
@@ -101,16 +92,6 @@ class Experiment:
         self.expt_name = args.expt_name
         self.augmentations = augmentations
         self.representation = args.representation
-
-        ### fingerprint arguments ###
-        if self.representation == 'fingerprint': # or self.representation == 'smiles':
-            self.rxn_type = args.rxn_type
-            self.fp_type = args.fp_type
-            self.rctfp_size = args.rctfp_size
-            self.prodfp_size = args.prodfp_size
-            self.difffp_size = None
-            self.fp_radius = args.fp_radius        # just for record keeping purposes
-
         if self.representation != 'fingerprint' and 'bit' in augmentations:
             raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
         logging.info(f"\nInitialising experiment: {self.expt_name}")
@@ -124,17 +105,13 @@ class Experiment:
         self.model = model
         self.model_name = model_name # self.model.model_repr
         self.model_args = model_args
-        self.distributed = distributed  # NOTE: affects how checkpoint is saved & how weights should be loaded
+        self.distributed = distributed  # affects how checkpoint is saved & how weights should be loaded
 
         if saved_optimizer is not None:
             self.optimizer_name = str(self.args.optimizer).split(' ')[0]
         else:
             self.optimizer_name = args.optimizer
-
         self.lr_scheduler_name = args.lr_scheduler
-        self.lr_scheduler_criteria = args.lr_scheduler_criteria
-        self.lr_scheduler_factor = args.lr_scheduler_factor
-        self.lr_scheduler_patience = args.lr_scheduler_patience
 
         self._collate_args()
 
@@ -212,12 +189,12 @@ class Experiment:
     def _collate_args(self): 
         if self.representation == 'fingerprint':
             self.fp_args = {
-                "rxn_type": self.rxn_type,
-                "fp_type": self.fp_type,
-                "rctfp_size": self.rctfp_size,
-                "prodfp_size": self.prodfp_size,
-                "difffp_size": self.difffp_size,
-                "fp_radius": self.fp_radius,
+                "rxn_type": self.args.rxn_type,
+                "fp_type": self.args.fp_type,
+                "rctfp_size": self.args.rctfp_size,
+                "prodfp_size": self.args.prodfp_size,
+                "difffp_size": self.args.difffp_size,
+                "fp_radius": self.args.fp_radius,
             }
         else:
             self.fp_args = None
@@ -226,9 +203,9 @@ class Experiment:
             "batch_size": self.batch_size,
             "learning_rate": self.learning_rate,
             "lr_scheduler": self.lr_scheduler_name,
-            "lr_scheduler_criteria": self.lr_scheduler_criteria,
-            "lr_scheduler_factor": self.lr_scheduler_factor,
-            "lr_scheduler_patience": self.lr_scheduler_patience,
+            "lr_scheduler_criteria": self.args.lr_scheduler_criteria,
+            "lr_scheduler_factor": self.args.lr_scheduler_factor,
+            "lr_scheduler_patience": self.args.lr_scheduler_patience,
             "early_stop": self.early_stop,
             "early_stop_criteria": self.early_stop_criteria,
             "early_stop_patience": self.early_stop_patience,
@@ -254,18 +231,27 @@ class Experiment:
         if saved_optimizer is None:
             raise ValueError("load_checkpoint requires saved_optimizer!")
         self.optimizer = saved_optimizer  # load optimizer w/ state dict from checkpoint
-        if self.lr_scheduler_name:
+        if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
-            if self.lr_scheduler_criteria == 'acc':
+            if self.args.lr_scheduler_criteria == 'acc':
                 mode = 'max'
-            elif self.lr_scheduler_criteria == 'loss':
+            elif self.args.lr_scheduler_criteria == 'loss':
                 mode = 'min'
             else:
-                raise ValueError(f"Unsupported lr_scheduler_criteria {self.lr_scheduler_criteria}")
+                raise ValueError(f"Unsupported lr_scheduler_criteria {self.args.lr_scheduler_criteria}")
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                optimizer=self.optimizer, mode=mode, 
-                factor=self.lr_scheduler_factor, patience=self.lr_scheduler_patience, verbose=True
-                ) 
+                                        optimizer=self.optimizer, 
+                                        mode=mode, 
+                                        factor=self.args.lr_scheduler_factor, 
+                                        patience=self.args.lr_scheduler_patience, 
+                                        verbose=True
+                                        ) 
+        elif self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
+            logging.info(f'Initialising {self.lr_scheduler_name}')
+            self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
+                                        optimizer=self.optimizer, 
+                                        T_0=self.args.lr_scheduler_T_0
+                                        )
         else:
             self.lr_scheduler = None 
         # NOTE/TODO: lr_scheduler.load_state_dict(checkpoint['scheduler'])
@@ -277,10 +263,6 @@ class Experiment:
         self.stats_filename = (
             self.checkpoint_folder / f"{self.model_name}_{self.expt_name}_stats.pkl"
         )
-        # self.model_args = self.stats["model_args"]
-        # self.fp_args = self.stats["fp_args"]
-        # self.train_args = self.stats["train_args"]
-        # self.augmentations = self.stats["augmentations"]
         self.stats = {
             "model_args": self.model_args, # from saved_stats, handled in trainEBM.py
             "fp_args": self.fp_args, # from saved_stats, handled in trainEBM.py
@@ -295,16 +277,25 @@ class Experiment:
     def _init_optimizer_and_stats(self): 
         logging.info("Initialising optimizer & stats...")
         self.optimizer = model_utils.get_optimizer(self.optimizer_name)(self.model.parameters(), lr=self.learning_rate) 
-        if self.lr_scheduler_name:
+        if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
-            if self.lr_scheduler_criteria == 'acc':
+            if self.args.lr_scheduler_criteria == 'acc':
                 mode = 'max'
-            elif self.lr_scheduler_criteria == 'loss':
+            elif self.args.lr_scheduler_criteria == 'loss':
                 mode = 'min'
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                optimizer=self.optimizer, mode=mode, 
-                factor=self.lr_scheduler_factor, patience=self.lr_scheduler_patience, verbose=True
-                ) 
+                                        optimizer=self.optimizer, 
+                                        mode=mode, 
+                                        factor=self.args.lr_scheduler_factor, 
+                                        patience=self.args.lr_scheduler_patience, 
+                                        verbose=True
+                                        ) 
+        elif self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
+            logging.info(f'Initialising {self.lr_scheduler_name}')
+            self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
+                                        optimizer=self.optimizer, 
+                                        T_0=self.args.lr_scheduler_T_0
+                                        )
         else:
             logging.info('Not using any LR Scheduler!')
             self.lr_scheduler = None 
@@ -350,14 +341,14 @@ class Experiment:
             for phase in ["train", "valid", "test"]:
                 precomp_rxnfp_filenames[phase] = precomp_file_prefix + f"_{phase}.npz"
 
-        if self.rxn_type == "sep":
-            input_dim = self.rctfp_size + self.prodfp_size
-        elif self.rxn_type == "diff":
-            input_dim = self.rctfp_size
-        elif self.rxn_type == 'hybrid':
-            input_dim = self.prodfp_size + self.difffp_size
-        elif self.rxn_type == 'hybrid_all':
-            input_dim = self.rctfp_size + self.prodfp_size + self.difffp_size
+        if self.args.rxn_type == "sep":
+            input_dim = self.args.rctfp_size + self.args.prodfp_size
+        elif self.args.rxn_type == "diff":
+            input_dim = self.args.rctfp_size
+        elif self.args.rxn_type == 'hybrid':
+            input_dim = self.args.prodfp_size + self.args.difffp_size
+        elif self.args.rxn_type == 'hybrid_all':
+            input_dim = self.args.rctfp_size + self.args.prodfp_size + self.args.difffp_size
 
         train_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
@@ -607,6 +598,9 @@ class Experiment:
                 train_batch_size = batch_energies.shape[0]
                 epoch_train_size += train_batch_size
 
+                if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
+                    self.lr_scheduler.step(epoch + i / self.train_size)
+
                 for k in self.k_to_calc: # various top-k accuracies
                     # index with lowest energy is what the model deems to be the most feasible rxn 
                     batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
@@ -779,10 +773,10 @@ class Experiment:
             if self.to_break:  # is it time to early stop?
                 break
             else:
-                if self.lr_scheduler is not None: # update lr scheduler if we are using one 
-                    if self.lr_scheduler_criteria == 'loss':
+                if self.lr_scheduler == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
+                    if self.args.lr_scheduler_criteria == 'loss':
                         self.lr_scheduler.step(self.val_losses[-1])
-                    elif self.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
+                    elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
                         self.lr_scheduler.step(self.val_topk_accs[1][-1])
 
             if 5 in self.train_topk_accs:
@@ -1080,7 +1074,7 @@ class Experiment:
 
         Also see: self.get_energies_and_loss()
         """
-        if self.do_finetune and phase != 'train':
+        if self.args.do_finetune and phase != 'train':
             if phase not in self.energies:
                 energies, loss, true_ranks = self.get_energies_and_loss(phase=phase)
             if self.energies[phase].shape[1] >= k: 

@@ -93,6 +93,8 @@ def get_optimizer(optimizer: str) -> torch.optim.Optimizer:
 def get_lr_scheduler(scheduler: str) -> nn.Module:
     if scheduler == 'ReduceLROnPlateau':
         return torch.optim.lr_scheduler.ReduceLROnPlateau
+    elif scheduler == 'CosineAnnealingWarmRestarts':
+        return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
     else:
         raise ValueError(f'Scheduler "{scheduler}" not supported.')
 

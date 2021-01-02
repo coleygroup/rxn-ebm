@@ -56,8 +56,8 @@ class S2E(nn.Module):
         )
 
         self.output = nn.Linear(hidden_size, 1)
-        logging.info("Initializing weights")
-        model_utils.initialize_weights(self)
+        # logging.info("Initializing weights")
+        # model_utils.initialize_weights(self)
 
     def forward(self, batch):
         """
@@ -74,7 +74,7 @@ class S2E(nn.Module):
         # logging.info(enc_in.shape)
         # logging.info("---------------------batch_lens-------------------")
         # logging.info(batch_lens)
-        # logging.info(batch_lens.shape)
+        # logging.info(batch_lens.shape)W
         lengths = torch.tensor([self.args.max_seq_len] * batch_lens.shape[0],
                                dtype=torch.long,
                                device=batch_lens.device)
@@ -119,5 +119,5 @@ class S2E(nn.Module):
             raise ValueError(f"Unsupported pooling method: {self.pooling_method}")
 
         energies = self.output(pooled_encoding)                     # [N, K, h] => [N, K, 1]
-        del pooled_encoding, encodings, seq_masks, batch_token_ids
+        # del pooled_encoding, encodings, seq_masks, batch_token_ids
         return energies.squeeze(dim=-1)                             # [N, K]

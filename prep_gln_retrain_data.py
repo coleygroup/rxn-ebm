@@ -3,7 +3,9 @@ import pickle
 from tqdm import tqdm
 import time
 
-def main():
+from rxnebm.data.preprocess import canonicalize
+
+def main(remove_mapping : bool = False):
     start = time.time()
     rxn_class = "UNK"
     for phase in ['train', 'valid', 'test']:
@@ -16,9 +18,11 @@ def main():
             writer.writerow(['id', 'class', 'reactants>reagents>production'])
             
             for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
-                writer.writerow([i, rxn_class, rxn_smi])
+                rxn_smi_canon, _, _ = canonicalize.canonicalize_rxn_smi(rxn_smi, remove_mapping=remove_mapping)
+                writer.writerow([i, rxn_class, rxn_smi_canon])
             
     print(f'Finished all phases! Elapsed: {time.time() - start:.2f} secs')
+    # very fast, ~60 sec for USPTO-50k
 
 if __name__ == '__main__':
-    main()
+    main(remove_mapping=False)
