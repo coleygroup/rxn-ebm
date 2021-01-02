@@ -547,12 +547,25 @@ class Experiment:
         Passes one batch of samples through model to get energies & loss
         Does backprop if training 
         """
-        for p in self.model.parameters():
-            p.grad = None  # faster, equivalent to self.model.zero_grad()
+        # for p in self.model.parameters():
+        #     p.grad = None  # faster, equivalent to self.model.zero_grad()
+        self.model.zero_grad()
         energies = self.model(batch)  # size N x K
+
+        # print('\n', '#'*10, 'energies (before masking)', '#'*10)
+        # print(energies.shape)
+        # print(energies)
 
         # replace all-zero vectors with float('inf'), making those gradients 0 on backprop
         energies = torch.where(mask, energies, torch.tensor([float('inf')], device=mask.device))
+        # print('\n', '#'*10, 'mask', '#'*10)
+        # print(mask.shape)
+        # print(mask)
+
+        # print('\n', '#'*10, 'energies (after masking)', '#'*10)
+        # print(energies.shape)
+        # print(energies)
+
 
         if backprop:
             # for training only: positives are the 0-th index of each minibatch (row)
@@ -577,7 +590,7 @@ class Experiment:
             epoch_train_size = 0
             train_loader = tqdm(self.train_loader, desc='training...')
             for i, batch in enumerate(train_loader):
-                # if i > 20:
+                # if i > 4:
                 #     break
                 batch_data = batch[0]
                 # print(f'Check batch_data type: {isinstance(batch_data, tuple)}') # returns True for TransformerEBM
@@ -585,7 +598,7 @@ class Experiment:
                     batch_data = batch_data.to(self.device)
                 if self.model_name == 'TransformerEBM':
                     batch_data = (batch_data, 'train')
-                batch_mask = batch[1].to(self.device) 
+                batch_mask = batch[1].to(self.device)
                 batch_loss, batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=True
                 ) 
@@ -610,7 +623,6 @@ class Experiment:
                     batch_top5_acc = np.nan 
                 if 10 not in self.k_to_calc:
                     batch_top10_acc = np.nan 
-                # train_loader.set_description(f"training...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                 train_loader.set_description(f"training...loss={batch_loss/train_batch_size:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                 train_loader.refresh()
             
@@ -625,6 +637,8 @@ class Experiment:
                 val_loader = tqdm(self.val_loader, desc='validating...')
                 epoch_val_size = 0
                 for i, batch in enumerate(val_loader):
+                    # if i > 3:
+                    #     break
                     batch_data = batch[0]
                     if not isinstance(batch_data, tuple):
                         batch_data = batch_data.to(self.device)
@@ -640,26 +654,53 @@ class Experiment:
                     # for validation/test data, true rxn may not be present!
                     # only provide for finetuning step on retro proposals
                     if self.args.do_finetune and self.debug:
-                        batch_idx = batch[2]
+                        batch_idx = batch[2] # List
+                        # print('\n', '#'*10, 'batch_idx', '#'*10)
+                        # print(len(batch_idx))
+                        # print(batch_idx)
+
                         batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
+                        # print('\n', '#'*10, 'batch_true_ranks_array', '#'*10)
+                        # print(batch_true_ranks_array.shape)
                         # print(batch_true_ranks_array)
+
                         batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval] # != 9999]
+                        # print('\n', '#'*10, 'batch_true_ranks_valid', '#'*10)
+                        # print(batch_true_ranks_valid.shape)
+                        # print(batch_true_ranks_valid)
+                        
                         batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                        # print('\n', '#'*10, 'batch_true_ranks', '#'*10)
+                        # print(batch_true_ranks.shape)
+                        # print(batch_true_ranks)
+                        
                         # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
                         # (bcos nothing in the numerator, loss is undefined)
                         loss_numerator = batch_energies[
                             np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
                             batch_true_ranks_valid
                         ]
+                        # print('\n', '#'*10, 'loss_numerator', '#'*10)
+                        # print(loss_numerator.shape)
+                        # print(loss_numerator)
+
                         loss_denominator = batch_energies[
                             np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
                             :
                         ]
+                        # print('\n', '#'*10, 'loss_denominator', '#'*10)
+                        # print(loss_denominator.shape)
+                        # print(loss_denominator)
+
                         batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
 
                         for k in self.k_to_calc:
                             # index with lowest energy is what the model deems to be the most feasible rxn
-                            batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
+                            batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
+                            # print('\n', '#'*10, 'batch_preds', '#'*10)
+                            # print(batch_preds.shape)
+                            # print(batch_preds)
+
                             batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
                             val_correct_preds[k] += batch_correct_preds
 
@@ -943,6 +984,8 @@ class Experiment:
                     batch_data = batch[0]
                     if not isinstance(batch_data, tuple):
                         batch_data = batch_data.to(self.device)
+                    if self.model_name == 'TransformerEBM':
+                        batch_data = (batch_data, phase)
                     batch_mask = batch[1].to(self.device)
                     batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False
@@ -976,6 +1019,8 @@ class Experiment:
                     batch_data = batch[0]
                     if not isinstance(batch_data, tuple):
                         batch_data = batch_data.to(self.device)
+                    if self.model_name == 'TransformerEBM':
+                        batch_data = (batch_data, phase)
                     batch_mask = batch[1].to(self.device)
                     
                     energies = self.model(batch_data)

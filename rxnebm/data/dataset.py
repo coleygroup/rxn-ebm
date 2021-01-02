@@ -582,8 +582,8 @@ class ReactionDatasetSMILES(Dataset):
                     with open(self.root / self.rxn_smis_filename, "r") as csv_file:
                         csv_reader = csv.DictReader(csv_file)
                         for i, row in enumerate(tqdm(csv_reader)):
-                            if i == 0: # skip header row
-                                continue
+                            # if i == 0: # skip header row
+                            #     continue
                             p_smi = row["prod_smi"]
                             r_smi_true = row["true_precursors"]
                             smiles = [f"{r_smi_true}>>{p_smi}"]
@@ -600,8 +600,8 @@ class ReactionDatasetSMILES(Dataset):
                     with open(self.root / self.rxn_smis_filename, "r") as csv_file:
                         csv_reader = csv.DictReader(csv_file)
                         for i, row in enumerate(tqdm(csv_reader)):
-                            if i == 0: # skip header row
-                                continue
+                            # if i == 0: # skip header row
+                            #     continue
                             p_smi = row["prod_smi"]
                             smiles = []
                             # r_smi_true = row["true_precursors"]
@@ -666,7 +666,7 @@ class ReactionDatasetSMILES(Dataset):
         elif self.args.do_finetune:
             if self.phase == 'train':
                 for rxn_smis_with_neg in tqdm(self.all_smiles):
-                    minibatch_smiles = [rxn_smis_with_neg[0]] # actly for valid/test, 0th idx means nothing (GT could be of any index)
+                    minibatch_smiles = [rxn_smis_with_neg[0]] 
 
                     for smi in rxn_smis_with_neg[1:]:
                         minibatch_smiles.append(smi)
@@ -702,7 +702,7 @@ class ReactionDatasetSMILES(Dataset):
                             break
 
                     # pad last minibatch
-                    if len(minibatch_smiles) == 0: # means len(minibatch_smiles) == self.args.minibatch_size
+                    if len(minibatch_smiles) == 0: # means len(minibatch_smiles) == self.args.minibatch_eval
                         continue
 
                     # bcareful about defining minibatch_size: for valid/test, true rxn not guaranteed
@@ -766,11 +766,17 @@ class ReactionDatasetSMILES(Dataset):
             # for transformer, preprocessing is light so we do onthefly
             logging.info(f"No graph features required, computing negatives from scratch")
             self.get_smiles_and_masks()
+            # DEBUGGING
+            # with open(self.root / f'rxn_smi_with_negs_{self.phase}.pickle', 'wb') as f:
+            #     pickle.dump(self._rxn_smiles_with_negatives, f, protocol=4)
+            # with open(self.root / f'masks_{self.phase}.pickle', 'wb') as f:
+            #     pickle.dump(self._masks, f, protocol=4)
+            
 
     def __getitem__(self, idx: int) -> Tuple[List[str], List[bool], int]:
         if torch.is_tensor(idx):
             idx = idx.tolist()
-            
+
         if self.args.do_compute_graph_feat:
             return self._graphs_and_features[idx], self._masks[idx], idx
         else:

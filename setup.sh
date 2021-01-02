@@ -1,5 +1,5 @@
 TORCH_VER=1.6.0
-CUDA_VER=cu102
+CUDA_VER=cu101
 
 conda create -n rxnebm python=3.6 tensorflow-gpu=1.14 tqdm pathlib typing scipy pandas joblib -y
 conda activate rxnebm
@@ -21,9 +21,9 @@ pip install -e "git://github.com/connorcoley/rdchiral.git#egg=rdchiral"
 # pip install torch-geometric
 
 # install gln as a package
-cd ./rxnebm/proposer/GLN_original
-pip install -e .
-cd ../../..
+# cd ./rxnebm/proposer/GLN_original
+# pip install -e .
+# cd ../../..
 
 # install tensorflow
 # pip install tensorflow-gpu==1.14 gast==0.2.2

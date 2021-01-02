@@ -1,8 +1,8 @@
 S2E_args = {
-    "embed_size": 256,
-    "num_layers": 2,
-    "hidden_size": 256,
-    "num_heads": 16,
+    "embed_size": 64,
+    "num_layers": 4,
+    "hidden_size": 64,
+    "num_heads": 4,
     "filter_size": 256,
     "dropout": 0.3,
     "attention_dropout": 0.1,

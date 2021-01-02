@@ -91,7 +91,6 @@ class S2E(nn.Module):
         #     f"calculated minibatch size: {mols_per_minibatch}, given in args: {self.args.minibatch_size}"
 
         encodings = encodings * seq_masks                           # mask out padding
-        # TODO: 3rd dim needs to switch between args.minibatch_size & args.minibatch_eval depending on phase
         if phase == 'train':
             encodings = torch.reshape(encodings,                        # [t, N * K, h] => [t, N, K, h]
                                     [self.args.max_seq_len,

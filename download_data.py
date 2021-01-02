@@ -11,25 +11,25 @@ urls_fns = [
      "50k_clean_rxnsmi_noreagent_test.pickle"),
     ("https://drive.google.com/uc?id=1tyXIa_f20jzA8J5pvudSdwZ-t3dRnP8V",
      "50k_mol_smis.pickle"),
-    ("https://drive.google.com/uc?id=1hSaXJB97YypV7Pav1qB0ovh1_oQLZs3t",
-     "50k_mol_smi_to_sparse_fp_idx.pickle"),
-    ("https://drive.google.com/uc?id=1XesKizw5E5IBXTTcIVNenz1H8QD69uyn",
-     "50k_sparse_fp_idx_to_mol_smi.pickle"),
-    ("https://drive.google.com/uc?id=12ZQPPYdugx7WDKjuXnSyHg6f6ILsn5sx",
-     "50k_count_mol_fps.npz"),
-    ("https://drive.google.com/uc?id=1BLvjp5LjlPJg8W9KvJ3pcXiEE5alWL0M",
-     "50k_cosine_count.bin"),
-    ("https://drive.google.com/uc?id=1iGrqy99TNBrHzRmLbSdchjgQ0yBnS2S7",
-     "50k_cosine_count.bin.dat"),
+    # ("https://drive.google.com/uc?id=1hSaXJB97YypV7Pav1qB0ovh1_oQLZs3t",
+    #  "50k_mol_smi_to_sparse_fp_idx.pickle"),
+    # ("https://drive.google.com/uc?id=1XesKizw5E5IBXTTcIVNenz1H8QD69uyn",
+    #  "50k_sparse_fp_idx_to_mol_smi.pickle"),
+    # ("https://drive.google.com/uc?id=12ZQPPYdugx7WDKjuXnSyHg6f6ILsn5sx",
+    #  "50k_count_mol_fps.npz"),
+    # ("https://drive.google.com/uc?id=1BLvjp5LjlPJg8W9KvJ3pcXiEE5alWL0M",
+    #  "50k_cosine_count.bin"),
+    # ("https://drive.google.com/uc?id=1iGrqy99TNBrHzRmLbSdchjgQ0yBnS2S7",
+    #  "50k_cosine_count.bin.dat"),
     ("https://drive.google.com/uc?id=1rZoCn70np-5dfRown0wtnM54Iq-XZ3xk",
      "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"),
-    # pre-computed augmented data
-    ("https://drive.google.com/uc?id=1kAuwfGv0s1OOo9be0NyNNhOekdWCwGLT",
-     "50k_rdm_5_cos_5_bit_5_1_1_mut_10_train.npz"),
-    ("https://drive.google.com/uc?id=1BhcIeVsSSmRXpfCfTqsorUXWg_Tw5i7a",
-     "50k_rdm_5_cos_5_bit_5_1_1_mut_10_valid.npz"),
-    ("https://drive.google.com/uc?id=13DwNxixNp_ylOTuA047mZSTgTCKL9WYm",
-     "50k_rdm_5_cos_5_bit_5_1_1_mut_10_test.npz"),
+    # pre-computed augmented data, for FeedforwardEBM
+    # ("https://drive.google.com/uc?id=1kAuwfGv0s1OOo9be0NyNNhOekdWCwGLT",
+    #  "50k_rdm_5_cos_5_bit_5_1_1_mut_10_train.npz"),
+    # ("https://drive.google.com/uc?id=1BhcIeVsSSmRXpfCfTqsorUXWg_Tw5i7a",
+    #  "50k_rdm_5_cos_5_bit_5_1_1_mut_10_valid.npz"),
+    # ("https://drive.google.com/uc?id=13DwNxixNp_ylOTuA047mZSTgTCKL9WYm",
+    #  "50k_rdm_5_cos_5_bit_5_1_1_mut_10_test.npz"),
     # retrosim CSV files
     ("https://drive.google.com/uc?id=15Le31UeYosYXC7-9PXG2tu7jAP2lY2cY",
      "retrosim_200maxtest_200maxprec_train.csv"),
@@ -37,13 +37,13 @@ urls_fns = [
      "retrosim_200maxtest_200maxprec_valid.csv"),
     ("https://drive.google.com/uc?id=1DQi_dXs2l8rrPae6zQdAWsKXvkSreTlg",
      "retrosim_200maxtest_200maxprec_test.csv"),
-    # retrosim rxn fp files
-    ("https://drive.google.com/uc?id=1mBp6eBYr9InGf1bPdyM9wyJyuCUt_fdB",
-     "retrosim_rxn_fps_train.npz"),
-    ("https://drive.google.com/uc?id=1KmKGfOSYs4HU5hpPGvvP5BaAj85iQKD4",
-     "retrosim_rxn_fps_valid.npz"),
-    ("https://drive.google.com/uc?id=1JzbyLC74N8r3O6ULGC26t_hmFfLZ3FTe",
-     "retrosim_rxn_fps_test.npz")
+    # retrosim rxn fp files, for FeedforwardEBM
+    # ("https://drive.google.com/uc?id=1mBp6eBYr9InGf1bPdyM9wyJyuCUt_fdB",
+    #  "retrosim_rxn_fps_train.npz"),
+    # ("https://drive.google.com/uc?id=1KmKGfOSYs4HU5hpPGvvP5BaAj85iQKD4",
+    #  "retrosim_rxn_fps_valid.npz"),
+    # ("https://drive.google.com/uc?id=1JzbyLC74N8r3O6ULGC26t_hmFfLZ3FTe",
+    #  "retrosim_rxn_fps_test.npz")
 ]
 output = "./rxnebm/data/cleaned_data/"
 
