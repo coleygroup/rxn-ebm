@@ -1,4 +1,5 @@
 import logging
+import traceback
 import os
 import random
 import time
@@ -6,6 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 
+import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
@@ -31,7 +33,6 @@ To run this script from terminal/interpreter, go to root/of/rxnebm/ then execute
 
 class Experiment:
     """
-    NOTE: assumes pre-computed file already exists --> trainEBM.py handles the pre-computation 
     TODO: representation: ['graph', 'string'] 
     TODO: wandb/tensorboard for hyperparameter tuning
 
@@ -50,6 +51,7 @@ class Experiment:
         self,
         args,
         model: nn.Module,
+        model_name: str,
         model_args: dict,
         augmentations: dict,
         onthefly: Optional[bool] = False,
@@ -101,7 +103,7 @@ class Experiment:
         self.representation = args.representation
 
         ### fingerprint arguments ###
-        if self.representation == 'fingerprint' or self.representation == 'smiles':
+        if self.representation == 'fingerprint': # or self.representation == 'smiles':
             self.rxn_type = args.rxn_type
             self.fp_type = args.fp_type
             self.rctfp_size = args.rctfp_size
@@ -109,7 +111,7 @@ class Experiment:
             self.difffp_size = None
             self.fp_radius = args.fp_radius        # just for record keeping purposes
 
-        if self.representation != 'fingerprint' and 'bit' in augmentations.keys():
+        if self.representation != 'fingerprint' and 'bit' in augmentations:
             raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
         logging.info(f"\nInitialising experiment: {self.expt_name}")
         logging.info(f"Augmentations: {self.augmentations}")
@@ -117,12 +119,12 @@ class Experiment:
         if device is not None:
             self.device = device
         else:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         model = model.to(self.device)
         self.model = model
-        self.model_name = self.model.model_repr
+        self.model_name = model_name # self.model.model_repr
         self.model_args = model_args
-        self.distributed = distributed  # TODO: affects how checkpoint is saved
+        self.distributed = distributed  # NOTE: affects how checkpoint is saved & how weights should be loaded
 
         if saved_optimizer is not None:
             self.optimizer_name = str(self.args.optimizer).split(' ')[0]
@@ -136,18 +138,35 @@ class Experiment:
 
         self._collate_args()
 
-        # if onthefly is True, need smi_to_fp_dict_filename, 
-        # mol_fps_filename, (if cos: search_index_filename, fp_to_smi_dict_filename)
+        self.rxn_smis_filenames = defaultdict(str)
+        if self.args.do_pretrain:
+            for phase in ['train', 'valid', 'test']:
+                self.rxn_smis_filenames[phase] = f"{self.args.rxn_smis_file_prefix}_{phase}.pickle"
+
+        self.proposals_data = {}
+        self.proposals_csv_filenames = defaultdict(str)
+        if self.args.do_finetune:
+            for phase in ['train', 'valid', 'test']:
+                self.proposals_csv_filenames[phase] = self.args.proposals_csv_file_prefix + f"_{phase}.csv"
+                if phase != 'train': # this is just for visualization purpose during val/test
+                    self.proposals_data[phase] = pd.read_csv(self.root / self.proposals_csv_filenames[phase], index_col=None, dtype='str')
+                    self.proposals_data[phase] = self.proposals_data[phase].drop(['orig_rxn_smi'], axis=1).values
+
+        # TODO: take into account original probs (aka scores) from retro models
+        # self.prob_filenames = defaultdict(str)
+        # if self.args.prob_file_prefix: # will be loaded in Dataset file
+        #     for phase in ['train', 'valid', 'test']:
+        #         self.prob_filenames[phase] = self.args.prob_file_prefix + f"_{phase}.npy"
+
+        # if onthefly is True, need smi_to_fp_dict_filename, mol_fps_filename, (if cos: search_index_filename, fp_to_smi_dict_filename)
         if self.representation == 'fingerprint':
             self._init_fp_dataloaders(
                 precomp_file_prefix=args.precomp_file_prefix,
-                proposals_csv_file_prefix=args.proposals_csv_file_prefix,
                 onthefly=onthefly,
                 smi_to_fp_dict_filename=args.smi_to_fp_dict_filename,
                 fp_to_smi_dict_filename=args.fp_to_smi_dict_filename,
                 mol_fps_filename=args.mol_fps_filename,
                 search_index_filename=args.search_index_filename,
-                rxn_smis_file_prefix=args.rxn_smis_file_prefix
             )
             self.maxk = self.train_loader.dataset.data.shape[-1] // self.train_loader.dataset.input_dim
         elif self.representation == "smiles":
@@ -191,14 +210,17 @@ class Experiment:
                 with augmentations: {self.augmentations}" 
 
     def _collate_args(self): 
-        self.fp_args = {
-            "rxn_type": self.rxn_type,
-            "fp_type": self.fp_type,
-            "rctfp_size": self.rctfp_size,
-            "prodfp_size": self.prodfp_size,
-            "difffp_size": self.difffp_size,
-            "fp_radius": self.fp_radius,
-        }
+        if self.representation == 'fingerprint':
+            self.fp_args = {
+                "rxn_type": self.rxn_type,
+                "fp_type": self.fp_type,
+                "rctfp_size": self.rctfp_size,
+                "prodfp_size": self.prodfp_size,
+                "difffp_size": self.difffp_size,
+                "fp_radius": self.fp_radius,
+            }
+        else:
+            self.fp_args = None
         self.train_args = {
             "epochs": self.epochs,
             "batch_size": self.batch_size,
@@ -232,7 +254,7 @@ class Experiment:
         if saved_optimizer is None:
             raise ValueError("load_checkpoint requires saved_optimizer!")
         self.optimizer = saved_optimizer  # load optimizer w/ state dict from checkpoint
-        if self.lr_scheduler_name is not None:
+        if self.lr_scheduler_name:
             logging.info(f'Initialising {self.lr_scheduler_name}')
             if self.lr_scheduler_criteria == 'acc':
                 mode = 'max'
@@ -247,29 +269,33 @@ class Experiment:
         else:
             self.lr_scheduler = None 
         # NOTE/TODO: lr_scheduler.load_state_dict(checkpoint['scheduler'])
+        # https://github.com/KaiyangZhou/deep-person-reid/blob/master/torchreid/utils/torchtools.py#L104
         # https://discuss.pytorch.org/t/how-to-save-and-load-lr-scheduler-stats-in-pytorch/20208/2
 
         if saved_stats is None:
             raise ValueError("load_checkpoint requires saved_stats!")
-        self.stats = saved_stats
         self.stats_filename = (
             self.checkpoint_folder / f"{self.model_name}_{self.expt_name}_stats.pkl"
         )
-
-        self.model_args = self.stats["model_args"]
-        self.fp_args = self.stats["fp_args"]
-        self.train_args = self.stats["train_args"]
-        self.augmentations = self.stats["augmentations"]
-
+        # self.model_args = self.stats["model_args"]
+        # self.fp_args = self.stats["fp_args"]
+        # self.train_args = self.stats["train_args"]
+        # self.augmentations = self.stats["augmentations"]
+        self.stats = {
+            "model_args": self.model_args, # from saved_stats, handled in trainEBM.py
+            "fp_args": self.fp_args, # from saved_stats, handled in trainEBM.py
+            "train_args": self.train_args, # new, provided as args
+            "augmentations": self.augmentations, # can be new or same, provided as args
+            "train_time": 0, # reset to 0
+        }
         if begin_epoch is None:
             raise ValueError("load_checkpoint requires begin_epoch!")
-        else:
-            self.begin_epoch = begin_epoch
+        self.begin_epoch = begin_epoch
 
     def _init_optimizer_and_stats(self): 
         logging.info("Initialising optimizer & stats...")
         self.optimizer = model_utils.get_optimizer(self.optimizer_name)(self.model.parameters(), lr=self.learning_rate) 
-        if self.lr_scheduler_name is not None:
+        if self.lr_scheduler_name:
             logging.info(f'Initialising {self.lr_scheduler_name}')
             if self.lr_scheduler_criteria == 'acc':
                 mode = 'max'
@@ -284,7 +310,6 @@ class Experiment:
             self.lr_scheduler = None 
 
         self.begin_epoch = 0 
-
         self.stats = {
             "model_args": self.model_args,
             "fp_args": self.fp_args,
@@ -304,8 +329,6 @@ class Experiment:
         fp_to_smi_dict_filename: str,
         mol_fps_filename: str,
         search_index_filename: str,
-        rxn_smis_file_prefix: Optional[str] = None,
-        proposals_csv_file_prefix: Optional[str] = None,
     ):
         logging.info("Initialising dataloaders...")
         if "cos" in self.augmentations:
@@ -313,35 +336,19 @@ class Experiment:
         else:
             worker_init_fn = expt_utils._worker_init_fn_default
 
-        rxn_smis_filenames = defaultdict(str)
-        precomp_filenames = defaultdict(str)
-        proposals_csv_filenames = defaultdict(str)
-        if onthefly:
-            augmented_data = dataset.AugmentedDataFingerprints(
-                self.augmentations,
-                smi_to_fp_dict_filename,
-                fp_to_smi_dict_filename,
-                mol_fps_filename,
-                search_index_filename,
-            )
-            for phase in [
-                "train",
-                "valid",
-                "test",
-            ]:  # rxn_smis_file_prefix = '50k_clean_rxnsmi_noreagent'
-                rxn_smis_filenames[phase] = rxn_smis_file_prefix + f"_{phase}.pickle"
-        else:
-            augmented_data = None
-            for phase in [
-                "train",
-                "valid",
-                "test",
-            ]:  # precomp_file_prefix = '50k_count_rdm_5'
-                precomp_filenames[phase] = precomp_file_prefix + f"_{phase}.npz"
-        
-        if proposals_csv_file_prefix is not None:
-            for phase in ['valid', 'test']:
-                proposals_csv_filenames[phase] = proposals_csv_file_prefix + f"_{phase}.csv"
+        augmented_data = None
+        precomp_rxnfp_filenames = defaultdict(str)
+        if onthefly and args.do_pretrain:
+                augmented_data = dataset.AugmentedDataFingerprints(
+                    self.augmentations,
+                    smi_to_fp_dict_filename,
+                    fp_to_smi_dict_filename,
+                    mol_fps_filename,
+                    search_index_filename,
+                )
+        else: # precomputed rxn fp files (augmented data / retro proposals)
+            for phase in ["train", "valid", "test"]:
+                precomp_rxnfp_filenames[phase] = precomp_file_prefix + f"_{phase}.npz"
 
         if self.rxn_type == "sep":
             input_dim = self.rctfp_size + self.prodfp_size
@@ -352,14 +359,14 @@ class Experiment:
         elif self.rxn_type == 'hybrid_all':
             input_dim = self.rctfp_size + self.prodfp_size + self.difffp_size
 
-        pin_memory = True if torch.cuda.is_available() else False
         train_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
-            precomp_rxnfp_filename=precomp_filenames["train"],
-            proposals_csv_filename=proposals_csv_filenames["train"],
-            rxn_smis_filename=rxn_smis_filenames["train"],
+            precomp_rxnfp_filename=precomp_rxnfp_filenames["train"],
+            proposals_csv_filename=self.proposals_csv_filenames["train"],
+            rxn_smis_filename=self.rxn_smis_filenames["train"],
             onthefly=onthefly,
             augmented_data=augmented_data,
+            # self.prob_filename=prob_filenames['train']
         )
         self.train_loader = DataLoader(
             train_dataset,
@@ -367,17 +374,19 @@ class Experiment:
             num_workers=self.num_workers,
             worker_init_fn=worker_init_fn,
             shuffle=True,
-            pin_memory=pin_memory,
+            pin_memory=self.args.pin_memory,
+            drop_last=self.args.drop_last
         )
         self.train_size = len(train_dataset)
 
         val_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
-            precomp_rxnfp_filename=precomp_filenames["valid"],
-            proposals_csv_filename=proposals_csv_filenames["valid"],
-            rxn_smis_filename=rxn_smis_filenames["valid"],
+            precomp_rxnfp_filename=precomp_rxnfp_filenames["valid"],
+            proposals_csv_filename=self.proposals_csv_filenames["valid"],
+            rxn_smis_filename=self.rxn_smis_filenames["valid"],
             onthefly=onthefly,
             augmented_data=augmented_data,
+            # self.prob_filename=prob_filenames['valid']
         )
         self.val_loader = DataLoader(
             val_dataset,
@@ -385,17 +394,19 @@ class Experiment:
             num_workers=self.num_workers,
             worker_init_fn=worker_init_fn,
             shuffle=False,
-            pin_memory=pin_memory,
+            pin_memory=self.args.pin_memory,
+            drop_last=self.args.drop_last
         )
         self.val_size = len(val_dataset)
 
         test_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
-            precomp_rxnfp_filename=precomp_filenames["test"],
-            proposals_csv_filename=proposals_csv_filenames["test"],
-            rxn_smis_filename=rxn_smis_filenames["test"],
+            precomp_rxnfp_filename=precomp_rxnfp_filenames["test"],
+            proposals_csv_filename=self.proposals_csv_filenames["test"],
+            rxn_smis_filename=self.rxn_smis_filenames["test"],
             onthefly=onthefly,
             augmented_data=augmented_data,
+            # self.prob_filename=prob_filenames['test']
         )
         self.test_loader = DataLoader(
             test_dataset,
@@ -403,25 +414,22 @@ class Experiment:
             num_workers=self.num_workers,
             worker_init_fn=worker_init_fn,
             shuffle=False,
-            pin_memory=pin_memory,
+            pin_memory=self.args.pin_memory,
+            drop_last=self.args.drop_last
         )
         self.test_size = len(test_dataset)
         del train_dataset, val_dataset, test_dataset
 
     def _get_smi_dl(self, phase: str, shuffle: bool = False):
         rxn_smis_filename, proposals_csv_filename = None, None
-
-        if self.args.do_pretrain:
-            rxn_smis_filename = f"{self.args.rxn_smis_file_prefix}_{phase}.pickle"
-        elif self.args.do_finetune:
-            proposals_csv_filename = f"{self.args.proposals_csv_file_prefix}_{phase}.csv"
-
+        
         _data = dataset.ReactionDatasetSMILES(
             self.args,
+            phase=phase,
             augmentations=self.augmentations,
-            precomp_rxnsmi_filename=None,
-            rxn_smis_filename=rxn_smis_filename,
-            proposals_csv_filename=proposals_csv_filename,
+            # precomp_rxnsmi_filename=None, # TODO? add later if needed
+            rxn_smis_filename=self.rxn_smis_filenames[phase],
+            proposals_csv_filename=self.proposals_csv_filenames[phase],
             onthefly=True
         )
 
@@ -432,14 +440,14 @@ class Experiment:
             collate_fn = dataset_utils.seq_collate_fn_builder(
                 self.device, self.vocab, self.args.max_seq_len, debug=False)
 
-        pin_memory = True if torch.cuda.is_available() else False
         _loader = DataLoader(
             _data,
             self.batch_size,
             num_workers=self.num_workers,
             shuffle=shuffle,
-            # pin_memory=pin_memory,
-            collate_fn=collate_fn
+            pin_memory=self.args.pin_memory,
+            collate_fn=collate_fn,
+            drop_last=self.args.drop_last
         )
 
         _size = len(_data)
@@ -454,7 +462,7 @@ class Experiment:
             self.val_loader, self.val_size = self._get_smi_dl(phase="valid", shuffle=False)
             self.test_loader, self.test_size = self._get_smi_dl(phase="test", shuffle=False)
         else:
-            raise NotImplementedError
+            raise NotImplementedError('Only onthefly available for smi loader')
 
     def _check_earlystop(self, current_epoch):
         if self.early_stop_criteria == 'loss': 
@@ -563,22 +571,28 @@ class Experiment:
     def train(self):
         self.start = time.time()  # timeit.default_timer()
         self.to_break = 0
-        for epoch in range(self.begin_epoch, self.epochs):
+        for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
             self.model.train()
             train_loss, train_correct_preds = 0, defaultdict(int)
+            epoch_train_size = 0
             train_loader = tqdm(self.train_loader, desc='training...')
-            for batch in train_loader:
+            for i, batch in enumerate(train_loader):
+                # if i > 20:
+                #     break
                 batch_data = batch[0]
+                # print(f'Check batch_data type: {isinstance(batch_data, tuple)}') # returns True for TransformerEBM
                 if not isinstance(batch_data, tuple):
                     batch_data = batch_data.to(self.device)
+                if self.model_name == 'TransformerEBM':
+                    batch_data = (batch_data, 'train')
                 batch_mask = batch[1].to(self.device) 
                 batch_loss, batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=True
                 ) 
                 train_loss += batch_loss
 
-                # train_batch_size = batch[0].shape[0]
-                train_batch_size = batch_mask.shape[0]
+                train_batch_size = batch_energies.shape[0]
+                epoch_train_size += train_batch_size
 
                 for k in self.k_to_calc: # various top-k accuracies
                     # index with lowest energy is what the model deems to be the most feasible rxn 
@@ -601,42 +615,44 @@ class Experiment:
                 train_loader.refresh()
             
             for k in self.k_to_calc:     
-                self.train_topk_accs[k].append( train_correct_preds[k] / self.train_size ) 
-            self.train_losses.append(train_loss / self.train_size)
+                self.train_topk_accs[k].append(train_correct_preds[k] / epoch_train_size) # self.train_size ) 
+            self.train_losses.append(train_loss / epoch_train_size) # self.train_size)
 
             # validation
             self.model.eval()
             with torch.no_grad(): 
                 val_loss, val_correct_preds = 0, defaultdict(int)
                 val_loader = tqdm(self.val_loader, desc='validating...')
+                epoch_val_size = 0
                 for i, batch in enumerate(val_loader):
                     batch_data = batch[0]
                     if not isinstance(batch_data, tuple):
                         batch_data = batch_data.to(self.device)
+                    if self.model_name == 'TransformerEBM':
+                        batch_data = (batch_data, 'valid')
                     batch_mask = batch[1].to(self.device)
                     batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False
                     )
-
-                    # val_batch_size = batch[0].shape[0]
-                    val_batch_size = batch_mask.shape[0]
+                    val_batch_size = batch_energies.shape[0]
+                    epoch_val_size += val_batch_size
 
                     # for validation/test data, true rxn may not be present!
                     # only provide for finetuning step on retro proposals
-                    # TODO: temporarily turn off this block
-                    # if self.args.do_finetune and self.val_loader.dataset.proposals_data is not None:
-                    if False:
+                    if self.args.do_finetune and self.debug:
                         batch_idx = batch[2]
-                        batch_true_ranks_array = self.val_loader.dataset.proposals_data[batch_idx, 2].astype('int')
+                        batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
+                        # print(batch_true_ranks_array)
+                        batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval] # != 9999]
                         batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                         # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
                         # (bcos nothing in the numerator, loss is undefined)
                         loss_numerator = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999],
-                            batch_true_ranks_array[batch_true_ranks_array != 9999]
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
+                            batch_true_ranks_valid
                         ]
                         loss_denominator = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999],
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
                             :
                         ]
                         batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
@@ -649,33 +665,32 @@ class Experiment:
 
                             if k == 1:
                                 batch_top1_acc = batch_correct_preds / val_batch_size
-                        
                                 if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                     try:
                                         for j in range(i * self.batch_size, (i+1) * self.batch_size):
                                             if j % (self.val_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
-                                                sample_idx = random.sample(list(range(self.batch_size)), k=1)
-                                                sample_true_rank = batch_true_ranks_array[sample_idx][0]
+                                                sample_idx = random.sample(list(range(self.batch_size)), k=1)[0]
+                                                sample_true_rank = batch_true_ranks_array[sample_idx]
                                                 sample_pred_rank = batch_preds[sample_idx, 0].item() 
-                                                sample_true_prod = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
-                                                sample_true_prec = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 1]
+                                                sample_true_prod = self.proposals_data['valid'][batch_idx[sample_idx], 0]
+                                                sample_true_prec = self.proposals_data['valid'][batch_idx[sample_idx], 1]
 
-                                                sample_cand_precs = self.val_loader.dataset.proposals_data[batch_idx[sample_idx], 3:]
-                                                sample_pred_prec = sample_cand_precs[ batch_preds[sample_idx]]
-                                                sample_orig_prec = sample_cand_precs[ 0 ]
+                                                sample_cand_precs = self.proposals_data['valid'][batch_idx[sample_idx], 3:]
+                                                sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
+                                                sample_orig_prec = sample_cand_precs[0]
                                                 logging.info(f'\ntrue product:            {sample_true_prod}')
                                                 logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
                                                 logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
                                                 logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
                                                 break
-                                    except Exception as e:      # do nothing
-                                        logging.info(e.__traceback__)
-                                        logging.info('\nIndex out of range (last minibatch)') 
+                                    except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
+                                        tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                                        logging.info("".join(tb_str))
+                                        logging.info('\nIndex out of range (last minibatch)')
                             elif k == 5:
                                 batch_top5_acc = batch_correct_preds / val_batch_size
                             elif k == 10:
                                 batch_top10_acc = batch_correct_preds / val_batch_size
-                    
                     else:       # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                         batch_true_ranks = 0
                         batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
@@ -696,15 +711,13 @@ class Experiment:
                         batch_top5_acc = np.nan
                     if 10 not in self.k_to_calc:
                         batch_top10_acc = np.nan 
-                    # val_loader.set_description(f"validating...loss={batch_loss/batch[0].shape[0]:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                     val_loader.set_description(f"validating...loss={batch_loss/val_batch_size:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
                     val_loader.refresh()
-                    
                     val_loss += batch_loss  
                 
                 for k in self.k_to_calc:
-                    self.val_topk_accs[k].append(val_correct_preds[k] / self.val_size)
-                self.val_losses.append(val_loss / self.val_size)
+                    self.val_topk_accs[k].append(val_correct_preds[k] / epoch_val_size) # self.val_size)
+                self.val_losses.append(val_loss / epoch_val_size) # self.val_size)
 
             # track best_epoch to facilitate loading of best checkpoint
             if self.early_stop:
@@ -770,33 +783,35 @@ class Experiment:
         test_loss, test_correct_preds = 0, defaultdict(int)
         test_loader = tqdm(self.test_loader, desc='testing...')
         with torch.no_grad():
+            epoch_test_size = 0
             for i, batch in enumerate(test_loader):
                 batch_data = batch[0]
-                if not isinstance(batch_data, tuple):
+                if not isinstance(batch_data, tuple): # not sure what's the purpose of this
                     batch_data = batch_data.to(self.device)
+                if self.model_name == 'TransformerEBM':
+                    batch_data = (batch_data, 'test')
                 batch_mask = batch[1].to(self.device)
                 batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=False
                 )
-                # test_batch_size = batch[0].shape[0]
-                test_batch_size = batch_mask.shape[0]
+                test_batch_size = batch_energies.shape[0]
+                epoch_test_size += test_batch_size
 
                 # for validation/test data, true rxn may not be present!
                 # only provide for finetuning step on retro proposals
-                # TODO: temporarily turn off this block
-                # if self.args.do_finetune and self.test_loader.dataset.proposals_data is not None:
-                if False:
+                if self.args.do_finetune and self.debug:
                     batch_idx = batch[2]
-                    batch_true_ranks_array = self.test_loader.dataset.proposals_data[batch_idx, 2].astype('int')  
+                    batch_true_ranks_array = self.proposals_data['test'][batch_idx, 2].astype('int')
+                    batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
                     # (bcos nothing in the numerator, loss is undefined)
                     loss_numerator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999],
-                        batch_true_ranks_array[batch_true_ranks_array != 9999]
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
+                        batch_true_ranks_valid
                     ]
                     loss_denominator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999],
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
                         :
                     ]
                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
@@ -809,27 +824,27 @@ class Experiment:
 
                         if k == 1:
                             batch_top1_acc = batch_correct_preds / test_batch_size
-
                             if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                 try:
                                     for j in range(i * self.batch_size, (i+1) * self.batch_size):
                                         if j % (self.test_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
-                                            sample_idx = random.sample(list(range(self.batch_size)), k=1)
-                                            sample_true_rank = batch_true_ranks_array[sample_idx][0]
+                                            sample_idx = random.sample(list(range(self.batch_size)), k=1)[0]
+                                            sample_true_rank = batch_true_ranks_array[sample_idx] #[0]
                                             sample_pred_rank = batch_preds[sample_idx, 0].item()
-                                            sample_true_prod = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 0]
-                                            sample_true_prec = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 1] 
+                                            sample_true_prod = self.proposals_data['test'][batch_idx[sample_idx], 0]
+                                            sample_true_prec = self.proposals_data['test'][batch_idx[sample_idx], 1] 
 
-                                            sample_cand_precs = self.test_loader.dataset.proposals_data[batch_idx[sample_idx], 3:] 
-                                            sample_pred_prec = sample_cand_precs[ batch_preds[sample_idx] ]
-                                            sample_orig_prec = sample_cand_precs[ 0 ]
+                                            sample_cand_precs = self.proposals_data['test'][batch_idx[sample_idx], 3:] 
+                                            sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
+                                            sample_orig_prec = sample_cand_precs[0]
                                             logging.info(f'\ntrue product:            {sample_true_prod}')
                                             logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
                                             logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
                                             logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
                                             break
                                 except Exception as e:
-                                    logging.info(e.__traceback__)
+                                    tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                                    logging.info("".join(tb_str))
                                     logging.info('\nIndex out of range (last minibatch)')
                         elif k == 5:
                             batch_top5_acc = batch_correct_preds / test_batch_size
@@ -857,12 +872,11 @@ class Experiment:
                 if 10 not in self.k_to_calc:
                     batch_top10_acc = np.nan 
                 test_loader.set_description(f"testing...loss={batch_loss / test_batch_size:.4f}, top-1 acc={batch_top1_acc:.4f}, top-5 acc={batch_top5_acc:.4f}, top-10 acc={batch_top10_acc:.4f}")
-                test_loader.refresh() 
-
+                test_loader.refresh()
                 test_loss += batch_loss   
 
             for k in self.k_to_calc:
-                self.test_topk_accs[k] = test_correct_preds[k] / self.test_size
+                self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size # self.test_size
 
         if saved_stats:
             self.stats = saved_stats
@@ -871,9 +885,8 @@ class Experiment:
                 "self.stats only has 2 keys or less. If loading checkpoint, you need to provide load_stats!"
             )
 
-        self.stats["test_loss"] = test_loss / self.test_size 
+        self.stats["test_loss"] = test_loss / epoch_test_size # self.test_size 
         logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
-
         self.stats["test_topk_accs"] = self.test_topk_accs
         for k in self.k_to_calc:
             logging.info(f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%')
@@ -883,8 +896,6 @@ class Experiment:
     def get_energies_and_loss(
         self,
         phase: str = "test",
-        finetune: bool = False, 
-        custom_dataloader: Optional[torch.utils.data.DataLoader] = None,
         save_energies: Optional[bool] = True,
         name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
         path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -894,13 +905,8 @@ class Experiment:
 
         Parameters
         ----------
-        phase : str (Default = 'test') [train', 'test', 'val', 'custom']
-            whether to get energies from train/test/val phases or a custom_dataloader
-        finetune : bool (Default = False)
-            whether finetuning a pre-trained EBM or training from scratch on synthetic data
-            affects calculation of loss & top-k accuracy! 
-        custom_dataloader : Optional[Dataloader] (Default = None) (unused for now; in case we want to evaluate on some external test set)
-            custom dataloader that loops through dataset that is not the original train, test or val
+        phase : str (Default = 'test') [train', 'test', 'valid']
+            whether to get energies from train/test/val phases
         save_energies : Optional[bool] (Default = True)
             whether to save the energy values to disk
         name_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
@@ -920,23 +926,19 @@ class Experiment:
         TODO: fix show_neg: index into SMILES molecule vocab to retrieve molecules -->
         save as groups [true product/rct SMILES, 1st NN SMILES, ... K-1'th NN SMILES])
         """
-        if phase == "custom":
-            custom_dataset_len = len(custom_dataloader.dataset)
-            dataloader = custom_dataloader
-        elif phase == "test":
+        if phase == "test":
             dataloader = self.test_loader
         elif phase == "train":
             dataloader = self.train_loader
-        elif phase == "val":
+        elif phase == "valid":
             dataloader = self.val_loader
 
         self.model.eval()
         with torch.no_grad():
-            # TODO: temporarily turn off this block
-            # if finetune and phase != 'train': # for training, we know positive rxn is always the 0th-index, even during finetuning
-            if False:
+            # for training, we know positive rxn is always the 0th-index, even during finetuning
+            if self.args.do_finetune and phase != 'train':
                 energies_combined, true_ranks = [], []
-                loss = 0
+                loss, epoch_data_size = 0, 0
                 for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
                     batch_data = batch[0]
                     if not isinstance(batch_data, tuple):
@@ -946,26 +948,30 @@ class Experiment:
                         batch_data, batch_mask, backprop=False
                     ) 
 
+                    epoch_data_size += batch_energies.shape[0]
+
                     batch_idx = batch[2]
-                    batch_true_ranks_array = dataloader.dataset.proposals_data[batch_idx, 2].astype('int') 
+                    batch_true_ranks_array = self.proposals_data[phase][batch_idx, 2].astype('int')
+                    batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator)
                     loss_numerator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999],
-                        batch_true_ranks[batch_true_ranks != 9999]
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
+                        batch_true_ranks_valid
                     ]
-                    loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array != 9999], :]
+                    loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], :]
                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
                     loss += batch_loss
 
                     energies_combined.append(batch_energies) 
                     true_ranks.append(batch_true_ranks)
 
+                loss /= epoch_data_size
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
-                true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).cpu() 
-
+                true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).cpu()
             else: # pre-training
-                energies_combined = [] 
+                energies_combined = []
+                epoch_data_size = 0
                 for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
                     batch_data = batch[0]
                     if not isinstance(batch_data, tuple):
@@ -976,19 +982,12 @@ class Experiment:
                     energies = torch.where(batch_mask, energies,
                                         torch.tensor([float('inf')], device=batch_mask.device))
                     energies_combined.append(energies)
+                    epoch_data_size += energies.shape[0]
 
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
 
-                loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item() 
-            
-            if phase == "custom":
-                loss /= custom_dataset_len
-            elif phase == "test":
-                loss /= self.test_size
-            elif phase == "train":
-                loss /= self.train_size
-            elif phase == "val":
-                loss /= self.val_size
+                loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
+                loss /= epoch_data_size # self.val_size
             logging.info(f"\nLoss on {phase} : {loss:.4f}")
 
         if path_to_energies is None:
@@ -1001,9 +1000,7 @@ class Experiment:
             logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
             torch.save(energies_combined, Path(path_to_energies / name_energies))
 
-        # TODO: temporarily turn off this block
-        # if finetune and phase != 'train':
-        if False:
+        if self.args.do_finetune and phase != 'train':
             self.energies[phase] = energies_combined
             self.true_ranks[phase] = true_ranks.unsqueeze(dim=-1)
             return energies_combined, loss, true_ranks
@@ -1015,8 +1012,6 @@ class Experiment:
     def get_topk_acc(
         self,
         phase: str = "test",
-        finetune: bool = False,
-        custom_dataloader: Optional[torch.utils.data.DataLoader] = None,
         k: Optional[int] = 1, 
     ) -> Tensor:
         """
@@ -1025,13 +1020,8 @@ class Experiment:
 
         Parameters
         ----------
-        phase : str (Default = 'test') [train', 'test', 'val', 'custom']
-            whether to get energies from train/test/valid phases or a custom_dataloader
-        finetune : bool (Default = False)
-            whether finetuning a pre-trained EBM or training from scratch on synthetic data
-            affects calculation of loss & top-k accuracy! 
-        custom_dataloader : Optional[Dataloader] (Default = None)
-            custom dataloader that loops through dataset that is not the original train, test or val
+        phase : str (Default = 'test') [train', 'test', 'valid']
+            whether to get energies from train/test/valid phases
         save_energies: bool (Default = True)
             whether to save the generated energies tensor to disk
         name_energies: Union[str, bytes, os.PathLike] (Default = None)
@@ -1044,16 +1034,10 @@ class Experiment:
             energies of shape (# rxns, 1 + # neg rxns)
 
         Also see: self.get_energies_and_loss()
-        """ 
-        if custom_dataloader is not None:
-            phase = 'custom'
-
-        if finetune and phase != 'train':
+        """
+        if self.do_finetune and phase != 'train':
             if phase not in self.energies:
-                energies, loss, true_ranks = self.get_energies_and_loss(
-                    phase=phase, finetune=True, custom_dataloader=custom_dataloader
-                ) 
-            
+                energies, loss, true_ranks = self.get_energies_and_loss(phase=phase)
             if self.energies[phase].shape[1] >= k: 
                 pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
                 topk_accuracy = torch.where(pred_labels == self.true_ranks[phase])[0].shape[0] / pred_labels.shape[0]
@@ -1067,9 +1051,7 @@ class Experiment:
 
         else: # true rank is always 0
             if phase not in self.energies:
-                energies, loss = self.get_energies_and_loss(
-                    phase=phase, finetune=False, custom_dataloader=custom_dataloader
-                )
+                energies, loss = self.get_energies_and_loss(phase=phase)
                 self.energies[phase] = energies
                 if phase == 'train':
                     self.stats["train_loss_nodropout"] = loss
@@ -1084,6 +1066,7 @@ class Experiment:
                 logging.info(f"Top-{k} accuracy on {phase}: {100 * topk_accuracy:.3f}%") 
             else:
                 logging.info(f'{k} out of range for dimension 1 on {phase}')
+
 
 # def accuracy(output, target, topk=(1,)):
 # """Computes the accuracy over the k top predictions for the specified values of k"""

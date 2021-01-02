@@ -7,6 +7,7 @@ from typing import Optional, Union
 
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.utils.data import get_worker_info
 
 import nmslib
@@ -31,7 +32,7 @@ def setup_paths(
     else:
         date_trained = date.today().strftime("%d_%m_%Y")
 
-    if location.upper() == "LOCAL":
+    if location.upper() == "LOCAL" or location.upper() == 'ENGAGING':
         if root is None:
             root = Path(__file__).resolve().parents[1] / "checkpoints"
         else:
@@ -49,15 +50,8 @@ def setup_paths(
         checkpoint_folder = Path(root) / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f"created checkpoint_folder: {checkpoint_folder}")
-
-    elif location.upper() == "ENGAGING":
-        if root is None:
-            root = Path(__file__).resolve().parents[1] / "checkpoints"
-        else:
-            root = Path(root)
-        checkpoint_folder = Path(root) / date_trained
-        os.makedirs(checkpoint_folder, exist_ok=True)
-        print(f"created checkpoint_folder: {checkpoint_folder}")
+    else:
+        raise ValueError('Unrecognized location')
 
     return checkpoint_folder #scores_folder #cleaned_data_folder #raw_data_folder
 
@@ -82,7 +76,8 @@ def load_model_opt_and_stats(
     model_name: str = "FeedforwardFingerprint",
     optimizer_name: str = "Adam",
     load_best: bool = True,
-    load_epoch : Optional[int] = None
+    load_epoch : Optional[int] = None,
+    distributed: Optional[bool] = False
 ):
     """
     Parameters
@@ -127,7 +122,7 @@ def load_model_opt_and_stats(
             )
             print("loaded checkpoint from load_epoch: ", load_epoch)
 
-        if model_name == "FeedforwardFingerprint" or model_name == 'FeedforwardFp' or model_name == "FeedforwardEBM":
+        if model_name == "FeedforwardFingerprint" or model_name == 'FeedforwardSingle' or model_name == "FeedforwardEBM":
             saved_model = FF.FeedforwardSingle(**saved_stats["model_args"], **saved_stats["fp_args"])
         elif model_name == 'FeedforwardTriple3indiv3prod1cos':
             saved_model = FF.FeedforwardTriple3indiv3prod1cos(**saved_stats["model_args"], **saved_stats["fp_args"])
@@ -144,9 +139,13 @@ def load_model_opt_and_stats(
         # override bug in name of optimizer when saving checkpoint
         saved_stats["train_args"]["optimizer"] = model_utils.get_optimizer(optimizer_name)
         saved_optimizer = saved_stats["train_args"]["optimizer"](
-            saved_model.parameters(), lr=saved_stats["train_args"]["learning_rate"]
+            saved_model.parameters(), lr=args.learning_rate # saved_stats["train_args"]["learning_rate"]
         )
-
+        # https://discuss.pytorch.org/t/missing-keys-unexpected-keys-in-state-dict-when-loading-self-trained-model/22379/14
+        for key in list(checkpoint["state_dict"].keys()):
+            if 'module.' in key:
+                checkpoint["state_dict"][key.replace('module.', '')] = checkpoint["state_dict"][key]
+                del checkpoint["state_dict"][key]
         saved_model.load_state_dict(checkpoint["state_dict"])
         saved_optimizer.load_state_dict(checkpoint["optimizer"])
 
@@ -160,7 +159,7 @@ def load_model_opt_and_stats(
 
     except Exception as e:
         logging.info(e)
-        logging.info("best_epoch: {}".format(saved_stats["best_epoch"]))
+        # logging.info("best_epoch: {}".format(saved_stats["best_epoch"]))
 
     return saved_model, saved_optimizer, saved_stats
 

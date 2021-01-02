@@ -1,0 +1,3 @@
+conda activate rxnebm_ztu
+
+python3 prep_gln_retrain_data.py

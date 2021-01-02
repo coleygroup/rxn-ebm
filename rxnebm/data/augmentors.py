@@ -145,7 +145,7 @@ class Mutate(Augmentor):
         self.dtype = dtype
         self.return_type = return_type
 
-        if smi_to_fp_dict: # means using fingerprints
+        if mol_fps is not None: # means using fingerprints
             self.set_mol_smi_to_fp_func()
 
     def set_mol_smi_to_fp_func(self):
@@ -154,12 +154,6 @@ class Mutate(Augmentor):
             self.mol_smi_to_fp = smi_to_fp.mol_smi_to_count_fp
         elif self.fp_type == "bit":
             self.mol_smi_to_fp = smi_to_fp.mol_smi_to_bit_fp 
-
-    # def set_get_one_sample(self):
-    #     if self.get_fp:
-    #         self.get_one_sample = self.get_one_sample_fp
-    #     else:
-    #         self.get_one_sample = self.get_one_sample_smi
 
     def get_one_sample(self, rxn_smi: str, **kwargs
                        ) -> List[Union[str, sparse_fp]]:
@@ -340,14 +334,15 @@ class Random(Augmentor):
         num_neg: int,
         smi_to_fp_dict: dict,
         fp_to_smi_dict: dict, 
-        mol_fps: sparse_fp,
+        mol_fps: Optional[sparse_fp] = None, # won't be needed if return_type == 'smi'
         rxn_type: str = "diff",
         fp_type: str = "count",
-        return_type: str = "fp"
+        return_type: str = "fp" # or 'smi'
     ):
         super(Random, self).__init__(num_neg, smi_to_fp_dict, mol_fps, rxn_type, fp_type)
         self.fp_to_smi_dict = fp_to_smi_dict
-        self.orig_idxs = range(self.mol_fps.shape[0])
+
+        self.orig_idxs = range(len(self.fp_to_smi_dict)) # range(self.mol_fps.shape[0])
         self.rdm_idxs = random.sample(self.orig_idxs, k=len(self.orig_idxs))
         self.rdm_counter = -1
         self.return_type = return_type
@@ -383,7 +378,7 @@ class Random(Augmentor):
 
     def get_idx(self) -> int:
         self.rdm_counter += 1
-        self.rdm_counter %= self.mol_fps.shape[0]
+        self.rdm_counter %= len(self.fp_to_smi_dict) # self.mol_fps.shape[0]
         return self.rdm_idxs[self.rdm_counter]
 
 

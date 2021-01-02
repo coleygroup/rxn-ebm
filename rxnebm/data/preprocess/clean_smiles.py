@@ -667,9 +667,6 @@ def clean_rxn_smis_FULL_one_phase(
             header = next(reader)  # skip first row of csv file  
 
         for i, row in enumerate(tqdm(reader, total=total_lines)):
-            # if i > 1000:
-            #     break
-
             rxn_smi = row[header.index("ReactionSmiles")]
             all_rcts_smi, all_reag_smi, prods_smi = rxn_smi.split(">")
             
@@ -878,7 +875,7 @@ def clean_rxn_smis_FULL_all_phases(
     # re-create every rxn_smi string, to remove weird "" using rxn_smi.rstrip()[0]
     print('Filtering weird "" from rxn_smis...')
     final_rxn_smis = []
-    for rxn_smi in tqdm(clean_rxn_smis):
+    for rxn_smi in tqdm(clean_rxn_smis): #TODO: FIX THIS
 
         filtered = []
         components = rxn_smi.split('>')
@@ -905,11 +902,12 @@ def clean_rxn_smis_FULL_all_phases(
 ###################################
 def remove_overlapping_rxn_smis(
     rxn_smi_file_prefix: str = "50k_clean_rxnsmi_noreagent",
-    root: Optional[Union[str, bytes, os.PathLike]] = None
+    root: Optional[Union[str, bytes, os.PathLike]] = None,
+    save_idxs: bool = False,
 ):
     """ Removes rxn_smi from train that overlap with valid/test, 
     and rxn_smi from valid that overlap with test
-    Saves indices of the removed rxn_smi as a separate pickle file for traceability 
+    Has option to save indices of the removed rxn_smi as a separate pickle file for traceability 
     """
     if root is None:
         root = Path(__file__).resolve().parents[2] / "data" / "cleaned_data"
@@ -953,8 +951,9 @@ def remove_overlapping_rxn_smis(
         print(phase, len(rxn_smi_phases[phase]))
         with open(root / f'{rxn_smi_file_prefix}_{phase}.pickle', 'wb') as handle:
             pickle.dump(rxn_smi_phases[phase], handle)
-    with open(root / f'{rxn_smi_file_prefix}_overlap_idxs.pickle', 'wb') as handle:
-        pickle.dump(overlap_idxs, handle)
+    if save_idxs:
+        with open(root / f'{rxn_smi_file_prefix}_overlap_idxs.pickle', 'wb') as handle:
+            pickle.dump(overlap_idxs, handle)
 
 def get_uniq_mol_smis_all_phases(
     rxn_smi_file_prefix: str = "50k_clean_rxnsmi_noreagent",
