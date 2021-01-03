@@ -78,7 +78,7 @@ class S2E(nn.Module):
         # logging.info(enc_in.shape)
         # logging.info("---------------------batch_lens-------------------")
         # logging.info(batch_lens)
-        # logging.info(batch_lens.shape)W
+        # logging.info(batch_lens.shape)
         lengths = torch.tensor([self.args.max_seq_len] * batch_lens.shape[0],
                                dtype=torch.long,
                                device=batch_lens.device)

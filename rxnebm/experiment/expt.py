@@ -599,7 +599,7 @@ class Experiment:
                 epoch_train_size += train_batch_size
 
                 if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
-                    self.lr_scheduler.step(epoch + i / self.train_size) # - self.begin_epoch)
+                    self.lr_scheduler.step(epoch + i / self.train_size - self.args.lr_scheduler_epoch_offset) # - self.begin_epoch)
 
                 for k in self.k_to_calc: # various top-k accuracies
                     # index with lowest energy is what the model deems to be the most feasible rxn 

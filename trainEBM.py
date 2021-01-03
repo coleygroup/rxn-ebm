@@ -93,6 +93,9 @@ def parse_args():
     parser.add_argument("--lr_scheduler_T_0",
                         help="num. of iters (epochs) for first restart (CosineAnnealingWarmRestarts)",
                         type=int, default=8)
+    parser.add_argument("--lr_scheduler_epoch_offset",
+                        help="num. of iters (epochs) to offset (CosineAnnealingWarmRestarts)",
+                        type=int, default=0)
     parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") # type=bool, default=True) 
     parser.add_argument("--early_stop_criteria",
                         help="criteria for early stopping ['loss', 'top1_acc', 'top5_acc', 'top10_acc', 'top50_acc']",
