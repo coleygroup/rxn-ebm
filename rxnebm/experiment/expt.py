@@ -129,13 +129,12 @@ class Experiment:
                     self.proposals_data[phase] = pd.read_csv(self.root / self.proposals_csv_filenames[phase], index_col=None, dtype='str')
                     self.proposals_data[phase] = self.proposals_data[phase].drop(['orig_rxn_smi'], axis=1).values
 
-        # TODO: take into account original probs (aka scores) from retro models
-        # self.prob_filenames = defaultdict(str)
-        # if self.args.prob_file_prefix: # will be loaded in Dataset file
-        #     for phase in ['train', 'valid', 'test']:
-        #         self.prob_filenames[phase] = self.args.prob_file_prefix + f"_{phase}.npy"
+        # take into account original probs/scores from retro models
+        self.prob_filenames = defaultdict(str)
+        if self.args.prob_file_prefix: # will be loaded in Dataset file
+            for phase in ['train', 'valid', 'test']:
+                self.prob_filenames[phase] = self.args.prob_file_prefix + f"_{phase}.npy"
 
-        # if onthefly is True, need smi_to_fp_dict_filename, mol_fps_filename, (if cos: search_index_filename, fp_to_smi_dict_filename)
         if self.representation == 'fingerprint':
             self._init_fp_dataloaders(
                 precomp_file_prefix=args.precomp_file_prefix,
@@ -357,7 +356,7 @@ class Experiment:
             rxn_smis_filename=self.rxn_smis_filenames["train"],
             onthefly=onthefly,
             augmented_data=augmented_data,
-            # self.prob_filename=prob_filenames['train']
+            prob_filename=self.prob_filenames['train']
         )
         self.train_loader = DataLoader(
             train_dataset,
@@ -377,7 +376,7 @@ class Experiment:
             rxn_smis_filename=self.rxn_smis_filenames["valid"],
             onthefly=onthefly,
             augmented_data=augmented_data,
-            # self.prob_filename=prob_filenames['valid']
+            prob_filename=self.prob_filenames['valid']
         )
         self.val_loader = DataLoader(
             val_dataset,
@@ -397,7 +396,7 @@ class Experiment:
             rxn_smis_filename=self.rxn_smis_filenames["test"],
             onthefly=onthefly,
             augmented_data=augmented_data,
-            # self.prob_filename=prob_filenames['test']
+            prob_filename=self.prob_filenames['test']
         )
         self.test_loader = DataLoader(
             test_dataset,
@@ -421,7 +420,8 @@ class Experiment:
             # precomp_rxnsmi_filename=None, # TODO? add later if needed
             rxn_smis_filename=self.rxn_smis_filenames[phase],
             proposals_csv_filename=self.proposals_csv_filenames[phase],
-            onthefly=True
+            onthefly=True,
+            prob_filename=self.prob_filenames[phase]
         )
 
         if self.args.do_compute_graph_feat:
@@ -533,7 +533,7 @@ class Experiment:
         )
         torch.save(checkpoint_dict, checkpoint_filename)
 
-    def _one_batch(self, batch: Tensor, mask: Tensor, backprop: bool = True):
+    def _one_batch(self, batch: Tensor, mask: Tensor, probs: Optional[Tensor] = None, backprop: bool = True):
         """
         Passes one batch of samples through model to get energies & loss
         Does backprop if training 
@@ -541,8 +541,7 @@ class Experiment:
         # for p in self.model.parameters():
         #     p.grad = None  # faster, equivalent to self.model.zero_grad()
         self.model.zero_grad()
-        energies = self.model(batch)  # size N x K
-
+        energies = self.model(batch, probs)  # size N x K
         # print('\n', '#'*10, 'energies (before masking)', '#'*10)
         # print(energies.shape)
         # print(energies)
@@ -556,16 +555,12 @@ class Experiment:
         # print('\n', '#'*10, 'energies (after masking)', '#'*10)
         # print(energies.shape)
         # print(energies)
-
-
         if backprop:
             # for training only: positives are the 0-th index of each minibatch (row)
             loss = (energies[:, 0] + torch.logsumexp(-energies, dim=1)).sum()
-
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
-
             return loss.item(), energies.cpu().detach() 
         else:
             # if fine-tuning: validation/testing, cannot calculate loss naively
@@ -590,16 +585,21 @@ class Experiment:
                 if self.model_name == 'TransformerEBM':
                     batch_data = (batch_data, 'train')
                 batch_mask = batch[1].to(self.device)
-                batch_loss, batch_energies = self._one_batch(
-                    batch_data, batch_mask, backprop=True
-                ) 
+                if self.args.prob_file_prefix:
+                    batch_probs = batch[3].to(self.device)
+                    batch_loss, batch_energies = self._one_batch(
+                        batch_data, batch_mask, batch_probs, backprop=True
+                    )
+                else:
+                    batch_loss, batch_energies = self._one_batch(
+                        batch_data, batch_mask, backprop=True
+                    )
                 train_loss += batch_loss
-
                 train_batch_size = batch_energies.shape[0]
                 epoch_train_size += train_batch_size
 
                 if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
-                    self.lr_scheduler.step(epoch + i / self.train_size)
+                    self.lr_scheduler.step(epoch + i / self.train_size) # - self.begin_epoch)
 
                 for k in self.k_to_calc: # various top-k accuracies
                     # index with lowest energy is what the model deems to be the most feasible rxn 
@@ -639,9 +639,15 @@ class Experiment:
                     if self.model_name == 'TransformerEBM':
                         batch_data = (batch_data, 'valid')
                     batch_mask = batch[1].to(self.device)
-                    batch_energies = self._one_batch(
-                        batch_data, batch_mask, backprop=False
-                    )
+                    if self.args.prob_file_prefix:
+                        batch_probs = batch[3].to(self.device)
+                        batch_energies = self._one_batch(
+                            batch_data, batch_mask, batch_probs, backprop=False
+                        )
+                    else:
+                        batch_energies = self._one_batch(
+                            batch_data, batch_mask, backprop=False
+                        )
                     val_batch_size = batch_energies.shape[0]
                     epoch_val_size += val_batch_size
 
@@ -799,7 +805,7 @@ class Experiment:
                 \ntop-5 val acc: {epoch_top5_val_acc:.4f}, top-10 val acc: {epoch_top10_val_acc:.4f} \
                 \n"
             )
-            if self.optimizer.param_groups[0]['lr'] < 2e-6:
+            if self.args.lr_floor and self.optimizer.param_groups[0]['lr'] < 2e-6:
                 logging.info('Stopping training as learning rate has dropped below 2e-6')
                 break 
 
@@ -826,9 +832,15 @@ class Experiment:
                 if self.model_name == 'TransformerEBM':
                     batch_data = (batch_data, 'test')
                 batch_mask = batch[1].to(self.device)
-                batch_energies = self._one_batch(
-                    batch_data, batch_mask, backprop=False
-                )
+                if self.args.prob_file_prefix:
+                    batch_probs = batch[3].to(self.device)
+                    batch_energies = self._one_batch(
+                        batch_data, batch_mask, batch_probs, backprop=False
+                    )
+                else:
+                    batch_energies = self._one_batch(
+                        batch_data, batch_mask, backprop=False
+                    )
                 test_batch_size = batch_energies.shape[0]
                 epoch_test_size += test_batch_size
 

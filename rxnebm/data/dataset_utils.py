@@ -214,8 +214,9 @@ def seq_collate_fn_builder(device, vocab: Dict[str, int], max_seq_len: int = 512
         batch_lens = []
         batch_masks = []
         batch_idxs = []
+        batch_probs = []
 
-        for rxn_smiles_with_negatives, masks, idx in data:
+        for rxn_smiles_with_negatives, masks, idx, probs in data:
             minibatch_token_ids, minibatch_lens = get_seq_features_per_minibatch(
                 rxn_smiles_with_negatives, vocab=vocab, max_seq_len=max_seq_len)
             batch_token_ids.extend(minibatch_token_ids)
@@ -223,16 +224,18 @@ def seq_collate_fn_builder(device, vocab: Dict[str, int], max_seq_len: int = 512
 
             batch_masks.append(masks)
             batch_idxs.append(idx)
+            batch_probs.append(probs)
 
         batch_size = len(data)
         batch_token_ids = torch.tensor(batch_token_ids, dtype=torch.long, device=device)
         batch_lens = torch.tensor(batch_lens, dtype=torch.long, device=device)
         batch_masks = torch.tensor(batch_masks, dtype=torch.bool, device=device)
+        batch_probs = torch.tensor(batch_probs, dtype=torch.float, device=device)
 
         if debug:
             logging.info("-------token_id tensors-------")
             logging.info(batch_token_ids)
 
-        return (batch_token_ids, batch_lens, batch_size), batch_masks, batch_idxs
+        return (batch_token_ids, batch_lens, batch_size), batch_masks, batch_idxs, batch_probs
 
     return collate_fn

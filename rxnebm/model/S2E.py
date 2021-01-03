@@ -4,8 +4,9 @@ import torch.nn as nn
 from onmt.encoders import TransformerEncoder
 from onmt.modules.embeddings import Embeddings as ONMTEmbeddings
 from rxnebm.model import model_utils
-from typing import Dict
+from typing import Dict, Optional
 
+Tensor = torch.tensor
 
 def sequence_mask(lengths, maxlen: int):
     """https://discuss.pytorch.org/t/pytorch-equivalent-for-tf-sequence-mask/39036"""
@@ -55,11 +56,14 @@ class S2E(nn.Module):
             max_relative_positions=0
         )
 
-        self.output = nn.Linear(hidden_size, 1)
+        if self.args.prob_file_prefix:
+            self.output = nn.Linear(hidden_size + 1, 1)
+        else:
+            self.output = nn.Linear(hidden_size, 1)
         # logging.info("Initializing weights")
         # model_utils.initialize_weights(self)
 
-    def forward(self, batch):
+    def forward(self, batch, probs: Optional[Tensor] = None):
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,
@@ -91,24 +95,16 @@ class S2E(nn.Module):
         #     f"calculated minibatch size: {mols_per_minibatch}, given in args: {self.args.minibatch_size}"
 
         encodings = encodings * seq_masks                           # mask out padding
-        if phase == 'train':
-            encodings = torch.reshape(encodings,                        # [t, N * K, h] => [t, N, K, h]
-                                    [self.args.max_seq_len,
-                                    -1, # batch_size
-                                    self.args.minibatch_size,
-                                    self.hidden_size])
-            batch_lens = torch.reshape(batch_lens,                      # [N * K] => [N, K, 1]
-                                    [-1, #batch_size,
-                                    self.args.minibatch_size, 1])
-        else:
-            encodings = torch.reshape(encodings,                        # [t, N * K, h] => [t, N, K, h]
-                                    [self.args.max_seq_len,
-                                    -1, # batch_size
-                                    self.args.minibatch_eval,
-                                    self.hidden_size])
-            batch_lens = torch.reshape(batch_lens,                      # [N * K] => [N, K, 1]
-                                    [-1, #batch_size,
-                                    self.args.minibatch_eval, 1])
+        K = self.args.minibatch_size if phase == 'train' else self.args.minibatch_eval
+        encodings = torch.reshape(encodings,                        # [t, N * K, h] => [t, N, K, h]
+                                [self.args.max_seq_len,
+                                -1, # batch_size
+                                K,
+                                self.hidden_size])
+        batch_lens = torch.reshape(batch_lens,                      # [N * K] => [N, K, 1]
+                                [-1, #batch_size,
+                                K, 
+                                1])
 
         if self.pooling_method == "CLS":                            # [t, N, K, h] => [N, K, h]
             pooled_encoding = encodings[0, :, :, :]
@@ -117,7 +113,13 @@ class S2E(nn.Module):
             pooled_encoding = pooled_encoding / batch_lens
         else:
             raise ValueError(f"Unsupported pooling method: {self.pooling_method}")
-
-        energies = self.output(pooled_encoding)                     # [N, K, h] => [N, K, 1]
+        
+        if probs is not None:
+            probs = probs.unsqueeze(dim=-1)                         # [N, K] => [N, K, 1]
+            energies = self.output(
+                torch.cat([pooled_encoding, probs], dim=-1)
+                )                                                   # [N, K, h] + [N, K, 1] => [N, K, h+1]
+        else:
+            energies = self.output(pooled_encoding)                 # [N, K, h] => [N, K, 1]
         # del pooled_encoding, encodings, seq_masks, batch_token_ids
         return energies.squeeze(dim=-1)                             # [N, K]

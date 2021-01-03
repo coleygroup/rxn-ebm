@@ -54,9 +54,14 @@ def parse_args():
     parser.add_argument("--path_to_energies",
                         help="do not change (folder to store array of energy values for train & test data)", type=str)
     parser.add_argument("--proposals_csv_file_prefix",
-                        help="do not change (CSV file containing proposals from retro models)", type=str,
-                        default=None)
+                        help="do not change (CSV file containing proposals from retro models)", type=str)
     parser.add_argument("--vocab_file", help="vocab file for Transformer encoder", type=str, default=None)
+    parser.add_argument("--precomp_file_prefix",
+                        help="precomputed augmentation file prefix, expt.py will append f'_{phase}.npz' to the end",
+                        type=str)
+    parser.add_argument("--prob_file_prefix",
+                        help="npy file of probabilities/scores from retro model",
+                        type=str)
     # fingerprint params
     parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
     parser.add_argument("--rctfp_size", help="reactant fp size", type=int, default=16384)
@@ -66,9 +71,6 @@ def parse_args():
     parser.add_argument("--rxn_type", help="aggregation type", type=str, default="diff")
     parser.add_argument("--fp_type", help="fp type", type=str, default="count")
     # training params
-    parser.add_argument("--precomp_file_prefix",
-                        help="precomputed augmentation file prefix, expt.py will append f'_{phase}.npz' to the end",
-                        type=str, default="")
     parser.add_argument("--batch_size", help="batch_size", type=int, default=128)
     parser.add_argument("--minibatch_size", help="minibatch size for smiles (training), i.e. max # of proposal rxn_smi allowed per rxn", 
                         type=int, default=32)
@@ -78,6 +80,7 @@ def parse_args():
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
+    parser.add_argument("--lr_floor", help="whether to stop training once LR < 2e-6", action="store_true")
     parser.add_argument("--lr_scheduler", help="learning rate schedule ['ReduceLROnPlateau', 'CosineAnnealingWarmRestarts']", 
                         type=str, default="ReduceLROnPlateau")
     parser.add_argument("--lr_scheduler_criteria",
