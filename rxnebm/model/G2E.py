@@ -1,10 +1,11 @@
 import logging
 import torch
 import torch.nn as nn
-from typing import Tuple
+from typing import Tuple, Optional
 from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM
 from rxnebm.model import model_utils
 
+Tensor = torch.tensor
 
 def index_scatter(sub_data, all_data, index):
     d0, d1 = all_data.size()
@@ -311,6 +312,11 @@ class G2E(nn.Module):
         self.model_repr = "GraphEBM"
         self.args = args
 
+        if torch.cuda.is_available():
+            self.num_devices = torch.cuda.device_count()
+        else:
+            self.num_devices = 1
+
         self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type="gru",
@@ -326,7 +332,7 @@ class G2E(nn.Module):
         logging.info("Initializing weights")
         model_utils.initialize_weights(self)
 
-    def forward(self, batch):
+    def forward(self, batch, probs: Optional[Tensor]=None):
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,
@@ -353,10 +359,10 @@ class G2E(nn.Module):
         # logging.info([h.size() for h in hmol])
 
         batch_pooled_hmols = []
-
-        mols_per_minibatch = len(hmol) // batch_size                    # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
-        assert mols_per_minibatch == self.args.minibatch_size + 1, \
-            f"calculated minibatch size: {mols_per_minibatch-1}, given in args: {self.args.minibatch_size}"
+    
+        mols_per_minibatch = len(hmol) // batch_size // self.num_devices  # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
+        # assert mols_per_minibatch == self.args.minibatch_size + 1, \
+        #     f"calculated minibatch size: {mols_per_minibatch-1}, given in args: {self.args.minibatch_size}"
 
         # logging.info(f"{len(hmol)}, {batch_size}, {mols_per_minibatch}")
         for i in range(batch_size):

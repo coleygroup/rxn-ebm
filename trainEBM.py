@@ -80,11 +80,16 @@ def parse_args():
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
-    parser.add_argument("--lr_floor", help="whether to stop training once LR < 2e-6", action="store_true")
-    parser.add_argument("--lr_scheduler", help="learning rate schedule ['ReduceLROnPlateau', 'CosineAnnealingWarmRestarts']", 
+    parser.add_argument("--lr_floor", help="whether to stop training once LR < 2e-6", 
+                        action="store_true", default=False)
+    parser.add_argument("--lr_min", help="minimum learning rate (CosineAnnealingWarmRestarts)", 
+                        type=float, default=0)
+    parser.add_argument("--lr_scheduler",
+                        help="learning rate schedule ['ReduceLROnPlateau', 'CosineAnnealingWarmRestarts', 'OneCycleLR']", 
                         type=str, default="ReduceLROnPlateau")
     parser.add_argument("--lr_scheduler_criteria",
-                        help="criteria for ReduceLROnPlateau ['loss', 'acc']", type=str, default='acc')
+                        help="criteria to reduce LR (ReduceLROnPlateau) ['loss', 'acc']", 
+                        type=str, default='acc')
     parser.add_argument("--lr_scheduler_factor",
                         help="factor by which to reduce LR (ReduceLROnPlateau)", type=float, default=0.2)
     parser.add_argument("--lr_scheduler_patience",
@@ -94,8 +99,11 @@ def parse_args():
                         help="num. of iters (epochs) for first restart (CosineAnnealingWarmRestarts)",
                         type=int, default=8)
     parser.add_argument("--lr_scheduler_epoch_offset",
-                        help="num. of iters (epochs) to offset (CosineAnnealingWarmRestarts)",
+                        help="num. of epochs to offset (CosineAnnealingWarmRestarts)",
                         type=int, default=0)
+    parser.add_argument("--lr_scheduler_last_batch",
+                        help="num. of batches to offset / has been computed (OneCycleLR)",
+                        type=int, default=-1)
     parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") # type=bool, default=True) 
     parser.add_argument("--early_stop_criteria",
                         help="criteria for early stopping ['loss', 'top1_acc', 'top5_acc', 'top10_acc', 'top50_acc']",
@@ -264,6 +272,9 @@ def main(args):
 
     if args.do_test:
         logging.info("Start testing")
+        if args.do_compute_graph_feat:
+            del experiment.train_loader # free up memory
+            gc.collect()
         experiment.test()
 
     if args.do_get_energies_and_acc:

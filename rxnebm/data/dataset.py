@@ -256,14 +256,6 @@ class AugmentedDataFingerprints:
         minibatch_neg_rxn_fps = []
         for aug in self.augs:
             neg_rxn_fps = aug(rxn_smi)
-            # aug_neg_rxn_smis = aug(rxn_smi)
-            # aug_neg_rxn_fps = []
-            # for neg_rxn_smi in aug_neg_rxn_smis:
-            #     rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(
-            #         neg_rxn_smi, self.fp_type, self.smi_to_fp_dict, self.mol_fps
-            #     )
-            #     neg_rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, self.rxn_type)
-            #     aug_neg_rxn_fps.append(neg_rxn_fp)
             minibatch_neg_rxn_fps.extend(neg_rxn_fps)
 
         # TODO: try creating empty sparse vector then allocate elements, see if faster than sparse.hstack
@@ -356,9 +348,9 @@ class AugmentedDataFingerprints:
             logging.info("Precomputing...")
 
         if distributed:
-            logging.info("distributed computing is not supported now!")
+            logging.info("distributed processing is not supported!")
             return
-            '''TODO: add support & documentation for distributed processing
+            '''TODO: distributed processing
             '''
             # from mpi4py import MPI
             # from mpi4py.futures import MPIPoolExecutor as Pool
@@ -420,23 +412,6 @@ class AugmentedDataFingerprints:
         self.shape = (len(self.rxn_smis), self.mol_fps[0].shape[-1])
         # e.g. (40004, 4096) for train, needed to allow .shape[0] attribute
         # from ReactionDatasetFingerprints.__len__()
-
-# do not use, is very slow 
-# def spy_sparse2torch_sparse(data: scipy.sparse.csr_matrix) -> Tensor:
-#     """
-#     :param data: a scipy sparse csr matrix
-#     :return: a sparse torch tensor
-#     """
-#     samples = data.shape[0]
-#     features = data.shape[1]
-#     values = data.data
-#     coo_data = data.tocoo()
-#     indices = torch.LongTensor([coo_data.row, coo_data.col])
-#     tensor = torch.sparse.IntTensor(
-#         indices, torch.from_numpy(values), [samples, features]
-#     )
-#     return tensor
-
 
 class ReactionDatasetFingerprints(Dataset):
     """
@@ -581,8 +556,6 @@ class ReactionDatasetSMILES(Dataset):
                     with open(self.root / self.rxn_smis_filename, "r") as csv_file:
                         csv_reader = csv.DictReader(csv_file)
                         for i, row in enumerate(tqdm(csv_reader)):
-                            # if i == 0: # skip header row
-                            #     continue
                             p_smi = row["prod_smi"]
                             r_smi_true = row["true_precursors"]
                             smiles = [f"{r_smi_true}>>{p_smi}"]
@@ -599,12 +572,8 @@ class ReactionDatasetSMILES(Dataset):
                     with open(self.root / self.rxn_smis_filename, "r") as csv_file:
                         csv_reader = csv.DictReader(csv_file)
                         for i, row in enumerate(tqdm(csv_reader)):
-                            # if i == 0: # skip header row
-                            #     continue
                             p_smi = row["prod_smi"]
                             smiles = []
-                            # r_smi_true = row["true_precursors"]
-                            # smiles = [f"{r_smi_true}>>{p_smi}"]
                             for j in range(1, self.args.minibatch_eval + 1): # go through columns for proposed precursors
                                 cand = row[f"cand_precursor_{j}"]
                                 if cand.isnumeric() and int(cand) == 9999: # actly can break the loop (but need change if else flow)
@@ -745,7 +714,7 @@ class ReactionDatasetSMILES(Dataset):
                 else:
                     raise ValueError("Either --do_pretrain or --do_finetune must be supplied!")
 
-                self.p = Pool(10)
+                self.p = Pool(len(os.sched_getaffinity(0)))
                 self._graphs_and_features = self.p.map(
                     helper,
                     zip(self._rxn_smiles_with_negatives, range(len(self._rxn_smiles_with_negatives))))
@@ -775,8 +744,8 @@ class ReactionDatasetSMILES(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
+        K = self.args.minibatch_size if self.phase == 'train' else self.args.minibatch_eval 
         if self.prob_data is not None:
-            K = self.args.minibatch_size if self.phase == 'train' else self.args.minibatch_eval 
             probs = self.prob_data[idx][:K]
         else:
             probs = np.zeros(K) # for compatibility w/ dataset_utils.collate_fn
@@ -790,34 +759,34 @@ class ReactionDatasetSMILES(Dataset):
         return len(self._rxn_smiles_with_negatives)
 
 
-if __name__ == "__main__":
-    augmentations = {
-        "rdm": {"num_neg": 2},
-        "cos": {"num_neg": 2, "query_params": None},
-        "bit": {"num_neg": 2, "num_bits": 3, "increment_bits": 1},
-        "mut": {"num_neg": 10},
-    }
+# if __name__ == "__main__":
+    # augmentations = {
+    #     "rdm": {"num_neg": 2},
+    #     "cos": {"num_neg": 2, "query_params": None},
+    #     "bit": {"num_neg": 2, "num_bits": 3, "increment_bits": 1},
+    #     "mut": {"num_neg": 10},
+    # }
 
-    smi_to_fp_dict_filename = "50k_mol_smi_to_sparse_fp_idx.pickle"
-    fp_to_smi_dict_filename = "50k_sparse_fp_idx_to_mol_smi.pickle"
-    mol_fps_filename = "50k_count_mol_fps.npz"
-    search_index_filename = "50k_cosine_count.bin"
-    mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
+    # smi_to_fp_dict_filename = "50k_mol_smi_to_sparse_fp_idx.pickle"
+    # fp_to_smi_dict_filename = "50k_sparse_fp_idx_to_mol_smi.pickle"
+    # mol_fps_filename = "50k_count_mol_fps.npz"
+    # search_index_filename = "50k_cosine_count.bin"
+    # mut_smis_filename = "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"
 
-    augmented_data = dataset.AugmentedDataFingerprints(
-        augmentations=augmentations,
-        smi_to_fp_dict_filename=smi_to_fp_dict_filename,
-        mol_fps_filename=mol_fps_filename,
-        search_index_filename=search_index_filename,
-        mut_smis_filename=mut_smis_filename,
-        seed=random_seed,
-    )
+    # augmented_data = dataset.AugmentedDataFingerprints(
+    #     augmentations=augmentations,
+    #     smi_to_fp_dict_filename=smi_to_fp_dict_filename,
+    #     mol_fps_filename=mol_fps_filename,
+    #     search_index_filename=search_index_filename,
+    #     mut_smis_filename=mut_smis_filename,
+    #     seed=random_seed,
+    # )
 
-    rxn_smis_file_prefix = "50k_clean_rxnsmi_noreagent"
-    for phase in ["train", "valid", "test"]:
-        augmented_data.precompute(
-            output_filename=precomp_file_prefix + f"_{phase}.npz",
-            rxn_smis=rxn_smis_file_prefix + f"_{phase}.pickle",
-            distributed=False,
-            parallel=False,
-        ) 
+    # rxn_smis_file_prefix = "50k_clean_rxnsmi_noreagent"
+    # for phase in ["train", "valid", "test"]:
+    #     augmented_data.precompute(
+    #         output_filename=precomp_file_prefix + f"_{phase}.npz",
+    #         rxn_smis=rxn_smis_file_prefix + f"_{phase}.pickle",
+    #         distributed=False,
+    #         parallel=False,
+    #     ) 

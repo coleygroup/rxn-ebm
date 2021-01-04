@@ -249,7 +249,17 @@ class Experiment:
             logging.info(f'Initialising {self.lr_scheduler_name}')
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
                                         optimizer=self.optimizer, 
-                                        T_0=self.args.lr_scheduler_T_0
+                                        T_0=self.args.lr_scheduler_T_0,
+                                        eta_min=self.args.lr_min,
+                                        )
+        elif self.lr_scheduler_name == 'OneCycleLR':
+            logging.info(f'Initialising {self.lr_scheduler_name}')
+            self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
+                                        optimizer=self.optimizer,
+                                        max_lr=self.learning_rate,
+                                        epochs=self.epochs,
+                                        steps_per_epoch=self.train_size // self.batch_size,
+                                        last_epoch=self.args.lr_scheduler_last_batch
                                         )
         else:
             self.lr_scheduler = None 
@@ -293,7 +303,17 @@ class Experiment:
             logging.info(f'Initialising {self.lr_scheduler_name}')
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
                                         optimizer=self.optimizer, 
-                                        T_0=self.args.lr_scheduler_T_0
+                                        T_0=self.args.lr_scheduler_T_0,
+                                        eta_min=self.args.lr_min,
+                                        )
+        elif self.lr_scheduler_name == 'OneCycleLR':
+            logging.info(f'Initialising {self.lr_scheduler_name}')
+            self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
+                                        optimizer=self.optimizer,
+                                        max_lr=self.learning_rate,
+                                        epochs=self.epochs,
+                                        steps_per_epoch=self.train_size // self.batch_size,
+                                        last_epoch=self.args.lr_scheduler_last_batch
                                         )
         else:
             logging.info('Not using any LR Scheduler!')
@@ -448,7 +468,11 @@ class Experiment:
 
     def _init_smi_dataloaders(self, onthefly: bool):
         logging.info("Initialising SMILES dataloaders...")
-        if onthefly:
+        if onthefly and self.args.do_compute_graph_feat: # don't load test data yet, to save memory
+            self.train_loader, self.train_size = self._get_smi_dl(phase="train", shuffle=True)
+            self.val_loader, self.val_size = self._get_smi_dl(phase="valid", shuffle=False)
+            self.test_loader, self.test_size = None, None # self._get_smi_dl(phase="test", shuffle=False)
+        elif onthefly:
             self.train_loader, self.train_size = self._get_smi_dl(phase="train", shuffle=True)
             self.val_loader, self.val_size = self._get_smi_dl(phase="valid", shuffle=False)
             self.test_loader, self.test_size = self._get_smi_dl(phase="test", shuffle=False)
@@ -579,7 +603,6 @@ class Experiment:
                 # if i > 4:
                 #     break
                 batch_data = batch[0]
-                # print(f'Check batch_data type: {isinstance(batch_data, tuple)}') # returns True for TransformerEBM
                 if not isinstance(batch_data, tuple):
                     batch_data = batch_data.to(self.device)
                 if self.model_name == 'TransformerEBM':
@@ -600,7 +623,9 @@ class Experiment:
 
                 if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
                     self.lr_scheduler.step(epoch + i / self.train_size - self.args.lr_scheduler_epoch_offset) # - self.begin_epoch)
-
+                elif self.lr_scheduler_name == 'OneCycleLR':
+                    self.lr_scheduler.step()
+                    
                 for k in self.k_to_calc: # various top-k accuracies
                     # index with lowest energy is what the model deems to be the most feasible rxn 
                     batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
@@ -822,6 +847,8 @@ class Experiment:
         """
         self.model.eval()
         test_loss, test_correct_preds = 0, defaultdict(int)
+        if self.test_loader is None: # running G2E
+            self.test_loader, self.test_size = self._get_smi_dl(phase="test", shuffle=False)
         test_loader = tqdm(self.test_loader, desc='testing...')
         with torch.no_grad():
             epoch_test_size = 0

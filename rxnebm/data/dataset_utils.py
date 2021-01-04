@@ -140,13 +140,15 @@ def graph_collate_fn_builder(device, debug: bool):
         batch_graphs_and_features = []
         batch_masks = []
         batch_idxs = []
+        batch_probs = []
 
         # each graphs_and_features is a minibatch
         # each masks is a minibatch too
-        for graphs_and_features, masks, idx in data:
+        for graphs_and_features, masks, idx, probs in data:
             batch_graphs_and_features.extend(graphs_and_features)
             batch_masks.append(masks)
             batch_idxs.append(idx)
+            batch_probs.append(probs)
 
         batch_size = len(data)
         batch_masks = torch.tensor(batch_masks, dtype=torch.bool, device=device)
@@ -163,7 +165,7 @@ def graph_collate_fn_builder(device, debug: bool):
             logging.info("-------batch_masks-------")
             logging.info(batch_masks)
 
-        return (graph_tensors, scopes, batch_size), batch_masks, batch_idxs
+        return (graph_tensors, scopes, batch_size), batch_masks, batch_idxs, batch_probs
 
     return collate_fn
 

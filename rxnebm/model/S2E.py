@@ -89,7 +89,7 @@ class S2E(nn.Module):
             batch_lens, maxlen=self.args.max_seq_len)
         seq_masks = seq_masks.unsqueeze(-1)                         # [t, N * K] => [t, N * K, 1]
 
-        mols_per_minibatch = encodings.shape[1] / batch_size
+        # mols_per_minibatch = encodings.shape[1] / batch_size
         # TODO: for multi-GPU training, mols_per_minibatch == self.args.minibatch_size // torch.cuda.device_count()
         # assert mols_per_minibatch == self.args.minibatch_size, \
         #     f"calculated minibatch size: {mols_per_minibatch}, given in args: {self.args.minibatch_size}"
