@@ -1,5 +1,6 @@
 import logging
 import networkx as nx
+import numpy as np
 import re
 import torch
 from rdkit import Chem
@@ -14,17 +15,10 @@ def get_graph_from_smiles(smi: str):
     return rxn_graph
 
 
-def create_pad_tensor(alist):
-    max_len = max([len(a) for a in alist]) + 1
-    for a in alist:
-        pad_len = max_len - len(a)
-        a.extend([0] * pad_len)
-    return torch.tensor(alist, dtype=torch.long)
-
-
 def get_features_per_graph(smi: str, use_rxn_class: bool):
     atom_features = []
     bond_features = []
+    edge_dict = {}
 
     graph = get_graph_from_smiles(smi).reac_mol
 
@@ -33,18 +27,58 @@ def get_features_per_graph(smi: str, use_rxn_class: bool):
 
     G = nx.convert_node_labels_to_integers(graph.G_dir, first_label=0)
 
+    # node iteration to get sparse atom features
     for v, attr in G.nodes(data="label"):
         atom_feat = get_atom_features_sparse(mol.GetAtomWithIdx(v),
                                              use_rxn_class=use_rxn_class,
                                              rxn_class=graph.rxn_class)
         atom_features.append(atom_feat)
 
+    a_graphs = [[] for _ in range(len(atom_features))]
+
+    # edge iteration to get (dense) bond features
     for u, v, attr in G.edges(data='label'):
         bond_feat = get_bond_features(mol.GetBondBetweenAtoms(u, v))
         bond_feat = [u, v] + bond_feat
         bond_features.append(bond_feat)
 
-    return graph, G, atom_features, bond_features
+        eid = len(edge_dict)
+        edge_dict[(u, v)] = eid
+        a_graphs[v].append(eid)
+
+    b_graphs = [[] for _ in range(len(bond_features))]
+
+    # second edge iteration to get neighboring edges (after edge_dict is updated fully)
+    for bond_feat in bond_features:
+        u, v = bond_feat[:2]
+        eid = edge_dict[(u, v)]
+
+        for w in G.predecessors(u):
+            if not w == v:
+                b_graphs[eid].append(edge_dict[(w, u)])
+
+    # padding
+    for a_graph in a_graphs:
+        while len(a_graph) < 7:
+            a_graph.append(9999)
+
+    for b_graph in b_graphs:
+        while len(b_graph) < 7:
+            b_graph.append(9999)
+
+    a_scopes = np.array(graph.atom_scope, dtype=np.int32)
+    a_scopes_lens = a_scopes.shape[0]
+    b_scopes = np.array(graph.bond_scope, dtype=np.int32)
+    b_scopes_lens = b_scopes.shape[0]
+    a_features = np.array(atom_features, dtype=np.int32)
+    a_features_lens = a_features.shape[0]
+    b_features = np.array(bond_features, dtype=np.int32)
+    b_features_lens = b_features.shape[0]
+    a_graphs = np.array(a_graphs, dtype=np.int32)
+    b_graphs = np.array(b_graphs, dtype=np.int32)
+
+    return a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, \
+        a_features, a_features_lens, b_features, b_features_lens, a_graphs, b_graphs
 
 
 def densify(features: List[List[int]], FDIM: List[int]) -> List[List[int]]:
@@ -52,7 +86,7 @@ def densify(features: List[List[int]], FDIM: List[int]) -> List[List[int]]:
     for feature in features:
         one_hot_feature = [0] * sum(FDIM)
         for i, idx in enumerate(feature):
-            if idx == 9999:         # padding
+            if idx == 9999:         # padding and unknown
                 continue
             one_hot_feature[idx+sum(FDIM[:i])] = 1
 
@@ -65,64 +99,59 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
                        use_rxn_class: bool = False) -> Tuple[Tuple, Tuple[List, List]]:
     if directed:
         padded_features = get_atom_features_sparse(Chem.Atom("*"), use_rxn_class=use_rxn_class, rxn_class=0)
-        padded_features = densify([padded_features], ATOM_FDIM)
-        fnode = padded_features
-        fmess = [[0, 0] + [0] * BOND_FDIM]
-        agraph, bgraph = [[]], [[]]
-        unique_bonds = {(0, 0)}
+        fnode = [np.array(padded_features)]
+        fmess = [np.zeros(shape=[1, 2+BOND_FDIM], dtype=np.int32)]
+        agraph = [np.zeros(shape=[1, 7], dtype=np.int32)]
+        bgraph = [np.zeros(shape=[1, 7], dtype=np.int32)]
+
+        n_unique_bonds = 1
+        edge_offset = 1
 
         atom_scope, bond_scope = [], []
-        edge_dict = {}
 
         for bid, graphs_and_features in enumerate(batch_graphs_and_features):
-            graph, G, atom_features, bond_features = graphs_and_features
-            # densify on the fly temporarily, TODO: to be fully converted into embedding based
-            atom_features = densify(atom_features, ATOM_FDIM)
-            # bond_features = densify(bond_features, BOND_FDIM)
+            a_scope, b_scope, atom_features, bond_features, a_graph, b_graph = graphs_and_features
 
             atom_offset = len(fnode)
-            bond_offset = len(unique_bonds)
-            atom_scope.append(graph.update_atom_scope(atom_offset))
-            bond_scope.append(graph.update_bond_scope(bond_offset))
+            bond_offset = n_unique_bonds
+            n_unique_bonds += int(bond_features.shape[0] / 2)              # This should be correct?
+
+            a_scope[:, 0] += atom_offset
+            b_scope[:, 0] += bond_offset
+            atom_scope.append(a_scope)
+            bond_scope.append(b_scope)
 
             # node iteration is reduced to an extend
             fnode.extend(atom_features)
-            agraph.extend([[] for _ in range(len(atom_features))])
 
-            # first edge iteration
-            for bond_feat in bond_features:
-                u, v = bond_feat[:2]
-                u_adj = u + atom_offset
-                v_adj = v + atom_offset
-                bond = tuple(sorted([u_adj, v_adj]))
-                unique_bonds.add(bond)
+            # edge iteration is reduced to an append
+            bond_features[:, :2] += atom_offset
+            fmess.append(bond_features)
 
-                # do not use assign for list or it'll be passed by reference
-                mess_vec = [u_adj, v_adj] + bond_feat[2:]
+            a_graph += edge_offset
+            a_graph[a_graph >= 9999] = 0            # resetting padding edge to point towards edge 0
+            agraph.append(a_graph)
 
-                fmess.append(mess_vec)
-                edge_dict[(u_adj, v_adj)] = eid = len(edge_dict) + 1
-                G[u][v]['mess_idx'] = eid
-                agraph[v_adj].append(eid)
-                bgraph.append([])
+            b_graph += edge_offset
+            b_graph[b_graph >= 9999] = 0            # resetting padding edge to point towards edge 0
+            bgraph.append(b_graph)
 
-            # second edge iteration (after edge_dict is updated fully)
-            for bond_feat in bond_features:
-                u, v = bond_feat[:2]
-                u_adj = u + atom_offset
-                v_adj = v + atom_offset
+            edge_offset += bond_features.shape[0]
 
-                eid = edge_dict[(u_adj, v_adj)]
-                for w in G.predecessors(u):
-                    if w == v:
-                        continue
-                    w_adj = w + atom_offset
-                    bgraph[eid].append(edge_dict[(w_adj, u_adj)])
+        # densification
+        fnode = np.stack(fnode, axis=0)
+        fnode_one_hot = np.zeros([fnode.shape[0], sum(ATOM_FDIM)], dtype=np.float32)
 
-        fnode = torch.tensor(fnode, dtype=torch.float)
-        fmess = torch.tensor(fmess, dtype=torch.float)
-        agraph = create_pad_tensor(agraph)
-        bgraph = create_pad_tensor(bgraph)
+        for i in range(len(ATOM_FDIM) - 1):
+            fnode[:, i+1:] += ATOM_FDIM[i]
+
+        for i, feat in enumerate(fnode):            # Looks vectorizable?
+            fnode_one_hot[i, feat[feat < 9999]] = 1
+
+        fnode = torch.from_numpy(fnode_one_hot)
+        fmess = torch.from_numpy(np.concatenate(fmess, axis=0))
+        agraph = torch.from_numpy(np.concatenate(agraph, axis=0)).long()
+        bgraph = torch.from_numpy(np.concatenate(bgraph, axis=0)).long()
 
         graph_tensors = (fnode, fmess, agraph, bgraph, None)
         scopes = (atom_scope, bond_scope)
@@ -152,8 +181,10 @@ def graph_collate_fn_builder(device, debug: bool):
 
         batch_size = len(data)
         batch_masks = torch.tensor(batch_masks, dtype=torch.bool, device=device)
+
         graph_tensors, scopes = get_graph_features(batch_graphs_and_features=batch_graphs_and_features,
                                                    use_rxn_class=False)
+
         graph_tensors = [tensor.to(device) for tensor in graph_tensors[:4]]
         graph_tensors.append(None)      # for compatibility
 

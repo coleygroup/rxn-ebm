@@ -292,12 +292,14 @@ class GraphFeatEncoder(nn.Module):
         hatom, _ = self.encoder(hnode, hmess, agraph, bgraph, mask=None)
 
         hmol = []
-        if isinstance(atom_scope[0], list):
+        # if isinstance(atom_scope[0], list):
+        if True:
             for scope in atom_scope:
-                if not scope:
+                # if not scope:
+                if False:
                     hmol.append(torch.zeros([1, self.h_size], device=hatom.device))
                 else:
-                    hmol.append(torch.stack([hatom[st:st+le].sum(dim=0) for (st, le) in scope]))
+                    hmol.append(torch.stack([hatom[st:st+le].sum(dim=0) for st, le in scope]))
 
             # hmol = [torch.stack([hatom[st:st+le].sum(dim=0) for (st, le) in scope])
             #         for scope in atom_scope]
