@@ -238,31 +238,24 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
             #     exit(0)
 
         # logging.info(f"inner loop sum: {time.time() - start: .5f} s")
+        # start = time.time()
 
         fnode = np.stack(fnode, axis=0)
         fnode_one_hot = np.zeros([fnode.shape[0], sum(ATOM_FDIM)], dtype=np.float32)
 
+        # logging.info(fnode[:10])
+        for i in range(len(ATOM_FDIM) - 1):
+            fnode[:, i+1:] += ATOM_FDIM[i]
 
-        def densify(features: List[List[int]], FDIM: List[int]) -> List[List[int]]:
-            one_hot_features = []
-            for feature in features:
-                one_hot_feature = [0] * sum(FDIM)
-                for i, idx in enumerate(feature):
-                    if idx == 9999:  # padding and unknown
-                        continue
-                    one_hot_feature[idx + sum(FDIM[:i])] = 1
+        # logging.info(fnode[:10])
+        # logging.info(fnode.shape)
 
-                one_hot_features.append(one_hot_feature)
+        for i, feat in enumerate(fnode):            # Looks vectorizable?
+            fnode_one_hot[i, feat[feat < 9999]] = 1
 
-            return one_hot_features
-
-
-        logging.info(fnode)
-        logging.info(fnode.shape)
-
-        fnode = torch.tensor(fnode, dtype=torch.float)
-
+        # fnode = torch.tensor(fnode, dtype=torch.float)
         # fmess = torch.tensor(fmess, dtype=torch.float)
+        fnode = torch.from_numpy(fnode_one_hot)
         fmess = torch.from_numpy(np.concatenate(fmess, axis=0))
         agraph = torch.from_numpy(np.concatenate(agraph, axis=0)).long()
         bgraph = torch.from_numpy(np.concatenate(bgraph, axis=0)).long()
@@ -271,7 +264,9 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
 
         graph_tensors = (fnode, fmess, agraph, bgraph, None)
         scopes = (atom_scope, bond_scope)
-        exit(0)
+
+        # logging.info(f"Post-loop processing: {time.time() - start: .5f} s")
+        # exit(0)
     else:
         raise NotImplementedError("Zhengkai will get the undirected graph if needed")
 

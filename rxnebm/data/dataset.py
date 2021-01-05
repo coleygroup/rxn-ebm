@@ -12,7 +12,7 @@ import torch
 from concurrent.futures import ProcessPoolExecutor as Pool
 from pathlib import Path
 from rxnebm.data import augmentors
-from rxnebm.data.dataset_utils import get_features_per_graph
+from rxnebm.data.dataset_utils import get_features_per_graph, smi_tokenizer
 from rxnebm.model import model_utils
 from scipy import sparse
 from typing import List, Optional, Tuple, Union
@@ -45,7 +45,12 @@ def get_features_per_graph_helper(_args: Tuple[int, List[str]]):
     a_scopes = np.concatenate(a_scopes, axis=0)
     b_scopes = np.concatenate(b_scopes, axis=0)
     a_features = np.concatenate(a_features, axis=0)
-    b_features = np.concatenate(b_features, axis=0)
+    try:
+        b_features = np.concatenate(b_features, axis=0)
+    except:
+        logging.info(minibatch_smiles)
+        logging.info(b_features_lens)
+        logging.info(b_features)
     a_graphs = np.concatenate(a_graphs, axis=0)
     b_graphs = np.concatenate(b_graphs, axis=0)
 
@@ -705,17 +710,20 @@ class ReactionDatasetSMILES(Dataset):
 
     def get_smiles_and_masks(self):
         if self.args.do_pretrain:
-            for rxn_smi in tqdm(self.rxn_smis[:1000]):
+            for rxn_smi in tqdm(self.rxn_smis):
                 minibatch_smiles = [rxn_smi]
                 for aug in self.augs:
                     neg_rxn_smiles = aug(rxn_smi)
                     minibatch_smiles.extend(neg_rxn_smiles)
 
                 # crem would give empty string
-                minibatch_masks = [bool(smi) for smi in minibatch_smiles]
+                minibatch_masks = [bool(smi) and len(smi_tokenizer(smi.split(">>")[-1])) > 1
+                                   for smi in minibatch_smiles]
 
-                # hardcode, seems that "" will just make the indexing more difficult
-                minibatch_smiles = [smi if smi else "CC" for smi in minibatch_smiles]
+                # hardcode, setting "" or single atom product to "CC"
+                # seems that "" or single atom product will just make the indexing more difficult
+                minibatch_smiles = [smi if smi and len(smi_tokenizer(smi.split(">>")[-1])) > 1 else "CC"
+                                    for smi in minibatch_smiles]
 
                 self._rxn_smiles_with_negatives.append(minibatch_smiles)
                 self._masks.append(minibatch_masks)
@@ -738,10 +746,14 @@ class ReactionDatasetSMILES(Dataset):
                     continue
                 while len(minibatch_smiles) < self.args.minibatch_size:
                     minibatch_smiles.append("")
-                minibatch_masks = [bool(smi) for smi in minibatch_smiles]
 
-                # hardcode, seems that "" will just make the indexing more difficult
-                minibatch_smiles = [smi if smi else "CC" for smi in minibatch_smiles]
+                minibatch_masks = [bool(smi) and len(smi_tokenizer(smi.split(">>")[-1])) > 1
+                                   for smi in minibatch_smiles]
+
+                # hardcode, setting "" or single atom product to "CC"
+                # seems that "" or single atom product will just make the indexing more difficult
+                minibatch_smiles = [smi if smi and len(smi_tokenizer(smi.split(">>")[-1])) > 1 else "CC"
+                                    for smi in minibatch_smiles]
 
                 self._rxn_smiles_with_negatives.append(minibatch_smiles)
                 self._masks.append(minibatch_masks)
@@ -850,18 +862,11 @@ class ReactionDatasetSMILES(Dataset):
             minibatch_graph_features = []
 
             for mol_index in minibatch_mol_index:
-                # sanity check
-                # assert self.predecessors_indexes[mol_index][0] == self.a_features_indexes[mol_index][0]
-                # assert self.predecessors_indexes[mol_index][1] == self.a_features_indexes[mol_index][1]
-
                 start, end = self.a_scopes_indexes[mol_index]
                 a_scope = self.a_scopes[start:end]
 
                 start, end = self.b_scopes_indexes[mol_index]
                 b_scope = self.b_scopes[start:end]
-
-                # start, end = self.predecessors_indexes[mol_index]
-                # predecessor = self.predecessors[start:end]
 
                 start, end = self.a_features_indexes[mol_index]
                 a_feature = self.a_features[start:end]
@@ -871,11 +876,10 @@ class ReactionDatasetSMILES(Dataset):
                 b_feature = self.b_features[start:end]
                 b_graph = self.b_graphs[start:end]
 
-                # graph_feature = (a_scope, b_scope, predecessor, a_feature, b_feature)
                 graph_feature = (a_scope, b_scope, a_feature, b_feature, a_graph, b_graph)
+
                 minibatch_graph_features.append(graph_feature)
 
-            # return self._graphs_and_features[idx], self._masks[idx], idx
             return minibatch_graph_features, self._masks[idx], idx
         else:
             return self._rxn_smiles_with_negatives[idx], self._masks[idx], idx
