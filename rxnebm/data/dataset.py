@@ -38,23 +38,23 @@ def get_features_per_graph_helper(_args: Tuple[int, List[str]]):
     # graphs_and_features = [get_features_per_graph(smi, use_rxn_class=False)
     #                        for smi in minibatch_smiles]
 
-    a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
-        a_features, a_features_lens, b_features, b_features_lens = \
-        zip(*(get_features_per_graph(smi, use_rxn_class=False)
-              for smi in minibatch_smiles))
+    a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, a_features, a_features_lens, b_features, b_features_lens,\
+        a_graphs, b_graphs = zip(*(get_features_per_graph(smi, use_rxn_class=False)
+                                   for smi in minibatch_smiles))
 
     a_scopes = np.concatenate(a_scopes, axis=0)
     b_scopes = np.concatenate(b_scopes, axis=0)
-    predecessors = np.concatenate(predecessors, axis=0)
     a_features = np.concatenate(a_features, axis=0)
     b_features = np.concatenate(b_features, axis=0)
+    a_graphs = np.concatenate(a_graphs, axis=0)
+    b_graphs = np.concatenate(b_graphs, axis=0)
 
     n_smi_per_minibatch = len(minibatch_smiles)
     minibatch_mol_indexes = np.arange(i*n_smi_per_minibatch, (i+1)*n_smi_per_minibatch)
 
     # return graphs_and_features
-    return a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
-        a_features, a_features_lens, b_features, b_features_lens, minibatch_mol_indexes
+    return a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, a_features, a_features_lens, b_features, b_features_lens, \
+        a_graphs, b_graphs, minibatch_mol_indexes
 
 
 def get_features_per_graph_helper_finetune(_args: Tuple[int, List[str]]):
@@ -71,23 +71,23 @@ def get_features_per_graph_helper_finetune(_args: Tuple[int, List[str]]):
     # graphs_and_features = [get_features_per_graph(smi, use_rxn_class=False)
     #                        for smi in minibatch_smiles]
 
-    a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
-        a_features, a_features_lens, b_features, b_features_lens = \
-        zip(*(get_features_per_graph(smi, use_rxn_class=False)
-              for smi in minibatch_smiles))
+    a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, a_features, a_features_lens, b_features, b_features_lens,\
+        a_graphs, b_graphs = zip(*(get_features_per_graph(smi, use_rxn_class=False)
+                                   for smi in minibatch_smiles))
 
     a_scopes = np.concatenate(a_scopes, axis=0)
     b_scopes = np.concatenate(b_scopes, axis=0)
-    predecessors = np.concatenate(predecessors, axis=0)
     a_features = np.concatenate(a_features, axis=0)
     b_features = np.concatenate(b_features, axis=0)
+    a_graphs = np.concatenate(a_graphs, axis=0)
+    b_graphs = np.concatenate(b_graphs, axis=0)
 
     n_smi_per_minibatch = len(minibatch_smiles)
     minibatch_mol_indexes = np.arange(i*n_smi_per_minibatch, (i+1)*n_smi_per_minibatch)
 
     # return graphs_and_features
-    return a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
-        a_features, a_features_lens, b_features, b_features_lens, minibatch_mol_indexes
+    return a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, a_features, a_features_lens, b_features, b_features_lens, \
+        a_graphs, b_graphs, minibatch_mol_indexes
 
 
 class AugmentedDataFingerprints:
@@ -658,9 +658,9 @@ class ReactionDatasetSMILES(Dataset):
             self.minibatch_mol_indexes = []
             self.a_scopes, self.a_scopes_indexes = [], []
             self.b_scopes, self.b_scopes_indexes = [], []
-            self.predecessors, self.predecessors_indexes = [], []
             self.a_features, self.a_features_indexes = [], []
             self.b_features, self.b_features_indexes = [], []
+            self.a_graphs, self.b_graphs = [], []
             self.precompute()
 
         else:
@@ -766,8 +766,9 @@ class ReactionDatasetSMILES(Dataset):
 
                 feat = np.load(cache_feat)
                 feat_index = np.load(cache_feat_index)
-                for attr in ["a_scopes", "b_scopes", "predecessors", "a_features", "b_features"]:
+                for attr in ["a_scopes", "b_scopes", "a_features", "b_features", "a_graphs", "b_graphs"]:
                     setattr(self, attr, feat[attr])
+                for attr in ["a_scopes", "b_scopes", "a_features", "b_features"]:
                     setattr(self, f"{attr}_indexes", feat_index[f"{attr}_indexes"])
                 self.minibatch_mol_indexes = feat_index["minibatch_mol_indexes"]
 
@@ -790,17 +791,18 @@ class ReactionDatasetSMILES(Dataset):
                 self.p = Pool(10)
                 _features_and_lengths = self.p.map(helper, enumerate(self._rxn_smiles_with_negatives))
 
-                a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, predecessors, predecessors_lens, \
-                    a_features, a_features_lens, b_features, b_features_lens, minibatch_mol_indexes = \
-                    zip(*_features_and_lengths)
+                a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, \
+                    a_features, a_features_lens, b_features, b_features_lens, a_graphs, b_graphs, \
+                    minibatch_mol_indexes = zip(*_features_and_lengths)
 
                 self.minibatch_mol_indexes = np.stack(minibatch_mol_indexes, axis=0)
 
                 self.a_scopes = np.concatenate(a_scopes, axis=0)
                 self.b_scopes = np.concatenate(b_scopes, axis=0)
-                self.predecessors = np.concatenate(predecessors, axis=0)
                 self.a_features = np.concatenate(a_features, axis=0)
                 self.b_features = np.concatenate(b_features, axis=0)
+                self.a_graphs = np.concatenate(a_graphs, axis=0)
+                self.b_graphs = np.concatenate(b_graphs, axis=0)
 
                 def _lengths2indexes(lens):
                     end_indexes = np.cumsum(np.concatenate(lens, axis=0))
@@ -810,7 +812,6 @@ class ReactionDatasetSMILES(Dataset):
 
                 self.a_scopes_indexes = _lengths2indexes(a_scopes_lens)
                 self.b_scopes_indexes = _lengths2indexes(b_scopes_lens)
-                self.predecessors_indexes = _lengths2indexes(predecessors_lens)
                 self.a_features_indexes = _lengths2indexes(a_features_lens)
                 self.b_features_indexes = _lengths2indexes(b_features_lens)
 
@@ -824,14 +825,14 @@ class ReactionDatasetSMILES(Dataset):
                 np.savez(cache_feat,
                          a_scopes=self.a_scopes,
                          b_scopes=self.b_scopes,
-                         predecessors=self.predecessors,
                          a_features=self.a_features,
-                         b_features=self.b_features)
+                         b_features=self.b_features,
+                         a_graphs=self.a_graphs,
+                         b_graphs=self.b_graphs)
                 np.savez(cache_feat_index,
                          minibatch_mol_indexes=self.minibatch_mol_indexes,
                          a_scopes_indexes=self.a_scopes_indexes,
                          b_scopes_indexes=self.b_scopes_indexes,
-                         predecessors_indexes=self.predecessors_indexes,
                          a_features_indexes=self.a_features_indexes,
                          b_features_indexes=self.b_features_indexes)
 
@@ -850,8 +851,8 @@ class ReactionDatasetSMILES(Dataset):
 
             for mol_index in minibatch_mol_index:
                 # sanity check
-                assert self.predecessors_indexes[mol_index][0] == self.a_features_indexes[mol_index][0]
-                assert self.predecessors_indexes[mol_index][1] == self.a_features_indexes[mol_index][1]
+                # assert self.predecessors_indexes[mol_index][0] == self.a_features_indexes[mol_index][0]
+                # assert self.predecessors_indexes[mol_index][1] == self.a_features_indexes[mol_index][1]
 
                 start, end = self.a_scopes_indexes[mol_index]
                 a_scope = self.a_scopes[start:end]
@@ -859,16 +860,19 @@ class ReactionDatasetSMILES(Dataset):
                 start, end = self.b_scopes_indexes[mol_index]
                 b_scope = self.b_scopes[start:end]
 
-                start, end = self.predecessors_indexes[mol_index]
-                predecessor = self.predecessors[start:end]
+                # start, end = self.predecessors_indexes[mol_index]
+                # predecessor = self.predecessors[start:end]
 
                 start, end = self.a_features_indexes[mol_index]
                 a_feature = self.a_features[start:end]
+                a_graph = self.a_graphs[start:end]
 
                 start, end = self.b_features_indexes[mol_index]
                 b_feature = self.b_features[start:end]
+                b_graph = self.b_graphs[start:end]
 
-                graph_feature = (a_scope, b_scope, predecessor, a_feature, b_feature)
+                # graph_feature = (a_scope, b_scope, predecessor, a_feature, b_feature)
+                graph_feature = (a_scope, b_scope, a_feature, b_feature, a_graph, b_graph)
                 minibatch_graph_features.append(graph_feature)
 
             # return self._graphs_and_features[idx], self._masks[idx], idx
