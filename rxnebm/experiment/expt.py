@@ -786,15 +786,16 @@ class Experiment:
                 self.val_losses.append(val_loss / epoch_val_size) # self.val_size)
 
             # track best_epoch to facilitate loading of best checkpoint
-            if self.early_stop:
-                if self.early_stop_criteria == 'loss':
-                    if self.val_losses[-1] < self.min_val_loss:
-                        self.best_epoch = epoch
-                elif self.early_stop_criteria.split('_')[-1] == 'acc':
-                    k = int(self.early_stop_criteria.split('_')[0][-1:])
-                    val_acc_to_compare = self.val_topk_accs[k][-1]
-                    if val_acc_to_compare > self.max_val_acc:
-                        self.best_epoch = epoch
+            if self.early_stop_criteria == 'loss':
+                if self.val_losses[-1] < self.min_val_loss:
+                    self.best_epoch = epoch
+                    self.min_val_loss = self.val_losses[-1]
+            elif self.early_stop_criteria.split('_')[-1] == 'acc':
+                k = int(self.early_stop_criteria.split('_')[0][-1:])
+                val_acc_to_compare = self.val_topk_accs[k][-1]
+                if val_acc_to_compare > self.max_val_acc:
+                    self.best_epoch = epoch
+                    self.max_val_acc = val_acc_to_compare
 
             self._update_stats()
             if self.checkpoint:

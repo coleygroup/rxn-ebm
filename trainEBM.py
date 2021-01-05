@@ -31,6 +31,7 @@ def parse_args():
     parser.add_argument("--onthefly", help="whether to do on-the-fly computation", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default="02_11_2020")
+    parser.add_argument("--load_epoch", help="epoch to load from", type=int, default=None)
     parser.add_argument("--expt_name", help="experiment name", type=str, default="")
     parser.add_argument("--old_expt_name", help="old experiment name", type=str, default="")
     parser.add_argument("--checkpoint_folder", help="checkpoint folder",
@@ -199,7 +200,7 @@ def main(args):
         saved_stats_filename = f'{args.model_name}_{args.old_expt_name}_stats.pkl'
         saved_model, saved_optimizer, saved_stats = expt_utils.load_model_opt_and_stats(
             args, saved_stats_filename, old_checkpoint_folder, args.model_name, args.optimizer,
-            distributed=distributed
+            load_epoch=args.load_epoch 
         )
         logging.info(f"Saved model {args.model_name} loaded")
         if saved_stats["fp_args"] is not None:
@@ -272,7 +273,7 @@ def main(args):
 
     if args.do_test:
         logging.info("Start testing")
-        if args.do_compute_graph_feat:
+        if args.do_compute_graph_feat and experiment.train_loader is not None:
             del experiment.train_loader # free up memory
             gc.collect()
         experiment.test()

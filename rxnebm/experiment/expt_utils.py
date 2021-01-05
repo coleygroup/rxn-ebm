@@ -76,8 +76,7 @@ def load_model_opt_and_stats(
     model_name: str = "FeedforwardFingerprint",
     optimizer_name: str = "Adam",
     load_best: bool = True,
-    load_epoch : Optional[int] = None,
-    distributed: Optional[bool] = False
+    load_epoch : Optional[int] = None
 ):
     """
     Parameters
@@ -101,7 +100,7 @@ def load_model_opt_and_stats(
     )
 
     try:
-        if load_best:
+        if load_epoch is None:
             checkpoint_filename = (
                 saved_stats_filename[:-9]
                 + f'checkpoint_{str(saved_stats["best_epoch"]).zfill(4)}.pth.tar'
