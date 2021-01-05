@@ -81,7 +81,7 @@ def parse_args():
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
-    parser.add_argument("--lr_floor", help="whether to stop training once LR < 2e-6", 
+    parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < 2e-6", 
                         action="store_true", default=False)
     parser.add_argument("--lr_min", help="minimum learning rate (CosineAnnealingWarmRestarts)", 
                         type=float, default=0)
@@ -115,7 +115,8 @@ def parse_args():
     parser.add_argument("--early_stop_min_delta",
                         help="min. improvement in criteria needed to not early stop", type=float, default=1e-4)
     parser.add_argument("--num_workers", help="num. of workers (0 to 8)", type=int, default=0)
-    parser.add_argument("--checkpoint", help="whether to save model checkpoints", action="store_true") # type=bool, default=True) 
+    parser.add_argument("--checkpoint", help="whether to save model checkpoints", action="store_true") # type=bool, default=True)
+    parser.add_argument("--checkpoint_every", help="to save model weights every N epochs", type=int, default=1)
     parser.add_argument("--random_seed", help="random seed", type=int, default=0)
     parser.add_argument("--pin_memory", 
                         help="whether to pin memory to speed up CPU to GPU transfer (will fail for certain cases, like TransformerEBM)", 
@@ -210,7 +211,7 @@ def main(args):
 
         model = saved_model
         model_args = saved_stats["model_args"]
-        begin_epoch = saved_stats["best_epoch"] + 1
+        begin_epoch = args.load_epoch or (saved_stats["best_epoch"] + 1)
 
         if args.vocab_file is not None:
             vocab = expt_utils.load_or_create_vocab(args)
