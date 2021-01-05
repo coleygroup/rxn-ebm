@@ -2,6 +2,7 @@ import logging
 import networkx as nx
 import numpy as np
 import re
+import time
 import torch
 from rdkit import Chem
 from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM, get_atom_features_sparse, get_bond_features
@@ -104,22 +105,30 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
         padded_features = get_atom_features_sparse(Chem.Atom("*"), use_rxn_class=use_rxn_class, rxn_class=0)
         padded_features = densify([padded_features], ATOM_FDIM)
         fnode = padded_features
-        fmess = [[0, 0] + [0] * BOND_FDIM]
+        # fmess = [[0, 0] + [0] * BOND_FDIM]
+        fmess = [np.zeros(shape=[1, 2+BOND_FDIM],
+                          dtype=np.int32)]
         agraph, bgraph = [[]], [[]]
-        unique_bonds = {(0, 0)}
+        # unique_bonds = {(0, 0)}
+        n_unique_bonds = 1
 
         atom_scope, bond_scope = [], []
         edge_dict = {}
+        n_edge = 0
 
+        start = time.time()
         for bid, graphs_and_features in enumerate(batch_graphs_and_features):
             # graph, G, atom_features, bond_features = graphs_and_features
             a_scope, b_scope, predecessor, atom_features, bond_features = graphs_and_features
+            # logging.info(predecessor)
             # densify on the fly temporarily, TODO: to be fully converted into embedding based
+
             atom_features = densify(atom_features, ATOM_FDIM)
             # bond_features = densify(bond_features, BOND_FDIM)
 
             atom_offset = len(fnode)
-            bond_offset = len(unique_bonds)
+            # bond_offset = len(unique_bonds)
+            bond_offset = n_unique_bonds
             # atom_scope.append(graph.update_atom_scope(atom_offset))
             # bond_scope.append(graph.update_bond_scope(bond_offset))
             atom_scope.append(update_atom_scope(atom_offset, atom_scope=a_scope))
@@ -128,49 +137,62 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
             # node iteration is reduced to an extend
             fnode.extend(atom_features)
             agraph.extend([[] for _ in range(len(atom_features))])
+            bgraph.extend([[] for _ in range(len(bond_features))])
 
             # first edge iteration
             # logging.info(bond_features)
             # logging.info(bond_features.shape)
-            for bond_feat in bond_features:
-                u, v = bond_feat[:2]
-                u_adj = u + atom_offset
-                v_adj = v + atom_offset
-                bond = tuple(sorted([u_adj, v_adj]))
-                unique_bonds.add(bond)
 
+            uv_indexes_orig = bond_features[:, :2].copy()
+            uv_indexes_adj = uv_indexes_orig + atom_offset
+
+            bond_features[:, :2] = uv_indexes_adj
+            fmess.append(bond_features)
+
+            # predecessor += atom_offset
+            n_unique_bonds += int(uv_indexes_adj.shape[0] / 2)              # This should be correct?
+
+            for u_adj, v_adj in uv_indexes_adj:
                 # do not use assign for list or it'll be passed by reference
                 # mess_vec = [u_adj, v_adj] + bond_feat[2:]
-                mess_vec = np.concatenate([[u_adj, v_adj], bond_feat[2:]], axis=0)
+                # mess_vec = np.concatenate([[u_adj, v_adj], bond_feat[2:]], axis=0)
 
-                fmess.append(mess_vec)
-                edge_dict[(u_adj, v_adj)] = eid = len(edge_dict) + 1
-                # G[u][v]['mess_idx'] = eid           # seems not used anywhere
-                agraph[v_adj].append(eid)
-                bgraph.append([])
+                # fmess.append(mess_vec)
+                # eid = len(edge_dict) + 1
+                n_edge += 1
+                edge_dict[(u_adj, v_adj)] = n_edge
+                agraph[v_adj].append(n_edge)
 
             # second edge iteration (after edge_dict is updated fully)
-            for bond_feat in bond_features:
-                u, v = bond_feat[:2]
-                u_adj = u + atom_offset
-                v_adj = v + atom_offset
+            # for bond_feat in bond_features:
+            for uv, uv_adj in zip(uv_indexes_orig, uv_indexes_adj):
+                u, v = uv
+                u_adj, v_adj = uv_adj
 
                 eid = edge_dict[(u_adj, v_adj)]
                 # for w in G.predecessors(u):
                 for w in predecessor[u]:
-                    if w == v or w == 9999:             # exclude input bond or padding
+                    if w == v or w >= 9999:             # exclude input bond or padding
                         continue
                     w_adj = w + atom_offset
                     bgraph[eid].append(edge_dict[(w_adj, u_adj)])
 
+            logging.info(bond_features)
+            logging.info(agraph)
+            logging.info(bgraph)
+            exit(0)
+
+        logging.info(f"inner loop sum: {time.time() - start: .5f} s")
+
         fnode = torch.tensor(fnode, dtype=torch.float)
-        fmess = torch.tensor(fmess, dtype=torch.float)
+        # fmess = torch.tensor(fmess, dtype=torch.float)
+        fmess = torch.from_numpy(np.concatenate(fmess, axis=0))
         agraph = create_pad_tensor(agraph)
         bgraph = create_pad_tensor(bgraph)
 
         graph_tensors = (fnode, fmess, agraph, bgraph, None)
         scopes = (atom_scope, bond_scope)
-
+        exit(0)
     else:
         raise NotImplementedError("Zhengkai will get the undirected graph if needed")
 
@@ -194,8 +216,10 @@ def graph_collate_fn_builder(device, debug: bool):
 
         batch_size = len(data)
         batch_masks = torch.tensor(batch_masks, dtype=torch.bool, device=device)
+
         graph_tensors, scopes = get_graph_features(batch_graphs_and_features=batch_graphs_and_features,
                                                    use_rxn_class=False)
+
         graph_tensors = [tensor.to(device) for tensor in graph_tensors[:4]]
         graph_tensors.append(None)      # for compatibility
 
