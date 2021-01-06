@@ -762,7 +762,8 @@ class ReactionDatasetSMILES(Dataset):
                 logging.info("All loaded.")
 
             else:
-                logging.info(f"Cache not found for rxn_smis_fn {self.rxn_smis_filename}, computing from scratch")
+                logging.info(f"Cache not found for rxn_smis_fn {self.rxn_smis_filename} with cache_suffix {self.args.cache_suffix}, \
+                            computing from scratch")
                 self.get_smiles_and_masks()
 
                 logging.info("Pre-computing graphs and features")
