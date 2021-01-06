@@ -5,8 +5,6 @@ from typing import Tuple, Optional
 from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM
 from rxnebm.model import model_utils
 
-Tensor = torch.tensor
-
 def index_scatter(sub_data, all_data, index):
     d0, d1 = all_data.size()
     buf = torch.zeros_like(all_data).scatter_(0, index.repeat(d1, 1).t(), sub_data)
@@ -292,12 +290,14 @@ class GraphFeatEncoder(nn.Module):
         hatom, _ = self.encoder(hnode, hmess, agraph, bgraph, mask=None)
 
         hmol = []
-        if isinstance(atom_scope[0], list):
+        # if isinstance(atom_scope[0], list):
+        if True:
             for scope in atom_scope:
-                if not scope:
+                # if not scope:
+                if False:
                     hmol.append(torch.zeros([1, self.h_size], device=hatom.device))
                 else:
-                    hmol.append(torch.stack([hatom[st:st+le].sum(dim=0) for (st, le) in scope]))
+                    hmol.append(torch.stack([hatom[st:st+le].sum(dim=0) for st, le in scope]))
 
             # hmol = [torch.stack([hatom[st:st+le].sum(dim=0) for (st, le) in scope])
             #         for scope in atom_scope]
@@ -332,7 +332,7 @@ class G2E(nn.Module):
         logging.info("Initializing weights")
         model_utils.initialize_weights(self)
 
-    def forward(self, batch, probs: Optional[Tensor]=None):
+    def forward(self, batch, probs: Optional[torch.Tensor]=None):
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,

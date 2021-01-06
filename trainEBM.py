@@ -63,6 +63,9 @@ def parse_args():
     parser.add_argument("--prob_file_prefix",
                         help="npy file of probabilities/scores from retro model",
                         type=str)
+    parser.add_argument("--cache_suffix",
+                        help="additional suffix for G2E cache files",
+                        type=str, default=None)
     # fingerprint params
     parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
     parser.add_argument("--rctfp_size", help="reactant fp size", type=int, default=16384)
@@ -81,7 +84,7 @@ def parse_args():
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
-    parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < 2e-6", 
+    parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < 1e-6", 
                         action="store_true", default=False)
     parser.add_argument("--lr_min", help="minimum learning rate (CosineAnnealingWarmRestarts)", 
                         type=float, default=0)
@@ -211,7 +214,7 @@ def main(args):
 
         model = saved_model
         model_args = saved_stats["model_args"]
-        begin_epoch = args.load_epoch or (saved_stats["best_epoch"] + 1)
+        begin_epoch = (args.load_epoch + 1) or (saved_stats["best_epoch"] + 1)
 
         if args.vocab_file is not None:
             vocab = expt_utils.load_or_create_vocab(args)

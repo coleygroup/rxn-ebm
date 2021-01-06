@@ -1089,7 +1089,7 @@ class Experiment:
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
 
                 loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
-                loss /= epoch_data_size # self.val_size
+                loss /= epoch_data_size
             logging.info(f"\nLoss on {phase} : {loss:.4f}")
 
         if path_to_energies is None:
