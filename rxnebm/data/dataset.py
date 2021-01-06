@@ -742,7 +742,7 @@ class ReactionDatasetSMILES(Dataset):
             cache_smi = self.root / f"{self.rxn_smis_filename}.{self.args.cache_suffix}.cache_smi.pkl"
             cache_mask = self.root / f"{self.rxn_smis_filename}.{self.args.cache_suffix}.cache_mask.pkl"
             cache_feat = self.root / f"{self.rxn_smis_filename}.{self.args.cache_suffix}.cache_feat.npz"
-            cache_feat_index = self.root / f"{self.rxn_smis_filename}.cache_feat_index.npz"
+            cache_feat_index = self.root / f"{self.rxn_smis_filename}.{self.args.cache_suffix}.cache_feat_index.npz"
             if all(os.path.exists(cache) for cache in [cache_smi, cache_mask, cache_feat, cache_feat_index]):
                 logging.info(f"Found cache for reaction smiles, masks, features and feature indexes "
                              f"for rxn_smis_fn {self.rxn_smis_filename}, loading")
