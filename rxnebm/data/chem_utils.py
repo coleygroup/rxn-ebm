@@ -150,17 +150,17 @@ def get_atom_features_sparse(atom: Chem.Atom, rxn_class: int = None, use_rxn_cla
     feature_array.append(symbol_id)
 
     if symbol in ["*", "unk"]:
-        padding = [9999] * 7 if use_rxn_class else [9999] * 6
+        padding = [float("inf")] * 7 if use_rxn_class else [float("inf")] * 6
         feature_array.extend(padding)
 
     else:
         degree_id = atom.GetDegree()
         if degree_id not in DEGREES:
-            degree_id = 9999
-        formal_charge_id = FC_DICT.get(atom.GetFormalCharge(), 9999)
-        hybridization_id = HYBRIDIZATION_DICT.get(atom.GetHybridization(), 9999)
-        valence_id = VALENCE_DICT.get(atom.GetTotalValence(), 9999)
-        num_h_id = NUM_Hs_DICT.get(atom.GetTotalNumHs(), 9999)
+            degree_id = 9
+        formal_charge_id = FC_DICT.get(atom.GetFormalCharge(), 4)
+        hybridization_id = HYBRIDIZATION_DICT.get(atom.GetHybridization(), 4)
+        valence_id = VALENCE_DICT.get(atom.GetTotalValence(), 6)
+        num_h_id = NUM_Hs_DICT.get(atom.GetTotalNumHs(), 4)
         is_aromatic = int(atom.GetIsAromatic())
         feature_array.extend([degree_id, formal_charge_id, hybridization_id,
                               valence_id, num_h_id, is_aromatic])

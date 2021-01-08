@@ -60,11 +60,11 @@ def get_features_per_graph(smi: str, use_rxn_class: bool):
     # padding
     for a_graph in a_graphs:
         while len(a_graph) < 7:
-            a_graph.append(9999)
+            a_graph.append(float("inf"))
 
     for b_graph in b_graphs:
         while len(b_graph) < 7:
-            b_graph.append(9999)
+            b_graph.append(float("inf"))
 
     a_scopes = np.array(graph.atom_scope, dtype=np.int32)
     a_scopes_lens = a_scopes.shape[0]
@@ -79,20 +79,6 @@ def get_features_per_graph(smi: str, use_rxn_class: bool):
 
     return a_scopes, a_scopes_lens, b_scopes, b_scopes_lens, \
         a_features, a_features_lens, b_features, b_features_lens, a_graphs, b_graphs
-
-
-def densify(features: List[List[int]], FDIM: List[int]) -> List[List[int]]:
-    one_hot_features = []
-    for feature in features:
-        one_hot_feature = [0] * sum(FDIM)
-        for i, idx in enumerate(feature):
-            if idx == 9999:         # padding and unknown
-                continue
-            one_hot_feature[idx+sum(FDIM[:i])] = 1
-
-        one_hot_features.append(one_hot_feature)
-
-    return one_hot_features
 
 
 def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = True,
@@ -129,11 +115,11 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
             fmess.append(bond_features)
 
             a_graph += edge_offset
-            a_graph[a_graph >= 9999] = 0            # resetting padding edge to point towards edge 0
+            a_graph[np.isinf(a_graph)] = 0              # resetting padding edge to point towards edge 0
             agraph.append(a_graph)
 
             b_graph += edge_offset
-            b_graph[b_graph >= 9999] = 0            # resetting padding edge to point towards edge 0
+            b_graph[np.isinf(b_graph)] = 0              # resetting padding edge to point towards edge 0
             bgraph.append(b_graph)
 
             edge_offset += bond_features.shape[0]
@@ -143,15 +129,25 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
         fnode_one_hot = np.zeros([fnode.shape[0], sum(ATOM_FDIM)], dtype=np.float32)
 
         for i in range(len(ATOM_FDIM) - 1):
-            fnode[:, i+1:] += ATOM_FDIM[i]
+            fnode[:, i+1:] += ATOM_FDIM[i]          # cumsum, essentially
 
         for i, feat in enumerate(fnode):            # Looks vectorizable?
-            fnode_one_hot[i, feat[feat < 9999]] = 1
+            # fnode_one_hot[i, feat[feat < 9999]] = 1
+            fnode_one_hot[i, feat[feat < sum(ATOM_FDIM)]] = 1
 
         fnode = torch.from_numpy(fnode_one_hot)
         fmess = torch.from_numpy(np.concatenate(fmess, axis=0))
-        agraph = torch.from_numpy(np.concatenate(agraph, axis=0)).long()
-        bgraph = torch.from_numpy(np.concatenate(bgraph, axis=0)).long()
+
+        agraph = np.concatenate(agraph, axis=0)
+        column_idx = np.argwhere(np.all(agraph[..., :] == 0, axis=0))
+        agraph = agraph[:, :column_idx[0, 0] + 1]       # drop trailing columns of 0, leaving only 1 last column of 0
+
+        bgraph = np.concatenate(bgraph, axis=0)
+        column_idx = np.argwhere(np.all(bgraph[..., :] == 0, axis=0))
+        bgraph = bgraph[:, :column_idx[0, 0] + 1]       # drop trailing columns of 0, leaving only 1 last column of 0
+
+        agraph = torch.from_numpy(agraph).long()
+        bgraph = torch.from_numpy(bgraph).long()
 
         graph_tensors = (fnode, fmess, agraph, bgraph, None)
         scopes = (atom_scope, bond_scope)
