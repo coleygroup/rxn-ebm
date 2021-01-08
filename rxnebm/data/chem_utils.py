@@ -150,7 +150,7 @@ def get_atom_features_sparse(atom: Chem.Atom, rxn_class: int = None, use_rxn_cla
     feature_array.append(symbol_id)
 
     if symbol in ["*", "unk"]:
-        padding = [float("inf")] * 7 if use_rxn_class else [float("inf")] * 6
+        padding = [999999999] * 7 if use_rxn_class else [999999999] * 6
         feature_array.extend(padding)
 
     else:

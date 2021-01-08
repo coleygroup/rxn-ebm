@@ -60,11 +60,11 @@ def get_features_per_graph(smi: str, use_rxn_class: bool):
     # padding
     for a_graph in a_graphs:
         while len(a_graph) < 7:
-            a_graph.append(float("inf"))
+            a_graph.append(1e9)
 
     for b_graph in b_graphs:
         while len(b_graph) < 7:
-            b_graph.append(float("inf"))
+            b_graph.append(1e9)
 
     a_scopes = np.array(graph.atom_scope, dtype=np.int32)
     a_scopes_lens = a_scopes.shape[0]
@@ -98,6 +98,13 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
         for bid, graphs_and_features in enumerate(batch_graphs_and_features):
             a_scope, b_scope, atom_features, bond_features, a_graph, b_graph = graphs_and_features
 
+            a_scope = a_scope.copy()
+            b_scope = b_scope.copy()
+            atom_features = atom_features.copy()
+            bond_features = bond_features.copy()
+            a_graph = a_graph.copy()
+            b_graph = b_graph.copy()
+
             atom_offset = len(fnode)
             bond_offset = n_unique_bonds
             n_unique_bonds += int(bond_features.shape[0] / 2)              # This should be correct?
@@ -115,11 +122,11 @@ def get_graph_features(batch_graphs_and_features: List[Tuple], directed: bool = 
             fmess.append(bond_features)
 
             a_graph += edge_offset
-            a_graph[np.isinf(a_graph)] = 0              # resetting padding edge to point towards edge 0
+            a_graph[a_graph >= 999999999] = 0           # resetting padding edge to point towards edge 0
             agraph.append(a_graph)
 
             b_graph += edge_offset
-            b_graph[np.isinf(b_graph)] = 0              # resetting padding edge to point towards edge 0
+            b_graph[b_graph >= 999999999] = 0           # resetting padding edge to point towards edge 0
             bgraph.append(b_graph)
 
             edge_offset += bond_features.shape[0]

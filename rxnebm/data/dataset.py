@@ -853,18 +853,18 @@ class ReactionDatasetSMILES(Dataset):
 
             for mol_index in minibatch_mol_index:
                 start, end = self.a_scopes_indexes[mol_index]
-                a_scope = self.a_scopes[start:end].copy()
+                a_scope = self.a_scopes[start:end]
 
                 start, end = self.b_scopes_indexes[mol_index]
-                b_scope = self.b_scopes[start:end].copy()
+                b_scope = self.b_scopes[start:end]
 
                 start, end = self.a_features_indexes[mol_index]
-                a_feature = self.a_features[start:end].copy()
-                a_graph = self.a_graphs[start:end].copy()
+                a_feature = self.a_features[start:end]
+                a_graph = self.a_graphs[start:end]
 
                 start, end = self.b_features_indexes[mol_index]
-                b_feature = self.b_features[start:end].copy()
-                b_graph = self.b_graphs[start:end].copy()
+                b_feature = self.b_features[start:end]
+                b_graph = self.b_graphs[start:end]
 
                 graph_feature = (a_scope, b_scope, a_feature, b_feature, a_graph, b_graph)
 
