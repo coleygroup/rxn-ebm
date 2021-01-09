@@ -11,7 +11,7 @@ from datetime import datetime
 from rdkit import RDLogger
 from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_utils
-from rxnebm.model import FF, G2E, S2E
+from rxnebm.model import FF, G2E, S2E, model_utils
 from rxnebm.model.FF_args import FF_args
 from rxnebm.model.G2E_args import G2E_args
 from rxnebm.model.S2E_args import S2E_args
@@ -76,6 +76,7 @@ def parse_args():
     parser.add_argument("--fp_type", help="fp type", type=str, default="count")
     # training params
     parser.add_argument("--batch_size", help="batch_size", type=int, default=128)
+    parser.add_argument("--batch_size_eval", help="batch_size", type=int, default=128)
     parser.add_argument("--minibatch_size", help="minibatch size for smiles (training), i.e. max # of proposal rxn_smi allowed per rxn", 
                         type=int, default=32)
     parser.add_argument("--minibatch_eval", help="minibatch size for smiles (valid/test), i.e. max # of proposal rxn_smi allowed per rxn, for finetuning", 
@@ -128,6 +129,12 @@ def parse_args():
                         help="Whether to drop last minibatch in train/valid/test dataloader",
                         action="store_true")
     # model params, for now just use model_args with different models
+    # G2E args
+    parser.add_argument("--encoder_hidden_size", help="MPN encoder_hidden_size", type=int, default=256)
+    parser.add_argument("--encoder_depth", help="MPN encoder_depth", type=int, default=3)
+    parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+')
+    parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
+    parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
 
     return parser.parse_args()
 
@@ -154,6 +161,8 @@ def args_to_dict(args, args_type: str) -> dict:
 
 def main(args):
     # torch.multiprocessing.set_start_method('fork') # to allow num_workers > 0, but error: collate_fn can't be pickled
+    model_utils.seed_everything(args.random_seed) # seed before even initializing model
+    
     """train EBM from scratch"""
     logging.info("Logging args")
     logging.info(vars(args))
@@ -214,7 +223,10 @@ def main(args):
 
         model = saved_model
         model_args = saved_stats["model_args"]
-        begin_epoch = (args.load_epoch + 1) or (saved_stats["best_epoch"] + 1)
+        if args.load_epoch is not None:
+            begin_epoch = args.load_epoch + 1
+        else:
+            begin_epoch = saved_stats["best_epoch"] + 1
 
         if args.vocab_file is not None:
             vocab = expt_utils.load_or_create_vocab(args)
@@ -226,8 +238,28 @@ def main(args):
             model = FF.FeedforwardSingle(**model_args, **fp_args)
 
         elif args.model_name == "GraphEBM":                 # Graph to energy
-            model_args = G2E_args
+            model_args = {
+                "encoder_hidden_size": args.encoder_hidden_size,
+                "encoder_depth": args.encoder_depth
+            }
             model = G2E.G2E(args, **model_args)
+        
+        elif args.model_name == "GraphEBM_sep":                 # Graph to energy
+            model_args = {
+                "encoder_hidden_size": args.encoder_hidden_size,
+                "encoder_depth": args.encoder_depth
+            }
+            model = G2E.G2E_sep(args, **model_args)
+            
+        elif args.model_name == "GraphEBM_projBoth":        # Graph to energy, project both reactants & products
+            model_args = {
+                "encoder_hidden_size": args.encoder_hidden_size,
+                "encoder_depth": args.encoder_depth,
+                "proj_hidden_sizes": args.proj_hidden_sizes,
+                "proj_activation": args.proj_activation,
+                "proj_dropout": args.proj_dropout,
+            }
+            model = G2E.G2E_projBoth(args, **model_args)
 
         elif args.model_name == "TransformerEBM":           # Sequence to energy
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
@@ -287,9 +319,16 @@ def main(args):
             experiment.get_energies_and_loss(
                 phase=phase, save_energies=True, path_to_energies=args.path_to_energies)
 
+        # just print accuracies to compare experiments
         for phase in ["valid", "test"]: # "train", 
             logging.info(f"\nGetting {phase} accuracies")
-            for k in [1, 2, 3, 5, 10, 20, 50, 100]:
+            for k in [1, 3, 5, 10, 20, 50]:
+                experiment.get_topk_acc(phase=phase, k=k)
+
+        # full accuracies
+        for phase in ["valid", "test"]: # "train", 
+            logging.info(f"\nGetting {phase} accuracies")
+            for k in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200]:
                 experiment.get_topk_acc(phase=phase, k=k)
 
 
