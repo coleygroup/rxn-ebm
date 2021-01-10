@@ -44,6 +44,14 @@ urls_fns = [
     #  "retrosim_rxn_fps_valid.npz"),
     # ("https://drive.google.com/uc?id=1JzbyLC74N8r3O6ULGC26t_hmFfLZ3FTe",
     #  "retrosim_rxn_fps_test.npz")
+    # # GLN CSV files
+    # ("https://drive.google.com/uc?id=1MTyyZZH0lEy-P83IyNSRcvXGqCzdlnVA",
+    # "GLN_200topk_200maxk_200beam_test.csv"),
+    # ("https://drive.google.com/uc?id=1snuxs43NVavVtnyt600rHyX5hlc7X_IC",
+    # "GLN_200topk_200maxk_200beam_train.csv"),
+    # ("https://drive.google.com/uc?id=17zDvlXpBYAoOf8Qo3ujIPhg93NZu83-I",
+    # "GLN_200topk_200maxk_200beam_valid.csv"),
+
 ]
 output = "./rxnebm/data/cleaned_data/"
 

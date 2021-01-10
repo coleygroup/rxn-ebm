@@ -129,6 +129,8 @@ def load_model_opt_and_stats(
             saved_model = G2E.G2E(args, **saved_stats["model_args"])
         elif model_name == "GraphEBM_projBoth":
             saved_model = G2E.G2E_projBoth(args, **saved_stats["model_args"])
+        elif model_name == "GraphEBM_sep_projBoth_FFout":
+            saved_model = G2E.G2E_sep_projBoth_FFout(args, **saved_stats["model_args"])
         elif model_name == "GraphEBM_sep":
             saved_model = G2E.G2E_sep(args, **saved_stats["model_args"])
         elif model_name == "TransformerEBM":
@@ -152,9 +154,9 @@ def load_model_opt_and_stats(
         saved_model.load_state_dict(checkpoint["state_dict"])
         saved_optimizer.load_state_dict(checkpoint["optimizer"])
 
-        if (
-            torch.cuda.is_available()
-        ):  # move optimizer tensors to gpu  https://github.com/pytorch/pytorch/issues/2830
+        if torch.cuda.is_available() and not args.ddp:  
+            # move optimizer tensors to gpu  https://github.com/pytorch/pytorch/issues/2830
+            # if ddp, need to move within each process
             for state in saved_optimizer.state.values():
                 for k, v in state.items():
                     if torch.is_tensor(v):

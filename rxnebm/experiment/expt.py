@@ -202,6 +202,7 @@ class Experiment:
         self.train_args = {
             "epochs": self.epochs,
             "batch_size": self.batch_size,
+            "batch_size_eval": self.args.batch_size_eval,
             "learning_rate": self.learning_rate,
             "lr_min": self.args.lr_min,
             "lr_scheduler": self.lr_scheduler_name,
@@ -480,7 +481,7 @@ class Experiment:
         if onthefly and self.args.do_compute_graph_feat: # don't load test data yet, to save memory
             self.train_loader, self.train_size = self._get_smi_dl(phase="train", shuffle=True)
             self.val_loader, self.val_size = self._get_smi_dl(phase="valid", shuffle=False)
-            self.test_loader, self.test_size = None, None # self._get_smi_dl(phase="test", shuffle=False)
+            self.test_loader, self.test_size = None, None
         elif onthefly:
             self.train_loader, self.train_size = self._get_smi_dl(phase="train", shuffle=True)
             self.val_loader, self.val_size = self._get_smi_dl(phase="valid", shuffle=False)
@@ -592,6 +593,7 @@ class Experiment:
     def train(self):
         self.start = time.time()  # timeit.default_timer()
         self.to_break = 0
+        self.current_lr = self.learning_rate # initialize lr tracker
         for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
             self.model.train()
             train_loss, train_correct_preds = 0, defaultdict(int)
@@ -784,6 +786,12 @@ class Experiment:
                 elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
                     self.lr_scheduler.step(self.val_topk_accs[1][-1])
 
+                if self.optimizer.param_groups[0]['lr'] < self.current_lr:
+                    # reset early stop counter
+                    print('Reset early stopping patience counter')
+                    self.wait = 0
+                self.current_lr = self.optimizer.param_groups[0]['lr']
+
             if 5 in self.train_topk_accs:
                 epoch_top5_train_acc = self.train_topk_accs[5][-1]
                 epoch_top5_val_acc = self.val_topk_accs[5][-1]
@@ -855,11 +863,11 @@ class Experiment:
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
                     # (bcos nothing in the numerator, loss is undefined)
                     loss_numerator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
                         batch_true_ranks_valid
                     ]
                     loss_denominator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
                         :
                     ]
                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
@@ -872,7 +880,6 @@ class Experiment:
 
                         if k == 1:
                             running_top1_acc = test_correct_preds[k] / epoch_test_size
-                            # batch_top1_acc = batch_correct_preds / test_batch_size
                             if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                 try:
                                     for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
@@ -897,10 +904,8 @@ class Experiment:
                                     logging.info('\nIndex out of range (last minibatch)')
                         elif k == 5:
                             running_top5_acc = test_correct_preds[k] / epoch_test_size
-                            # batch_top5_acc = batch_correct_preds / test_batch_size
                         elif k == 10:
                             running_top10_acc = test_correct_preds[k] / epoch_test_size
-                            # batch_top10_acc = batch_correct_preds / test_batch_size
 
                 else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                     batch_true_ranks = 0
@@ -914,19 +919,14 @@ class Experiment:
 
                         if k == 1:
                             running_top1_acc = test_correct_preds[k] / epoch_test_size
-                            # batch_top1_acc = batch_correct_preds / test_batch_size
                         elif k == 5:
                             running_top5_acc = test_correct_preds[k] / epoch_test_size
-                            # batch_top5_acc = batch_correct_preds / test_batch_size
                         elif k == 10:
                             running_top10_acc = test_correct_preds[k] / epoch_test_size
-                            # batch_top10_acc = batch_correct_preds / test_batch_size
                 if 5 not in self.k_to_calc:
                     running_top5_acc = np.nan
-                    # batch_top5_acc = np.nan
                 if 10 not in self.k_to_calc:
                     running_top10_acc = np.nan
-                    # batch_top10_acc = np.nan 
                 test_loss += batch_loss
                 test_loader.set_description(f"testing...loss={test_loss / epoch_test_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
                 test_loader.refresh()
