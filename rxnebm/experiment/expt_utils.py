@@ -127,13 +127,19 @@ def load_model_opt_and_stats(
             saved_model = FF.FeedforwardTriple3indiv3prod1cos(**saved_stats["model_args"], **saved_stats["fp_args"])
         elif model_name == "GraphEBM":
             saved_model = G2E.G2E(args, **saved_stats["model_args"])
+        elif model_name == "GraphEBM_projBoth":
+            saved_model = G2E.G2E_projBoth(args, **saved_stats["model_args"])
+        elif model_name == "GraphEBM_sep_projBoth_FFout":
+            saved_model = G2E.G2E_sep_projBoth_FFout(args, **saved_stats["model_args"])
+        elif model_name == "GraphEBM_sep":
+            saved_model = G2E.G2E_sep(args, **saved_stats["model_args"])
         elif model_name == "TransformerEBM":
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
             vocab = load_or_create_vocab(args)
             saved_model = S2E.S2E(args, vocab, **saved_stats["model_args"])
         else:
             raise ValueError("Only FeedforwardSingle, FeedforwardTriple3indiv3prod1cos, "
-                             "GraphEBM and TransformerEBM are supported currently!")
+                             "GraphEBM, GraphEBM_projBoth and TransformerEBM are supported currently!")
 
         # override bug in name of optimizer when saving checkpoint
         saved_stats["train_args"]["optimizer"] = model_utils.get_optimizer(optimizer_name)
@@ -148,9 +154,9 @@ def load_model_opt_and_stats(
         saved_model.load_state_dict(checkpoint["state_dict"])
         saved_optimizer.load_state_dict(checkpoint["optimizer"])
 
-        if (
-            torch.cuda.is_available()
-        ):  # move optimizer tensors to gpu  https://github.com/pytorch/pytorch/issues/2830
+        if torch.cuda.is_available() and not args.ddp:  
+            # move optimizer tensors to gpu  https://github.com/pytorch/pytorch/issues/2830
+            # if ddp, need to move within each process
             for state in saved_optimizer.state.values():
                 for k, v in state.items():
                     if torch.is_tensor(v):

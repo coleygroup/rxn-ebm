@@ -4,14 +4,18 @@ import os
 import sys
 import torch
 import torch.nn as nn
+import torch.distributed as dist
+import torch.multiprocessing as mp
 import gc
 gc.enable() 
 
-from datetime import datetime
+from datetime import datetime, date
 from rdkit import RDLogger
+from typing import Optional, Dict, List, Union
+
 from rxnebm.data import dataset
-from rxnebm.experiment import expt, expt_utils
-from rxnebm.model import FF, G2E, S2E
+from rxnebm.experiment import expt, expt_dist, expt_utils
+from rxnebm.model import FF, G2E, S2E, model_utils
 from rxnebm.model.FF_args import FF_args
 from rxnebm.model.G2E_args import G2E_args
 from rxnebm.model.S2E_args import S2E_args
@@ -30,12 +34,21 @@ def parse_args():
     parser.add_argument("--do_compute_graph_feat", help="whether to compute graph features", action="store_true")
     parser.add_argument("--onthefly", help="whether to do on-the-fly computation", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
-    parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default="02_11_2020")
+    parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default=date.today().strftime("%d_%m_%Y"))
     parser.add_argument("--load_epoch", help="epoch to load from", type=int, default=None)
     parser.add_argument("--expt_name", help="experiment name", type=str, default="")
     parser.add_argument("--old_expt_name", help="old experiment name", type=str, default="")
     parser.add_argument("--checkpoint_folder", help="checkpoint folder",
                         type=str, default=expt_utils.setup_paths("LOCAL"))
+    # distributed arguments
+    parser.add_argument("--dataparallel", help="whether to do dataparallel training", action="store_true")
+    parser.add_argument("--ddp", help="whether to do DDP training", action="store_true")
+    parser.add_argument('-n', '--nodes', default=1, type=int)
+    parser.add_argument('-g', '--gpus', default=1, type=int,
+                        help='number of gpus per node')
+    parser.add_argument('-nr', '--nr', default=0, type=int,
+                        help='ranking within the nodes')
+    parser.add_argument("--local_rank", type=int) # output by torch.distributed.launch
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--mol_smi_filename", help="do not change", type=str,
@@ -76,6 +89,7 @@ def parse_args():
     parser.add_argument("--fp_type", help="fp type", type=str, default="count")
     # training params
     parser.add_argument("--batch_size", help="batch_size", type=int, default=128)
+    parser.add_argument("--batch_size_eval", help="batch_size", type=int, default=128)
     parser.add_argument("--minibatch_size", help="minibatch size for smiles (training), i.e. max # of proposal rxn_smi allowed per rxn", 
                         type=int, default=32)
     parser.add_argument("--minibatch_eval", help="minibatch size for smiles (valid/test), i.e. max # of proposal rxn_smi allowed per rxn, for finetuning", 
@@ -128,6 +142,12 @@ def parse_args():
                         help="Whether to drop last minibatch in train/valid/test dataloader",
                         action="store_true")
     # model params, for now just use model_args with different models
+    # G2E args
+    parser.add_argument("--encoder_hidden_size", help="MPN encoder_hidden_size", type=int, default=256)
+    parser.add_argument("--encoder_depth", help="MPN encoder_depth", type=int, default=3)
+    parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+')
+    parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
+    parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
 
     return parser.parse_args()
 
@@ -151,9 +171,81 @@ def args_to_dict(args, args_type: str) -> dict:
 
     return parsed_dict
 
+def main_dist(
+        gpu,
+        args,
+        model,
+        model_name,
+        model_args: dict,
+        augmentations: dict,
+        onthefly: Optional[bool] = False,
+        debug: Optional[bool] = True,
+        dataparallel: Optional[bool] = False,
+        root: Optional[Union[str, bytes, os.PathLike]] = None,
+        load_checkpoint: Optional[bool] = False,
+        saved_optimizer: Optional[torch.optim.Optimizer] = None,
+        saved_stats: Optional[dict] = None,
+        begin_epoch: Optional[int] = None,
+        vocab: Dict[str, int] = None
+    ):
+    print('Initiating process group')
+    # https://github.com/yangkky/distributed_tutorial/blob/master/ddp_tutorial.md
+    rank = args.nr * args.gpus + gpu
+    dist.init_process_group(
+        backend='nccl',
+        init_method='tcp://127.0.0.1:12345', # for single-node, multi-GPU training # 'env://',
+        world_size=args.world_size,
+        rank=rank
+    )
+
+    print("Setting up DDP experiment")
+    experiment = expt_dist.Experiment(
+        gpu=gpu,
+        args=args,
+        model=model,
+        model_name=args.model_name,
+        model_args=model_args,
+        augmentations=augmentations,
+        onthefly=args.onthefly,
+        load_checkpoint=args.load_checkpoint,
+        dataparallel=False,
+        saved_optimizer=saved_optimizer,
+        saved_stats=saved_stats,
+        begin_epoch=begin_epoch,
+        debug=True,
+        vocab=vocab,
+    )
+
+    if args.do_pretrain:
+        logging.info("Start pretraining")
+        experiment.train_distributed()
+
+    if args.do_finetune:
+        assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
+        logging.info("Start finetuning")
+        experiment.train_distributed()
+
+    if args.do_test:
+        logging.info("Start testing")
+        if args.do_compute_graph_feat and experiment.train_loader is not None:
+            del experiment.train_loader # free up memory
+            gc.collect()
+        experiment.test_distributed()
+
+    if args.do_get_energies_and_acc and gpu == 0:
+        # reload best checkpoint & use just 1 GPU to run
+        args.ddp = False
+        args.old_expt_name = args.expt_name
+        args.load_checkpoint = True
+        args.do_pretrain = False
+        args.do_finetune = False
+        args.do_test = False
+
+        main(args)
 
 def main(args):
-    # torch.multiprocessing.set_start_method('fork') # to allow num_workers > 0, but error: collate_fn can't be pickled
+    model_utils.seed_everything(args.random_seed) # seed before even initializing model
+    
     """train EBM from scratch"""
     logging.info("Logging args")
     logging.info(vars(args))
@@ -190,12 +282,6 @@ def main(args):
     '''
 
     vocab = {}
-    if torch.cuda.device_count() > 1:
-        logging.info(f'Using {torch.cuda.device_count()} GPUs!')
-        distributed = True
-    else:
-        distributed = False
-
     if args.load_checkpoint:
         logging.info("Loading from checkpoint")
         old_checkpoint_folder = expt_utils.setup_paths(
@@ -214,7 +300,10 @@ def main(args):
 
         model = saved_model
         model_args = saved_stats["model_args"]
-        begin_epoch = (args.load_epoch + 1) or (saved_stats["best_epoch"] + 1)
+        if args.load_epoch is not None:
+            begin_epoch = args.load_epoch + 1
+        else:
+            begin_epoch = saved_stats["best_epoch"] + 1
 
         if args.vocab_file is not None:
             vocab = expt_utils.load_or_create_vocab(args)
@@ -226,8 +315,38 @@ def main(args):
             model = FF.FeedforwardSingle(**model_args, **fp_args)
 
         elif args.model_name == "GraphEBM":                 # Graph to energy
-            model_args = G2E_args
+            model_args = {
+                "encoder_hidden_size": args.encoder_hidden_size,
+                "encoder_depth": args.encoder_depth
+            }
             model = G2E.G2E(args, **model_args)
+        
+        elif args.model_name == "GraphEBM_sep":                 # Graph to energy, separate encoders
+            model_args = {
+                "encoder_hidden_size": args.encoder_hidden_size,
+                "encoder_depth": args.encoder_depth
+            }
+            model = G2E.G2E_sep(args, **model_args)
+            
+        elif args.model_name == "GraphEBM_projBoth":        # Graph to energy, project both reactants & products w/ dot product output
+            model_args = {
+                "encoder_hidden_size": args.encoder_hidden_size,
+                "encoder_depth": args.encoder_depth,
+                "proj_hidden_sizes": args.proj_hidden_sizes,
+                "proj_activation": args.proj_activation,
+                "proj_dropout": args.proj_dropout,
+            }
+            model = G2E.G2E_projBoth(args, **model_args)
+        
+        elif args.model_name == "GraphEBM_sep_projBoth_FFout":        # Graph to energy, separate encoders + projections, feedforward output
+            model_args = {
+                "encoder_hidden_size": args.encoder_hidden_size,
+                "encoder_depth": args.encoder_depth,
+                "proj_hidden_sizes": args.proj_hidden_sizes,
+                "proj_activation": args.proj_activation,
+                "proj_dropout": args.proj_dropout,
+            }
+            model = G2E.G2E_sep_projBoth_FFout(args, **model_args)
 
         elif args.model_name == "TransformerEBM":           # Sequence to energy
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
@@ -245,52 +364,90 @@ def main(args):
     logging.info(f"\nModel #Params: {sum([x.nelement() for x in model.parameters()]) / 1000} k")
     logging.info(f'{model_args}')
     
-    if distributed:
-        model = nn.DataParallel(model)
+    if args.ddp:
+        args.world_size = args.gpus * args.nodes
+        # logging.info(os.environ['MASTER_ADDR'])
+        # logging.info(os.environ['MASTER_PORT'])
+        # os.environ['MASTER_ADDR'] = '10.1.10.107' # os.environ['SLURM_SRUN_COMM_HOST'] #'10.57.23.164'
+        # os.environ['MASTER_PORT'] = '8888' # os.environ['SLURM_SRUN_COMM_PORT'] # '8888'
+        mp.spawn(main_dist,
+            nprocs=args.gpus, 
+            args=(
+                args,
+                model,
+                args.model_name,
+                model_args,
+                augmentations,
+                args.onthefly,
+                True, # debug
+                False, # dataparallel
+                None, # root
+                args.load_checkpoint,
+                saved_optimizer,
+                saved_stats,
+                begin_epoch,
+                vocab
+                )
+            )
 
-    logging.info("Setting up experiment")
-    experiment = expt.Experiment(
-        args=args,
-        model=model,
-        model_name=args.model_name,
-        model_args=model_args,
-        augmentations=augmentations,
-        onthefly=args.onthefly,
-        load_checkpoint=args.load_checkpoint,
-        saved_optimizer=saved_optimizer,
-        saved_stats=saved_stats,
-        saved_stats_filename=saved_stats_filename,
-        begin_epoch=begin_epoch,
-        debug=True,
-        vocab=vocab,
-        distributed=distributed
-    )
+    else:
+        if torch.cuda.device_count() > 1 and args.dataparallel:
+            logging.info(f'Using {torch.cuda.device_count()} GPUs!')
+            dataparallel = True
+            model = nn.DataParallel(model)
+        else:
+            logging.info(f'Using {torch.cuda.device_count()} GPUs!')
+            dataparallel = False
 
-    if args.do_pretrain:
-        logging.info("Start pretraining")
-        experiment.train()
+        logging.info("Setting up experiment")
+        experiment = expt.Experiment(
+            args=args,
+            model=model,
+            model_name=args.model_name,
+            model_args=model_args,
+            augmentations=augmentations,
+            onthefly=args.onthefly,
+            load_checkpoint=args.load_checkpoint,
+            saved_optimizer=saved_optimizer,
+            saved_stats=saved_stats,
+            saved_stats_filename=saved_stats_filename,
+            begin_epoch=begin_epoch,
+            debug=True,
+            vocab=vocab,
+        )
 
-    if args.do_finetune:
-        assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
-        logging.info("Start finetuning")
-        experiment.train()
+        if args.do_pretrain:
+            logging.info("Start pretraining")
+            experiment.train()
 
-    if args.do_test:
-        logging.info("Start testing")
-        if args.do_compute_graph_feat and experiment.train_loader is not None:
-            del experiment.train_loader # free up memory
-            gc.collect()
-        experiment.test()
+        if args.do_finetune:
+            assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
+            logging.info("Start finetuning")
+            experiment.train()
 
-    if args.do_get_energies_and_acc:
-        for phase in ["valid", "test"]: # "train", 
-            experiment.get_energies_and_loss(
-                phase=phase, save_energies=True, path_to_energies=args.path_to_energies)
+        if args.do_test:
+            logging.info("Start testing")
+            if args.do_compute_graph_feat and experiment.train_loader is not None:
+                del experiment.train_loader # free up memory
+                gc.collect()
+            experiment.test()
 
-        for phase in ["valid", "test"]: # "train", 
-            logging.info(f"\nGetting {phase} accuracies")
-            for k in [1, 2, 3, 5, 10, 20, 50, 100]:
-                experiment.get_topk_acc(phase=phase, k=k)
+        if args.do_get_energies_and_acc:
+            for phase in ["valid", "test"]: # "train", 
+                experiment.get_energies_and_loss(
+                    phase=phase, save_energies=True, path_to_energies=args.path_to_energies)
+
+            # just print accuracies to compare experiments
+            for phase in ["valid", "test"]: # "train", 
+                logging.info(f"\nGetting {phase} accuracies")
+                for k in [1, 3, 5, 10, 20, 50]:
+                    experiment.get_topk_acc(phase=phase, k=k)
+
+            # full accuracies
+            for phase in ["valid", "test"]: # "train", 
+                logging.info(f"\nGetting {phase} accuracies")
+                for k in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200]:
+                    experiment.get_topk_acc(phase=phase, k=k)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import argparse
 import logging
 import traceback
 import os
@@ -11,6 +12,7 @@ import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm 
 
@@ -38,22 +40,21 @@ class Experiment:
 
     def __init__(
         self,
-        args,
+        args: argparse.Namespace,
         model: nn.Module,
         model_name: str,
         model_args: dict,
         augmentations: dict,
         onthefly: Optional[bool] = False,
-        debug: Optional[bool] = True, 
-        device: Optional[str] = None,
-        distributed: Optional[bool] = False,
+        debug: Optional[bool] = True,
+        gpu: Optional[str] = None, # https://github.com/yangkky/distributed_tutorial/blob/master/ddp_tutorial.md
+        dataparallel: Optional[bool] = False,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
         load_checkpoint: Optional[bool] = False,
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
         saved_stats: Optional[dict] = None,
         begin_epoch: Optional[int] = None,
-        vocab: Dict[str, int] = None,
-        **kwargs
+        vocab: Dict[str, int] = None
     ):
         self.args = args
         self.debug = debug
@@ -98,15 +99,32 @@ class Experiment:
         logging.info(f"\nInitialising experiment: {self.expt_name}")
         logging.info(f"Augmentations: {self.augmentations}")
 
-        if device is not None:
-            self.device = device
+        if gpu is not None: # doing DistributedDataParallel training
+            # logging.info('Initiating process group')
+            # # https://github.com/yangkky/distributed_tutorial/blob/master/ddp_tutorial.md
+            # rank = args.nr * args.gpus + gpu
+            # dist.init_process_group(
+            #     backend='nccl',
+            #     init_method='env://',
+            #     world_size=args.world_size,
+            #     rank=rank
+            # )
+            rank = args.nr * args.gpus + gpu
+            torch.cuda.set_device(gpu)
+            model.cuda(gpu)
+            model = nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
+            self.gpu = gpu
+            self.rank = rank
+            self.device = torch.cuda.current_device()
         else:
             self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        model = model.to(self.device)
+            model = model.to(self.device)
+            self.gpu = None
+            self.rank = None
         self.model = model
         self.model_name = model_name # self.model.model_repr
         self.model_args = model_args
-        self.distributed = distributed  # affects how checkpoint is saved & how weights should be loaded
+        self.dataparallel = dataparallel  # affects how checkpoint is saved & how weights should be loaded
 
         if saved_optimizer is not None:
             self.optimizer_name = str(self.args.optimizer).split(' ')[0]
@@ -133,7 +151,6 @@ class Experiment:
         # take into account original probs/scores from retro models
         self.prob_filenames = defaultdict(str)
         if self.args.prob_file_prefix: # will be loaded in Dataset file
-            logging.info(f'Loading probs file {self.args.prob_file_prefix}')
             for phase in ['train', 'valid', 'test']:
                 self.prob_filenames[phase] = self.args.prob_file_prefix + f"_{phase}.npy"
 
@@ -223,7 +240,7 @@ class Experiment:
             "expt_name": self.expt_name,
             "device": self.device,
             "model_name": self.model_name,
-            "distributed": self.distributed, 
+            "dataparallel": self.dataparallel, 
             "optimizer": self.optimizer_name, 
         }
 
@@ -237,6 +254,10 @@ class Experiment:
 
         if saved_optimizer is None:
             raise ValueError("load_checkpoint requires saved_optimizer!")
+        for state in saved_optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.cuda(self.gpu)
         self.optimizer = saved_optimizer  # load optimizer w/ state dict from checkpoint
         if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
@@ -388,14 +409,23 @@ class Experiment:
             augmented_data=augmented_data,
             prob_filename=self.prob_filenames['train']
         )
+        if self.gpu is not None: # train_sampler is needed in self.train_distributed() so we have to save it as an attribute
+            self.train_sampler = torch.utils.data.distributed.DistributedSampler(
+                train_dataset,
+                num_replicas=self.args.world_size,
+                rank=self.rank
+            )
+        else:
+            self.train_sampler = None
         self.train_loader = DataLoader(
             train_dataset,
             self.batch_size,
             num_workers=self.num_workers,
             worker_init_fn=worker_init_fn,
-            shuffle=True,
+            shuffle=True if train_sampler is None else False,
             pin_memory=self.args.pin_memory,
-            drop_last=self.args.drop_last
+            drop_last=self.args.drop_last,
+            sampler=self.train_sampler
         )
         self.train_size = len(train_dataset)
 
@@ -408,6 +438,14 @@ class Experiment:
             augmented_data=augmented_data,
             prob_filename=self.prob_filenames['valid']
         )
+        if self.gpu is not None:
+            val_sampler = torch.utils.data.distributed.DistributedSampler(
+                val_dataset,
+                num_replicas=self.args.world_size,
+                rank=self.rank
+            )
+        else:
+            val_sampler = None
         self.val_loader = DataLoader(
             val_dataset,
             self.args.batch_size_eval,
@@ -415,7 +453,8 @@ class Experiment:
             worker_init_fn=worker_init_fn,
             shuffle=False,
             pin_memory=self.args.pin_memory,
-            drop_last=self.args.drop_last
+            drop_last=self.args.drop_last,
+            sampler=val_sampler
         )
         self.val_size = len(val_dataset)
 
@@ -428,6 +467,14 @@ class Experiment:
             augmented_data=augmented_data,
             prob_filename=self.prob_filenames['test']
         )
+        if self.gpu is not None:
+            test_sampler = torch.utils.data.distributed.DistributedSampler(
+                test_dataset,
+                num_replicas=self.args.world_size,
+                rank=self.rank
+            )
+        else:
+            test_sampler = None
         self.test_loader = DataLoader(
             test_dataset,
             self.args.batch_size_eval,
@@ -435,7 +482,8 @@ class Experiment:
             worker_init_fn=worker_init_fn,
             shuffle=False,
             pin_memory=self.args.pin_memory,
-            drop_last=self.args.drop_last
+            drop_last=self.args.drop_last,
+            sampler=test_sampler
         )
         self.test_size = len(test_dataset)
         del train_dataset, val_dataset, test_dataset
@@ -460,6 +508,16 @@ class Experiment:
         else:
             collate_fn = dataset_utils.seq_collate_fn_builder(
                 self.device, self.vocab, self.args.max_seq_len, debug=False)
+        
+        if self.gpu is not None:
+            _sampler = torch.utils.data.distributed.DistributedSampler(
+                _data,
+                num_replicas=self.args.world_size,
+                rank=self.rank
+            )
+            shuffle = False
+        else:
+            _sampler = None
 
         _loader = DataLoader(
             _data,
@@ -468,24 +526,25 @@ class Experiment:
             shuffle=shuffle,
             pin_memory=self.args.pin_memory,
             collate_fn=collate_fn,
-            drop_last=self.args.drop_last
+            drop_last=self.args.drop_last,
+            sampler=_sampler
         )
 
         _size = len(_data)
         del _data
 
-        return _loader, _size
+        return _loader, _size, _sampler
 
     def _init_smi_dataloaders(self, onthefly: bool):
         logging.info("Initialising SMILES dataloaders...")
         if onthefly and self.args.do_compute_graph_feat: # don't load test data yet, to save memory
-            self.train_loader, self.train_size = self._get_smi_dl(phase="train", shuffle=True)
-            self.val_loader, self.val_size = self._get_smi_dl(phase="valid", shuffle=False)
-            self.test_loader, self.test_size = None, None
+            self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
+            self.val_loader, self.val_size, _ = self._get_smi_dl(phase="valid", shuffle=False)
+            self.test_loader, self.test_size = None, None # self._get_smi_dl(phase="test", shuffle=False)
         elif onthefly:
-            self.train_loader, self.train_size = self._get_smi_dl(phase="train", shuffle=True)
-            self.val_loader, self.val_size = self._get_smi_dl(phase="valid", shuffle=False)
-            self.test_loader, self.test_size = self._get_smi_dl(phase="test", shuffle=False)
+            self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
+            self.val_loader, self.val_size, _ = self._get_smi_dl(phase="valid", shuffle=False)
+            self.test_loader, self.test_size, _ = self._get_smi_dl(phase="test", shuffle=False)
         else:
             raise NotImplementedError('Only onthefly available for smi loader')
 
@@ -550,7 +609,7 @@ class Experiment:
         torch.save(self.stats, self.stats_filename)
 
     def _checkpoint_model_and_opt(self, current_epoch: int):
-        if self.distributed:
+        if self.dataparallel or self.gpu is not None:
             model_state_dict = self.model.module.state_dict()
         else:
             model_state_dict = self.model.state_dict()
@@ -584,32 +643,35 @@ class Experiment:
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
-            return loss.item(), energies.cpu().detach() 
+            return loss.item(), energies.cpu().detach()
         else:
             # if fine-tuning: validation/testing, cannot calculate loss naively
             # need the true_ranks of precursors from retrosynthesis models
-            return energies.cpu().detach() 
- 
-    def train(self):
+            return energies.cpu().detach()
+
+    def train_distributed(self):
+        torch.cuda.synchronize()
         self.start = time.time()  # timeit.default_timer()
         self.to_break = 0
         self.current_lr = self.learning_rate # initialize lr tracker
         for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
+            self.train_sampler.set_epoch(epoch)
             self.model.train()
             train_loss, train_correct_preds = 0, defaultdict(int)
             epoch_train_size = 0
-            train_loader = tqdm(self.train_loader, desc='training...')
+            if self.rank == 0:
+                train_loader = tqdm(self.train_loader, desc='training...')
+            else:
+                train_loader = self.train_loader
             for i, batch in enumerate(train_loader):
-                # if i > 100: break
-                #     raise RuntimeError('STOP DEBUG')
                 batch_data = batch[0]
                 if not isinstance(batch_data, tuple):
-                    batch_data = batch_data.to(self.device)
+                    batch_data = batch_data.cuda(non_blocking=True)
                 if self.model_name == 'TransformerEBM':
                     batch_data = (batch_data, 'train')
-                batch_mask = batch[1].to(self.device)
+                batch_mask = batch[1].cuda(non_blocking=True)
                 if self.args.prob_file_prefix:
-                    batch_probs = batch[3].to(self.device)
+                    batch_probs = batch[3].cuda(non_blocking=True)
                     batch_loss, batch_energies = self._one_batch(
                         batch_data, batch_mask, batch_probs, backprop=True
                     )
@@ -617,10 +679,17 @@ class Experiment:
                     batch_loss, batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=True
                     )
+                batch_loss = torch.tensor([batch_loss]).cuda(self.gpu)
+                dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
+                batch_loss = batch_loss.item()
                 train_loss += batch_loss
-                train_batch_size = batch_energies.shape[0]
-                epoch_train_size += train_batch_size
 
+                train_batch_size = batch_energies.shape[0]
+                train_batch_size = torch.tensor([train_batch_size]).cuda(self.gpu)
+                dist.all_reduce(train_batch_size, dist.ReduceOp.SUM)
+                train_batch_size = train_batch_size.item()
+                epoch_train_size += train_batch_size
+                
                 if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
                     self.lr_scheduler.step(epoch + i / self.train_size - self.args.lr_scheduler_epoch_offset)
                 elif self.lr_scheduler_name == 'OneCycleLR':
@@ -628,10 +697,15 @@ class Experiment:
                     
                 for k in self.k_to_calc: # various top-k accuracies
                     # index with lowest energy is what the model deems to be the most feasible rxn 
-                    batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
+                    batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
                     # for training, true rxn is always at 0th-index 
                     batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0]
+                    batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu)
+                    dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+                    batch_correct_preds = batch_correct_preds.item()
+
                     train_correct_preds[k] += batch_correct_preds
+                    dist.barrier()
                     if k == 1:
                         running_top1_acc = train_correct_preds[k] / epoch_train_size
                     elif k == 5:
@@ -639,32 +713,36 @@ class Experiment:
                     elif k == 10:
                         running_top10_acc = train_correct_preds[k] / epoch_train_size
                 if 5 not in self.k_to_calc:
-                    running_top5_acc = np.nan 
+                    running_top5_acc = np.nan
                 if 10 not in self.k_to_calc:
-                    running_top10_acc = np.nan 
-                train_loader.set_description(f"training...loss={train_loss/epoch_train_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
-                train_loader.refresh()
+                    running_top10_acc = np.nan
+                
+                if self.rank == 0:
+                    train_loader.set_description(f"training...loss={train_loss/epoch_train_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
+                    train_loader.refresh()
             
-            for k in self.k_to_calc:     
-                self.train_topk_accs[k].append(train_correct_preds[k] / epoch_train_size) # self.train_size ) 
-            self.train_losses.append(train_loss / epoch_train_size) # self.train_size)
+            for k in self.k_to_calc:
+                self.train_topk_accs[k].append(train_correct_preds[k] / epoch_train_size)
+            self.train_losses.append(train_loss / epoch_train_size)
 
             # validation
             self.model.eval()
-            with torch.no_grad(): 
+            with torch.no_grad():
                 val_loss, val_correct_preds = 0, defaultdict(int)
-                val_loader = tqdm(self.val_loader, desc='validating...')
+                if self.rank == 0:
+                    val_loader = tqdm(self.val_loader, desc='validating...')
+                else:
+                    val_loader = self.val_loader
                 epoch_val_size = 0
                 for i, batch in enumerate(val_loader):
-                    # if i > 50: break
                     batch_data = batch[0]
                     if not isinstance(batch_data, tuple):
-                        batch_data = batch_data.to(self.device)
+                        batch_data = batch_data.cuda(non_blocking=True)
                     if self.model_name == 'TransformerEBM':
                         batch_data = (batch_data, 'valid')
-                    batch_mask = batch[1].to(self.device)
+                    batch_mask = batch[1].cuda(non_blocking=True)
                     if self.args.prob_file_prefix:
-                        batch_probs = batch[3].to(self.device)
+                        batch_probs = batch[3].cuda(non_blocking=True)
                         batch_energies = self._one_batch(
                             batch_data, batch_mask, batch_probs, backprop=False
                         )
@@ -673,6 +751,9 @@ class Experiment:
                             batch_data, batch_mask, backprop=False
                         )
                     val_batch_size = batch_energies.shape[0]
+                    val_batch_size = torch.tensor([val_batch_size]).cuda(self.gpu)
+                    dist.all_reduce(val_batch_size, dist.ReduceOp.SUM)
+                    val_batch_size = val_batch_size.item()
                     epoch_val_size += val_batch_size
 
                     # for validation/test data, true rxn may not be present!
@@ -682,7 +763,6 @@ class Experiment:
                         batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
                         batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
                         batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                        
                         # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
                         # (bcos nothing in the numerator, loss is undefined)
                         loss_numerator = batch_energies[
@@ -693,17 +773,21 @@ class Experiment:
                             np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
                             :
                         ]
-
                         batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
+
                         for k in self.k_to_calc:
                             # index with lowest energy is what the model deems to be the most feasible rxn
                             batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
                             batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
-                            val_correct_preds[k] += batch_correct_preds
+                            batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu)
+                            dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+                            batch_correct_preds = batch_correct_preds.item()
 
+                            val_correct_preds[k] += batch_correct_preds
+                            dist.barrier()
                             if k == 1:
                                 running_top1_acc = val_correct_preds[k] / epoch_val_size
-                                if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                                if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                     try:
                                         for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
                                             if j % (self.val_size // 5) == random.randint(0, 10):  # peek at a random sample of current batch to monitor training progress
@@ -716,15 +800,15 @@ class Experiment:
                                                 sample_cand_precs = self.proposals_data['valid'][batch_idx[sample_idx], 3:]
                                                 sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
                                                 sample_orig_prec = sample_cand_precs[0]
-                                                logging.info(f'\ntrue product:            {sample_true_prod}')
-                                                logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
-                                                logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
-                                                logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
+                                                print(f'\ntrue product:            {sample_true_prod}')
+                                                print(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
+                                                print(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
+                                                print(f'orig precursor (rank 0): {sample_orig_prec}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                                        logging.info("".join(tb_str))
-                                        logging.info('\nIndex out of range (last minibatch)')
+                                        print("".join(tb_str))
+                                        print('\nIndex out of range (last minibatch)')
                             elif k == 5:
                                 running_top5_acc = val_correct_preds[k] / epoch_val_size
                             elif k == 10:
@@ -737,8 +821,12 @@ class Experiment:
                         for k in self.k_to_calc:
                             batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
                             batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
+                            batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu)
+                            dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+                            batch_correct_preds = batch_correct_preds.item()
+                            
                             val_correct_preds[k] += batch_correct_preds
-
+                            dist.barrier()
                             if k == 1:
                                 running_top1_acc = val_correct_preds[k] / epoch_val_size
                             elif k == 5:
@@ -749,9 +837,15 @@ class Experiment:
                         running_top5_acc = np.nan
                     if 10 not in self.k_to_calc:
                         running_top10_acc = np.nan
+
+                    batch_loss = torch.tensor([batch_loss]).cuda(self.gpu)
+                    dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
+                    batch_loss = batch_loss.item()
                     val_loss += batch_loss
-                    val_loader.set_description(f"validating...loss={val_loss/epoch_val_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
-                    val_loader.refresh()
+
+                    if self.rank == 0:
+                        val_loader.set_description(f"validating...loss={val_loss/epoch_val_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
+                        val_loader.refresh()
                 
                 for k in self.k_to_calc:
                     self.val_topk_accs[k].append(val_correct_preds[k] / epoch_val_size)
@@ -762,7 +856,7 @@ class Experiment:
                 if self.val_losses[-1] < self.min_val_loss:
                     self.best_epoch = epoch
                     self.min_val_loss = self.val_losses[-1]
-                    if self.checkpoint: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                    if self.rank == 0 and self.checkpoint: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
                         self._checkpoint_model_and_opt(current_epoch=epoch)
             elif self.early_stop_criteria.split('_')[-1] == 'acc':
                 k = int(self.early_stop_criteria.split('_')[0][-1:])
@@ -770,22 +864,24 @@ class Experiment:
                 if val_acc_to_compare > self.max_val_acc:
                     self.best_epoch = epoch
                     self.max_val_acc = val_acc_to_compare
-                    if self.checkpoint: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                    if self.rank == 0 and self.checkpoint: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
                         self._checkpoint_model_and_opt(current_epoch=epoch)
             
+            dist.barrier()
+            torch.cuda.synchronize()
             self._update_stats()
             if self.early_stop:
                 self._check_earlystop(current_epoch=epoch)
                 if self.to_break:  # is it time to early stop?
                     break
 
-            if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one
-                logging.info('Called a step of ReduceLROnPlateau')
+            if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
+                print('\nCalled a step of ReduceLROnPlateau')
                 if self.args.lr_scheduler_criteria == 'loss':
                     self.lr_scheduler.step(self.val_losses[-1])
                 elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
                     self.lr_scheduler.step(self.val_topk_accs[1][-1])
-
+                
                 if self.optimizer.param_groups[0]['lr'] < self.current_lr:
                     # reset early stop counter
                     print('Reset early stopping patience counter')
@@ -804,21 +900,23 @@ class Experiment:
             else:
                 epoch_top10_train_acc = np.nan
                 epoch_top10_val_acc = np.nan
-            logging.info(
-                f"\nEnd of epoch: {epoch}, \
-                \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
-                \ntop-5 train acc: {epoch_top5_train_acc:.4f}, top-10 train acc: {epoch_top10_train_acc:.4f}, \
-                \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
-                \ntop-5 val acc: {epoch_top5_val_acc:.4f}, top-10 val acc: {epoch_top10_val_acc:.4f} \
-                \n"
-            )
-            if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < 1e-6:
-                logging.info('Stopping training as learning rate has dropped below 1e-6')
-                break 
+            if self.rank == 0:
+                print(
+                    f"\nEnd of epoch: {epoch}, \
+                    \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
+                    \ntop-5 train acc: {epoch_top5_train_acc:.4f}, top-10 train acc: {epoch_top10_train_acc:.4f}, \
+                    \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
+                    \ntop-5 val acc: {epoch_top5_val_acc:.4f}, top-10 val acc: {epoch_top10_val_acc:.4f} \
+                    \n"
+                )
+                if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < 1e-6:
+                    print('Stopping training as learning rate has dropped below 1e-6')
+                    break 
 
-        logging.info(f'Total training time: {self.stats["train_time"]}')
+        if self.rank == 0:
+            print(f'Total training time: {self.stats["train_time"]}')
 
-    def test(self, saved_stats: Optional[dict] = None):
+    def test_distributed(self, saved_stats: Optional[dict] = None):
         """
         Evaluates the model on the test set
         Parameters
@@ -830,19 +928,22 @@ class Experiment:
         self.model.eval()
         test_loss, test_correct_preds = 0, defaultdict(int)
         if self.test_loader is None: # running G2E
-            self.test_loader, self.test_size = self._get_smi_dl(phase="test", shuffle=False)
-        test_loader = tqdm(self.test_loader, desc='testing...')
+            self.test_loader, self.test_size, _ = self._get_smi_dl(phase="test", shuffle=False)
+        if self.rank == 0:
+            test_loader = tqdm(self.test_loader, desc='testing...')
+        else:
+            test_loader = self.test_loader
         with torch.no_grad():
             epoch_test_size = 0
             for i, batch in enumerate(test_loader):
                 batch_data = batch[0]
                 if not isinstance(batch_data, tuple): # not sure what's the purpose of this
-                    batch_data = batch_data.to(self.device)
+                    batch_data = batch_data.cuda(non_blocking=True)
                 if self.model_name == 'TransformerEBM':
                     batch_data = (batch_data, 'test')
-                batch_mask = batch[1].to(self.device)
+                batch_mask = batch[1].cuda(non_blocking=True)
                 if self.args.prob_file_prefix:
-                    batch_probs = batch[3].to(self.device)
+                    batch_probs = batch[3].cuda(non_blocking=True)
                     batch_energies = self._one_batch(
                         batch_data, batch_mask, batch_probs, backprop=False
                     )
@@ -851,6 +952,9 @@ class Experiment:
                         batch_data, batch_mask, backprop=False
                     )
                 test_batch_size = batch_energies.shape[0]
+                test_batch_size = torch.tensor([test_batch_size]).cuda(self.gpu)
+                dist.all_reduce(test_batch_size, dist.ReduceOp.SUM)
+                test_batch_size = test_batch_size.item()
                 epoch_test_size += test_batch_size
 
                 # for validation/test data, true rxn may not be present!
@@ -876,16 +980,20 @@ class Experiment:
                         # index with lowest energy is what the model deems to be the most feasible rxn
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
                         batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu)
+                        dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+                        batch_correct_preds = batch_correct_preds.item()
+
                         test_correct_preds[k] += batch_correct_preds
 
                         if k == 1:
                             running_top1_acc = test_correct_preds[k] / epoch_test_size
-                            if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                            if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                 try:
                                     for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                        if j % (self.test_size // 5) == 0:  # peek at a random sample of current batch to monitor training progress
+                                        if j % (self.test_size // 5) == random.randint(0, 10):  # peek at a random sample of current batch to monitor training progress
                                             sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                            sample_true_rank = batch_true_ranks_array[sample_idx] #[0]
+                                            sample_true_rank = batch_true_ranks_array[sample_idx]
                                             sample_pred_rank = batch_preds[sample_idx, 0].item()
                                             sample_true_prod = self.proposals_data['test'][batch_idx[sample_idx], 0]
                                             sample_true_prec = self.proposals_data['test'][batch_idx[sample_idx], 1] 
@@ -893,15 +1001,15 @@ class Experiment:
                                             sample_cand_precs = self.proposals_data['test'][batch_idx[sample_idx], 3:] 
                                             sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
                                             sample_orig_prec = sample_cand_precs[0]
-                                            logging.info(f'\ntrue product:            {sample_true_prod}')
-                                            logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
-                                            logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
-                                            logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
+                                            print(f'\ntrue product:            {sample_true_prod}')
+                                            print(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
+                                            print(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
+                                            print(f'orig precursor (rank 0): {sample_orig_prec}\n')
                                             break
                                 except Exception as e:
                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                                    logging.info("".join(tb_str))
-                                    logging.info('\nIndex out of range (last minibatch)')
+                                    print("".join(tb_str))
+                                    print('\nIndex out of range (last minibatch)')
                         elif k == 5:
                             running_top5_acc = test_correct_preds[k] / epoch_test_size
                         elif k == 10:
@@ -915,6 +1023,10 @@ class Experiment:
                     for k in self.k_to_calc:
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
                         batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
+                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu)
+                        dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+                        batch_correct_preds = batch_correct_preds.item()
+                        
                         test_correct_preds[k] += batch_correct_preds
 
                         if k == 1:
@@ -927,12 +1039,17 @@ class Experiment:
                     running_top5_acc = np.nan
                 if 10 not in self.k_to_calc:
                     running_top10_acc = np.nan
+                
+                batch_loss = torch.tensor([batch_loss]).cuda(self.gpu)
+                dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
+                batch_loss = batch_loss.item()
                 test_loss += batch_loss
-                test_loader.set_description(f"testing...loss={test_loss / epoch_test_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
-                test_loader.refresh()
+                if self.rank == 0:
+                    test_loader.set_description(f"testing...loss={test_loss / test_batch_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
+                    test_loader.refresh()
                 
             for k in self.k_to_calc:
-                self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size # self.test_size
+                self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size
 
         if saved_stats:
             self.stats = saved_stats
@@ -941,13 +1058,23 @@ class Experiment:
                 "self.stats only has 2 keys or less. If loading checkpoint, you need to provide load_stats!"
             )
 
-        self.stats["test_loss"] = test_loss / epoch_test_size # self.test_size 
-        logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
+        self.stats["test_loss"] = test_loss / epoch_test_size 
         self.stats["test_topk_accs"] = self.test_topk_accs
-        for k in self.k_to_calc:
-            logging.info(f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%')
+        if self.rank == 0:
+            print(f'\nTest loss: {self.stats["test_loss"]:.4f}')
+            for k in self.k_to_calc:
+                print(f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%')
 
-        torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
+            torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
+
+    def get_energies_and_loss_distributed(
+        self,
+        phase: str = "test",
+        save_energies: Optional[bool] = True,
+        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+    ) -> Tuple[Tensor, float]:
+        raise NotImplementedError('Please reload the best checkpoint and run expt.get_energies_and_loss() on a single GPU')
 
     def get_energies_and_loss(
         self,
@@ -957,7 +1084,7 @@ class Experiment:
         path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
     ) -> Tuple[Tensor, float]:
         """
-        Gets raw energy values from a trained model on a given dataloader 
+        Gets raw energy values from a trained model on a given dataloader
 
         Parameters
         ----------
@@ -1048,7 +1175,7 @@ class Experiment:
 
                 loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
                 loss /= epoch_data_size
-            logging.info(f"\nLoss on {phase} : {loss:.4f}")
+            print(f"\nLoss on {phase} : {loss:.4f}")
 
         if path_to_energies is None:
             path_to_energies = Path(__file__).resolve().parents[1] / "energies"
@@ -1057,7 +1184,7 @@ class Experiment:
         if name_energies is None:
             name_energies = f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
         if save_energies:
-            logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
+            print(f"Saving energies at: {Path(path_to_energies / name_energies)}")
             torch.save(energies_combined, Path(path_to_energies / name_energies))
 
         if self.args.do_finetune and phase != 'train':
@@ -1105,9 +1232,9 @@ class Experiment:
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase} (finetune): {100 * topk_accuracy:.3f}%") 
+                print(f"Top-{k} accuracy on {phase} (finetune): {100 * topk_accuracy:.3f}%") 
             else:
-                logging.info(f'{k} out of range for dimension 1 on {phase} (finetune)')
+                print(f'{k} out of range for dimension 1 on {phase} (finetune)')
 
         else: # true rank is always 0
             if phase not in self.energies:
@@ -1123,9 +1250,9 @@ class Experiment:
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase}: {100 * topk_accuracy:.3f}%") 
+                print(f"Top-{k} accuracy on {phase}: {100 * topk_accuracy:.3f}%") 
             else:
-                logging.info(f'{k} out of range for dimension 1 on {phase}')
+                print(f'{k} out of range for dimension 1 on {phase}')
 
 
 # def accuracy(output, target, topk=(1,)):
