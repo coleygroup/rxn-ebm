@@ -22,7 +22,6 @@ Tensor = torch.Tensor
 
 class Experiment:
     """
-    TODO: representation: ['graph']
     TODO: wandb/tensorboard for hyperparameter tuning
 
     Parameters
@@ -166,7 +165,7 @@ class Experiment:
         self.train_topk_accs = {}  
         self.val_topk_accs = {}  
         self.test_topk_accs = {} 
-        self.k_to_calc = [1, 5, 10, 50]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
+        self.k_to_calc = [1, 2, 3, 5, 10, 50]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
         k_not_to_calc = []
         for k in self.k_to_calc:
             if k > self.maxk:
@@ -247,10 +246,11 @@ class Experiment:
             else:
                 raise ValueError(f"Unsupported lr_scheduler_criteria {self.args.lr_scheduler_criteria}")
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                                        optimizer=self.optimizer, 
-                                        mode=mode, 
-                                        factor=self.args.lr_scheduler_factor, 
-                                        patience=self.args.lr_scheduler_patience, 
+                                        optimizer=self.optimizer,
+                                        mode=mode,
+                                        factor=self.args.lr_scheduler_factor,
+                                        patience=self.args.lr_scheduler_patience,
+                                        cooldown=self.args.lr_cooldown,
                                         verbose=True
                                         ) 
         elif self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
@@ -303,10 +303,11 @@ class Experiment:
             else:
                 raise ValueError(f'Unsupported lr_scheduler_criteria {self.args.lr_scheduler_criteria}')
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                                        optimizer=self.optimizer, 
-                                        mode=mode, 
-                                        factor=self.args.lr_scheduler_factor, 
-                                        patience=self.args.lr_scheduler_patience, 
+                                        optimizer=self.optimizer,
+                                        mode=mode,
+                                        factor=self.args.lr_scheduler_factor,
+                                        patience=self.args.lr_scheduler_patience,
+                                        cooldown=self.args.lr_cooldown,
                                         verbose=True
                                         ) 
         elif self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
@@ -583,6 +584,10 @@ class Experiment:
             loss = (energies[:, 0] + torch.logsumexp(-energies, dim=1)).sum()
             self.optimizer.zero_grad()
             loss.backward()
+
+            if self.args.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.args.grad_clip)
+
             self.optimizer.step()
             return loss.item(), energies.cpu().detach() 
         else:
@@ -786,11 +791,11 @@ class Experiment:
                 elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
                     self.lr_scheduler.step(self.val_topk_accs[1][-1])
 
-                if self.optimizer.param_groups[0]['lr'] < self.current_lr:
-                    # reset early stop counter
-                    print('Reset early stopping patience counter')
-                    self.wait = 0
-                self.current_lr = self.optimizer.param_groups[0]['lr']
+                # if self.optimizer.param_groups[0]['lr'] < self.current_lr:
+                #     # reset early stop counter
+                #     print('Reset early stopping patience counter')
+                #     self.wait = 0
+                # self.current_lr = self.optimizer.param_groups[0]['lr']
 
             if 5 in self.train_topk_accs:
                 epoch_top5_train_acc = self.train_topk_accs[5][-1]

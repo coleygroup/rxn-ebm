@@ -27,6 +27,7 @@ class GRU(nn.Module):
                  input_size: int,
                  h_size: int,
                  depth: int,
+                 dropout: float = 0.1,
                  device: str = 'cpu'):
         """
         Parameters
@@ -44,6 +45,7 @@ class GRU(nn.Module):
         self.h_size = h_size
         self.input_size = input_size
         self.depth = depth
+        self.dropout = dropout
         self.device = device
         self._build_layer_components()
 
@@ -53,6 +55,7 @@ class GRU(nn.Module):
         self.W_r = nn.Linear(self.input_size, self.h_size, bias=False).to(self.device)
         self.U_r = nn.Linear(self.h_size, self.h_size).to(self.device)
         self.W_h = nn.Linear(self.input_size + self.h_size, self.h_size).to(self.device)
+        self.Dropout = nn.Dropout(p=self.dropout)
 
     def get_init_state(self, fmess: torch.Tensor, init_state: torch.Tensor = None) -> torch.Tensor:
         """Get the initial hidden state of the RNN.
@@ -118,8 +121,10 @@ class GRU(nn.Module):
 
         for i in range(self.depth):
             h_nei = index_select_ND(h, 0, bgraph)
+            h_nei = self.Dropout(h_nei)
             h = self.GRU(fmess, h_nei)
             h = h * mask
+        
         return h
 
     def sparse_forward(self, h: torch.Tensor, fmess: torch.Tensor,
@@ -138,7 +143,7 @@ class GRU(nn.Module):
         """
         mask = h.new_ones(h.size()[0]).scatter_(0, submess, 0)
         h = h * mask.unsqueeze(1)
-        for i in range(self.depth):
+        for i in range(self.depth - 1):
             h_nei = index_select_ND(h, 0, bgraph)
             sub_h = self.GRU(fmess, h_nei)
             h = index_scatter(sub_h, h, submess)
@@ -154,7 +159,9 @@ class MPNEncoder(nn.Module):
                  input_size: int,
                  node_fdim: int,
                  h_size: int,
-                 depth: int):
+                 depth: int,
+                 dropout: float = 0.1
+                 ):
         """
         Parameters
         ----------
@@ -174,6 +181,7 @@ class MPNEncoder(nn.Module):
         self.input_size = input_size
         self.rnn_type = rnn_type
         self.depth = depth
+        self.dropout = dropout
         self.node_fdim = node_fdim
         self._build_layers()
 
@@ -182,7 +190,7 @@ class MPNEncoder(nn.Module):
         # TODO: add dropout here
         self.W_o = nn.Sequential(nn.Linear(self.node_fdim + self.h_size, self.h_size), nn.ReLU())
         if self.rnn_type == 'gru':
-            self.rnn = GRU(self.input_size, self.h_size, self.depth)
+            self.rnn = GRU(self.input_size, self.h_size, self.depth, self.dropout)
         elif self.rnn_type == 'lstm':
             self.rnn = LSTM(self.input_size, self.h_size, self.depth)
         else:
@@ -231,7 +239,9 @@ class GraphFeatEncoder(nn.Module):
                  n_bond_feat: int,
                  rnn_type: str,
                  h_size: int,
-                 depth: int):
+                 depth: int,
+                 dropout: float = 0.1
+                 ):
         """
         Parameters
         ----------
@@ -253,6 +263,7 @@ class GraphFeatEncoder(nn.Module):
         self.atom_size = n_atom_feat
         self.h_size = h_size
         self.depth = depth
+        self.dropout = dropout
 
         self._build_layers()
 
@@ -262,7 +273,8 @@ class GraphFeatEncoder(nn.Module):
                                   input_size=self.n_atom_feat + self.n_bond_feat,
                                   node_fdim=self.atom_size,
                                   h_size=self.h_size,
-                                  depth=self.depth)
+                                  depth=self.depth,
+                                  dropout=self.dropout)
 
     def forward(self, graph_tensors: Tuple[torch.Tensor, ...], scopes) -> Tuple[torch.Tensor, ...]:
         """
@@ -308,7 +320,7 @@ class GraphFeatEncoder(nn.Module):
 
 
 class G2E(nn.Module):
-    def __init__(self, args, encoder_hidden_size, encoder_depth, **kwargs):
+    def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, **kwargs):
         super().__init__()
         self.model_repr = "GraphEBM"
         self.args = args
@@ -322,7 +334,8 @@ class G2E(nn.Module):
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
-                                        depth=encoder_depth)
+                                        depth=encoder_depth,
+                                        dropout=encoder_dropout)
         self.output = nn.Linear(encoder_hidden_size * 4, 1)
         if args.do_finetune:
             logging.info("Setting self.reactant first to False for finetuning")
@@ -414,7 +427,7 @@ class G2E(nn.Module):
         return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]
 
 class G2E_sep(nn.Module): # separate encoders
-    def __init__(self, args, encoder_hidden_size, encoder_depth, **kwargs):
+    def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, **kwargs):
         super().__init__()
         self.model_repr = "GraphEBM_sep"
         self.args = args
@@ -493,7 +506,7 @@ class G2E_sep(nn.Module): # separate encoders
 
 
 class G2E_projR(nn.Module): # just project reactant, not using for now
-    def __init__(self, args, encoder_hidden_size, encoder_depth, proj_hidden_sizes, proj_activation, proj_dropout, **kwargs):
+    def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, proj_hidden_sizes, proj_activation, proj_dropout, **kwargs):
         super().__init__()
         self.model_repr = "GraphEBM_projR"
         self.args = args
@@ -596,7 +609,7 @@ class G2E_projR(nn.Module): # just project reactant, not using for now
 
 
 class G2E_projBoth(nn.Module):
-    def __init__(self, args, encoder_hidden_size, encoder_depth, proj_hidden_sizes, proj_activation, proj_dropout, **kwargs):
+    def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, proj_hidden_sizes, proj_activation, proj_dropout, **kwargs):
         super().__init__()
         self.model_repr = "GraphEBM_projBoth"
         self.args = args
@@ -695,7 +708,7 @@ class G2E_projBoth(nn.Module):
 
 class G2E_sep_projBoth_FFout(nn.Module): 
     # separate encoders, linear projections, then a final linear output layer (vs dot product)
-    def __init__(self, args, encoder_hidden_size, encoder_depth, proj_hidden_sizes, proj_activation, proj_dropout, **kwargs):
+    def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, proj_hidden_sizes, proj_activation, proj_dropout, **kwargs):
         super().__init__()
         self.model_repr = "GraphEBM_sep_projBoth_FFout"
         self.args = args

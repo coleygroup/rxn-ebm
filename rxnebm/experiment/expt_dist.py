@@ -24,12 +24,11 @@ Tensor = torch.Tensor
 
 class Experiment:
     """
-    TODO: representation: ['graph']
     TODO: wandb/tensorboard for hyperparameter tuning
 
     Parameters
     ----------
-    representation : str ['fingerprint']
+    representation : str ['fingerprint', 'smiles']
         which representation to use. affects which version of AugmentedData & ReactionDataset gets called.
         if not using 'fingerprint', cannot use Bit Augmentor. 
 
@@ -100,15 +99,6 @@ class Experiment:
         logging.info(f"Augmentations: {self.augmentations}")
 
         if gpu is not None: # doing DistributedDataParallel training
-            # logging.info('Initiating process group')
-            # # https://github.com/yangkky/distributed_tutorial/blob/master/ddp_tutorial.md
-            # rank = args.nr * args.gpus + gpu
-            # dist.init_process_group(
-            #     backend='nccl',
-            #     init_method='env://',
-            #     world_size=args.world_size,
-            #     rank=rank
-            # )
             rank = args.nr * args.gpus + gpu
             torch.cuda.set_device(gpu)
             model.cuda(gpu)
@@ -117,10 +107,11 @@ class Experiment:
             self.rank = rank
             self.device = torch.cuda.current_device()
         else:
-            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            model = model.to(self.device)
-            self.gpu = None
-            self.rank = None
+            raise RuntimeError('gpu is None')
+            # self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            # model = model.to(self.device)
+            # self.gpu = None
+            # self.rank = None
         self.model = model
         self.model_name = model_name # self.model.model_repr
         self.model_args = model_args
@@ -183,7 +174,7 @@ class Experiment:
         self.train_topk_accs = {}  
         self.val_topk_accs = {}  
         self.test_topk_accs = {} 
-        self.k_to_calc = [1, 5, 10, 50]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
+        self.k_to_calc = [1, 2, 3, 5, 10, 50]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
         k_not_to_calc = []
         for k in self.k_to_calc:
             if k > self.maxk:
@@ -268,10 +259,11 @@ class Experiment:
             else:
                 raise ValueError(f"Unsupported lr_scheduler_criteria {self.args.lr_scheduler_criteria}")
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                                        optimizer=self.optimizer, 
-                                        mode=mode, 
-                                        factor=self.args.lr_scheduler_factor, 
-                                        patience=self.args.lr_scheduler_patience, 
+                                        optimizer=self.optimizer,
+                                        mode=mode,
+                                        factor=self.args.lr_scheduler_factor,
+                                        patience=self.args.lr_scheduler_patience,
+                                        cooldown=self.args.lr_cooldown,
                                         verbose=True
                                         ) 
         elif self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
@@ -324,10 +316,11 @@ class Experiment:
             else:
                 raise ValueError(f'Unsupported lr_scheduler_criteria {self.args.lr_scheduler_criteria}')
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                                        optimizer=self.optimizer, 
-                                        mode=mode, 
-                                        factor=self.args.lr_scheduler_factor, 
-                                        patience=self.args.lr_scheduler_patience, 
+                                        optimizer=self.optimizer,
+                                        mode=mode,
+                                        factor=self.args.lr_scheduler_factor,
+                                        patience=self.args.lr_scheduler_patience,
+                                        cooldown=self.args.lr_cooldown,
                                         verbose=True
                                         ) 
         elif self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
@@ -422,7 +415,7 @@ class Experiment:
             self.batch_size,
             num_workers=self.num_workers,
             worker_init_fn=worker_init_fn,
-            shuffle=True if train_sampler is None else False,
+            shuffle=True if self.train_sampler is None else False,
             pin_memory=self.args.pin_memory,
             drop_last=self.args.drop_last,
             sampler=self.train_sampler
@@ -642,6 +635,10 @@ class Experiment:
             loss = (energies[:, 0] + torch.logsumexp(-energies, dim=1)).sum()
             self.optimizer.zero_grad()
             loss.backward()
+
+            if self.args.grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.args.grad_clip)
+
             self.optimizer.step()
             return loss.item(), energies.cpu().detach()
         else:
@@ -718,7 +715,7 @@ class Experiment:
                     running_top10_acc = np.nan
                 
                 if self.rank == 0:
-                    train_loader.set_description(f"training...loss={train_loss/epoch_train_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
+                    train_loader.set_description(f"training (epoch {epoch}): loss={train_loss/epoch_train_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
                     train_loader.refresh()
             
             for k in self.k_to_calc:
@@ -800,15 +797,15 @@ class Experiment:
                                                 sample_cand_precs = self.proposals_data['valid'][batch_idx[sample_idx], 3:]
                                                 sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
                                                 sample_orig_prec = sample_cand_precs[0]
-                                                print(f'\ntrue product:            {sample_true_prod}')
-                                                print(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
-                                                print(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
-                                                print(f'orig precursor (rank 0): {sample_orig_prec}\n')
+                                                logging.info(f'\ntrue product:            {sample_true_prod}')
+                                                logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
+                                                logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
+                                                logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                                        print("".join(tb_str))
-                                        print('\nIndex out of range (last minibatch)')
+                                        logging.info("".join(tb_str))
+                                        logging.info('\nIndex out of range (last minibatch)')
                             elif k == 5:
                                 running_top5_acc = val_correct_preds[k] / epoch_val_size
                             elif k == 10:
@@ -844,7 +841,7 @@ class Experiment:
                     val_loss += batch_loss
 
                     if self.rank == 0:
-                        val_loader.set_description(f"validating...loss={val_loss/epoch_val_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
+                        val_loader.set_description(f"validating (epoch {epoch}): loss={val_loss/epoch_val_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
                         val_loader.refresh()
                 
                 for k in self.k_to_calc:
@@ -876,17 +873,17 @@ class Experiment:
                     break
 
             if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
-                print('\nCalled a step of ReduceLROnPlateau')
+                logging.info('\nCalled a step of ReduceLROnPlateau')
                 if self.args.lr_scheduler_criteria == 'loss':
                     self.lr_scheduler.step(self.val_losses[-1])
                 elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
                     self.lr_scheduler.step(self.val_topk_accs[1][-1])
                 
-                if self.optimizer.param_groups[0]['lr'] < self.current_lr:
-                    # reset early stop counter
-                    print('Reset early stopping patience counter')
-                    self.wait = 0
-                self.current_lr = self.optimizer.param_groups[0]['lr']
+                # if self.optimizer.param_groups[0]['lr'] < self.current_lr:
+                #     # reset early stop counter
+                #     logging.info('Reset early stopping patience counter')
+                #     self.wait = 0
+                # self.current_lr = self.optimizer.param_groups[0]['lr']
 
             if 5 in self.train_topk_accs:
                 epoch_top5_train_acc = self.train_topk_accs[5][-1]
@@ -901,7 +898,7 @@ class Experiment:
                 epoch_top10_train_acc = np.nan
                 epoch_top10_val_acc = np.nan
             if self.rank == 0:
-                print(
+                logging.info(
                     f"\nEnd of epoch: {epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
                     \ntop-5 train acc: {epoch_top5_train_acc:.4f}, top-10 train acc: {epoch_top10_train_acc:.4f}, \
@@ -910,11 +907,11 @@ class Experiment:
                     \n"
                 )
                 if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < 1e-6:
-                    print('Stopping training as learning rate has dropped below 1e-6')
+                    logging.info('Stopping training as learning rate has dropped below 1e-6')
                     break 
 
         if self.rank == 0:
-            print(f'Total training time: {self.stats["train_time"]}')
+            logging.info(f'Total training time: {self.stats["train_time"]}')
 
     def test_distributed(self, saved_stats: Optional[dict] = None):
         """
@@ -1001,15 +998,15 @@ class Experiment:
                                             sample_cand_precs = self.proposals_data['test'][batch_idx[sample_idx], 3:] 
                                             sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
                                             sample_orig_prec = sample_cand_precs[0]
-                                            print(f'\ntrue product:            {sample_true_prod}')
-                                            print(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
-                                            print(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
-                                            print(f'orig precursor (rank 0): {sample_orig_prec}\n')
+                                            logging.info(f'\ntrue product:            {sample_true_prod}')
+                                            logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
+                                            logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
+                                            logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
                                             break
                                 except Exception as e:
                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                                    print("".join(tb_str))
-                                    print('\nIndex out of range (last minibatch)')
+                                    logging.info("".join(tb_str))
+                                    logging.info('\nIndex out of range (last minibatch)')
                         elif k == 5:
                             running_top5_acc = test_correct_preds[k] / epoch_test_size
                         elif k == 10:
@@ -1061,9 +1058,9 @@ class Experiment:
         self.stats["test_loss"] = test_loss / epoch_test_size 
         self.stats["test_topk_accs"] = self.test_topk_accs
         if self.rank == 0:
-            print(f'\nTest loss: {self.stats["test_loss"]:.4f}')
+            logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
             for k in self.k_to_calc:
-                print(f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%')
+                logging.info(f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%')
 
             torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
@@ -1175,7 +1172,7 @@ class Experiment:
 
                 loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
                 loss /= epoch_data_size
-            print(f"\nLoss on {phase} : {loss:.4f}")
+            logging.info(f"\nLoss on {phase} : {loss:.4f}")
 
         if path_to_energies is None:
             path_to_energies = Path(__file__).resolve().parents[1] / "energies"
@@ -1184,7 +1181,7 @@ class Experiment:
         if name_energies is None:
             name_energies = f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
         if save_energies:
-            print(f"Saving energies at: {Path(path_to_energies / name_energies)}")
+            logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
             torch.save(energies_combined, Path(path_to_energies / name_energies))
 
         if self.args.do_finetune and phase != 'train':
@@ -1232,9 +1229,9 @@ class Experiment:
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                print(f"Top-{k} accuracy on {phase} (finetune): {100 * topk_accuracy:.3f}%") 
+                logging.info(f"Top-{k} accuracy on {phase} (finetune): {100 * topk_accuracy:.3f}%") 
             else:
-                print(f'{k} out of range for dimension 1 on {phase} (finetune)')
+                logging.info(f'{k} out of range for dimension 1 on {phase} (finetune)')
 
         else: # true rank is always 0
             if phase not in self.energies:
@@ -1250,9 +1247,9 @@ class Experiment:
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                print(f"Top-{k} accuracy on {phase}: {100 * topk_accuracy:.3f}%") 
+                logging.info(f"Top-{k} accuracy on {phase}: {100 * topk_accuracy:.3f}%") 
             else:
-                print(f'{k} out of range for dimension 1 on {phase}')
+                logging.info(f'{k} out of range for dimension 1 on {phase}')
 
 
 # def accuracy(output, target, topk=(1,)):

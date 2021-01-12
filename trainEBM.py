@@ -27,6 +27,7 @@ def parse_args():
     parser = argparse.ArgumentParser("trainEBM.py")
     # mode & metadata
     parser.add_argument("--model_name", help="model name", type=str, default="FeedforwardEBM")
+    parser.add_argument("--do_not_train", help="do not do any training? (to just test/get energies)", action="store_true")
     parser.add_argument("--do_pretrain", help="whether to pretrain (vs. finetune)", action="store_true")
     parser.add_argument("--do_finetune", help="whether to finetune (vs. pretrain)", action="store_true")
     parser.add_argument("--do_test", help="whether to test after training", action="store_true")
@@ -90,6 +91,7 @@ def parse_args():
     # training params
     parser.add_argument("--batch_size", help="batch_size", type=int, default=128)
     parser.add_argument("--batch_size_eval", help="batch_size", type=int, default=128)
+    parser.add_argument("--grad_clip", help="gradient clipping", type=float, default=5)
     parser.add_argument("--minibatch_size", help="minibatch size for smiles (training), i.e. max # of proposal rxn_smi allowed per rxn", 
                         type=int, default=32)
     parser.add_argument("--minibatch_eval", help="minibatch size for smiles (valid/test), i.e. max # of proposal rxn_smi allowed per rxn, for finetuning", 
@@ -102,6 +104,8 @@ def parse_args():
                         action="store_true", default=False)
     parser.add_argument("--lr_min", help="minimum learning rate (CosineAnnealingWarmRestarts)", 
                         type=float, default=0)
+    parser.add_argument("--lr_cooldown", help="epochs to wait before resuming normal operation (ReduceLROnPlateau)", 
+                        type=int, default=0)
     parser.add_argument("--lr_scheduler",
                         help="learning rate schedule ['ReduceLROnPlateau', 'CosineAnnealingWarmRestarts', 'OneCycleLR']", 
                         type=str, default="ReduceLROnPlateau")
@@ -145,6 +149,7 @@ def parse_args():
     # G2E args
     parser.add_argument("--encoder_hidden_size", help="MPN encoder_hidden_size", type=int, default=256)
     parser.add_argument("--encoder_depth", help="MPN encoder_depth", type=int, default=3)
+    parser.add_argument("--encoder_dropout", help="MPN encoder dropout", type=float, default=0)
     parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+')
     parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
     parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
@@ -197,7 +202,30 @@ def main_dist(
         world_size=args.world_size,
         rank=rank
     )
+    
+    if gpu == 0:
+        dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
+        fh.setLevel(logging.INFO)
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setLevel(logging.INFO)
+        logger.addHandler(fh)
+        logger.addHandler(sh)
 
+        logging.info("Logging args")
+        logging.info(vars(args))
+        
+        if args.load_checkpoint:
+            logging.info(f'Loading checkpoint of epoch {begin_epoch - 1}')
+
+        logging.info("Logging model summary")
+        logging.info(model)
+        logging.info(f"\nModel #Params: {sum([x.nelement() for x in model.parameters()]) / 1000} k")
+        logging.info(f'{model_args}')
+
+       
     print("Setting up DDP experiment")
     experiment = expt_dist.Experiment(
         gpu=gpu,
@@ -216,11 +244,11 @@ def main_dist(
         vocab=vocab,
     )
 
-    if args.do_pretrain:
+    if not args.do_not_train and args.do_pretrain: # some bug?
         logging.info("Start pretraining")
         experiment.train_distributed()
 
-    if args.do_finetune:
+    if not args.do_not_train and args.do_finetune:
         assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
         logging.info("Start finetuning")
         experiment.train_distributed()
@@ -237,9 +265,8 @@ def main_dist(
         args.ddp = False
         args.old_expt_name = args.expt_name
         args.load_checkpoint = True
-        args.do_pretrain = False
-        args.do_finetune = False
-        args.do_test = False
+        args.do_test = True
+        args.do_not_train = True
 
         main(args)
 
@@ -247,8 +274,9 @@ def main(args):
     model_utils.seed_everything(args.random_seed) # seed before even initializing model
     
     """train EBM from scratch"""
-    logging.info("Logging args")
-    logging.info(vars(args))
+    if not args.ddp:
+        logging.info("Logging args")
+        logging.info(vars(args))
 
     # hard-coded
     saved_model, saved_optimizer, saved_stats, saved_stats_filename = None, None, None, None
@@ -283,7 +311,8 @@ def main(args):
 
     vocab = {}
     if args.load_checkpoint:
-        logging.info("Loading from checkpoint")
+        if not args.ddp:
+            logging.info("Loading from checkpoint")
         old_checkpoint_folder = expt_utils.setup_paths(
             "LOCAL", load_trained=True, date_trained=args.date_trained
         )
@@ -292,9 +321,9 @@ def main(args):
             args, saved_stats_filename, old_checkpoint_folder, args.model_name, args.optimizer,
             load_epoch=args.load_epoch 
         )
-        logging.info(f"Saved model {args.model_name} loaded")
+        if not args.ddp:
+            logging.info(f"Saved model {args.model_name} loaded")
         if saved_stats["fp_args"] is not None:
-            logging.info("Updating args with fp_args")
             for k, v in saved_stats["fp_args"].items():
                 setattr(args, k, v)
 
@@ -308,7 +337,8 @@ def main(args):
         if args.vocab_file is not None:
             vocab = expt_utils.load_or_create_vocab(args)
     else:
-        logging.info(f"Not loading from checkpoint, creating model {args.model_name}")
+        if not args.ddp:
+            logging.info(f"Not loading from checkpoint, creating model {args.model_name}")
         if args.model_name == "FeedforwardEBM":
             model_args = FF_args
             fp_args = args_to_dict(args, "fp_args")
@@ -317,14 +347,16 @@ def main(args):
         elif args.model_name == "GraphEBM":                 # Graph to energy
             model_args = {
                 "encoder_hidden_size": args.encoder_hidden_size,
-                "encoder_depth": args.encoder_depth
+                "encoder_depth": args.encoder_depth,
+                "encoder_dropout": args.encoder_dropout
             }
             model = G2E.G2E(args, **model_args)
         
         elif args.model_name == "GraphEBM_sep":                 # Graph to energy, separate encoders
             model_args = {
                 "encoder_hidden_size": args.encoder_hidden_size,
-                "encoder_depth": args.encoder_depth
+                "encoder_depth": args.encoder_depth,
+                "encoder_dropout": args.encoder_dropout
             }
             model = G2E.G2E_sep(args, **model_args)
             
@@ -332,6 +364,7 @@ def main(args):
             model_args = {
                 "encoder_hidden_size": args.encoder_hidden_size,
                 "encoder_depth": args.encoder_depth,
+                "encoder_dropout": args.encoder_dropout,
                 "proj_hidden_sizes": args.proj_hidden_sizes,
                 "proj_activation": args.proj_activation,
                 "proj_dropout": args.proj_dropout,
@@ -342,6 +375,7 @@ def main(args):
             model_args = {
                 "encoder_hidden_size": args.encoder_hidden_size,
                 "encoder_depth": args.encoder_depth,
+                "encoder_dropout": args.encoder_dropout,
                 "proj_hidden_sizes": args.proj_hidden_sizes,
                 "proj_activation": args.proj_activation,
                 "proj_dropout": args.proj_dropout,
@@ -357,17 +391,17 @@ def main(args):
         else:
             raise ValueError(f"Model {args.model_name} not supported!")
 
-        logging.info(f"Model {args.model_name} created") # model.model_repr wont' work with DataParallel
+        if not args.ddp:
+            logging.info(f"Model {args.model_name} created") # model.model_repr wont' work with DataParallel
 
-    logging.info("Logging model summary")
-    logging.info(model)
-    logging.info(f"\nModel #Params: {sum([x.nelement() for x in model.parameters()]) / 1000} k")
-    logging.info(f'{model_args}')
+    if not args.ddp:
+        logging.info("Logging model summary")
+        logging.info(model)
+        logging.info(f"\nModel #Params: {sum([x.nelement() for x in model.parameters()]) / 1000} k")
+        logging.info(f'{model_args}')
     
     if args.ddp:
         args.world_size = args.gpus * args.nodes
-        # logging.info(os.environ['MASTER_ADDR'])
-        # logging.info(os.environ['MASTER_PORT'])
         # os.environ['MASTER_ADDR'] = '10.1.10.107' # os.environ['SLURM_SRUN_COMM_HOST'] #'10.57.23.164'
         # os.environ['MASTER_PORT'] = '8888' # os.environ['SLURM_SRUN_COMM_PORT'] # '8888'
         mp.spawn(main_dist,
@@ -389,7 +423,6 @@ def main(args):
                 vocab
                 )
             )
-
     else:
         if torch.cuda.device_count() > 1 and args.dataparallel:
             logging.info(f'Using {torch.cuda.device_count()} GPUs!')
@@ -416,11 +449,11 @@ def main(args):
             vocab=vocab,
         )
 
-        if args.do_pretrain:
+        if not args.do_not_train and args.do_pretrain:
             logging.info("Start pretraining")
             experiment.train()
 
-        if args.do_finetune:
+        if not args.do_not_train and args.do_finetune:
             assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
             logging.info("Start finetuning")
             experiment.train()
@@ -457,15 +490,16 @@ if __name__ == "__main__":
     RDLogger.DisableLog("rdApp.warning")
 
     os.makedirs("./logs", exist_ok=True)
-    dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
-
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
-    fh.setLevel(logging.INFO)
-    sh = logging.StreamHandler(sys.stdout)
-    sh.setLevel(logging.INFO)
-    logger.addHandler(fh)
-    logger.addHandler(sh)
+    
+    if not args.ddp: # if doing ddp training, must spawn logger inside each child process
+        dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
+        fh.setLevel(logging.INFO)
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setLevel(logging.INFO)
+        logger.addHandler(fh)
+        logger.addHandler(sh)
 
     main(args)
