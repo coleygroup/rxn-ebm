@@ -320,7 +320,17 @@ class GraphFeatEncoder(nn.Module):
 
 
 class G2E(nn.Module):
-    def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, **kwargs):
+    def __init__(
+            self, 
+            args, 
+            encoder_hidden_size,
+            encoder_depth,
+            encoder_dropout,
+            out_activation,
+            out_hidden_sizes,
+            out_dropout,
+            **kwargs
+        ):
         super().__init__()
         self.model_repr = "GraphEBM"
         self.args = args
@@ -336,7 +346,13 @@ class G2E(nn.Module):
                                         h_size=encoder_hidden_size,
                                         depth=encoder_depth,
                                         dropout=encoder_dropout)
-        self.output = nn.Linear(encoder_hidden_size * 4, 1)
+        out_activation = model_utils.get_activation_function(out_activation)
+        self.output = self.build_output(
+            out_activation, out_hidden_sizes, out_dropout,
+            encoder_hidden_size * 4
+        )
+        # nn.Linear(encoder_hidden_size * 4, 1)
+        
         if args.do_finetune:
             logging.info("Setting self.reactant first to False for finetuning")
             self.reactant_first = False
@@ -345,6 +361,32 @@ class G2E(nn.Module):
             self.reactant_first = True
         logging.info("Initializing weights")
         model_utils.initialize_weights(self)
+
+    def build_output(
+        self,
+        activation: nn.Module,
+        hidden_sizes: List[int],
+        dropout: float,
+        input_dim: int,
+    ):
+        num_layers = len(hidden_sizes)
+        ffn = [nn.Linear(input_dim, hidden_sizes[0])] # could add nn.Dropout(dropout) before this, if we wish
+        for i, layer in enumerate(range(num_layers - 1)):
+            ffn.extend(
+                [
+                    activation,
+                    nn.Dropout(dropout),
+                    nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]),
+                ]
+                )
+        ffn.extend(
+            [
+                activation,
+                nn.Dropout(dropout),
+                nn.Linear(hidden_sizes[-1], 1), # output_dim = 1 to get energy value
+            ]
+        )
+        return nn.Sequential(*ffn)
 
     def forward(self, batch, probs: Optional[torch.Tensor]=None):
         """
@@ -412,7 +454,7 @@ class G2E(nn.Module):
                 r_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
                 r_hmols = torch.cat(r_hmols, 0)
 
-            diff = torch.abs(p_hmols - r_hmols)                                 # [mini_bsz, h]
+            diff = p_hmols - r_hmols # torch.abs(p_hmols - r_hmols)             # [mini_bsz, h]
             prod = r_hmols * p_hmols                                            # [mini_bsz, h]
 
             pooled_hmols = torch.cat([r_hmols, p_hmols, diff, prod], 1)         # [mini_bsz, h*4]
@@ -441,13 +483,15 @@ class G2E_sep(nn.Module): # separate encoders
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
-                                        depth=encoder_depth)
+                                        depth=encoder_depth,
+                                        dropout=encoder_dropout)
         
         self.encoder_r = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
-                                        depth=encoder_depth)
+                                        depth=encoder_depth,
+                                        dropout=encoder_dropout)
 
         self.output = nn.Linear(encoder_hidden_size * 4, 1)
         if args.do_finetune:
@@ -520,7 +564,8 @@ class G2E_projR(nn.Module): # just project reactant, not using for now
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
-                                        depth=encoder_depth)
+                                        depth=encoder_depth,
+                                        dropout=encoder_dropout)
         
         self.projection = self.build_projection(
             proj_activation, proj_hidden_sizes, proj_dropout,
@@ -555,7 +600,7 @@ class G2E_projR(nn.Module): # just project reactant, not using for now
                 )
         ffn.extend(
             [
-                activation.
+                activation,
                 nn.Dropout(dropout),
                 nn.Linear(hidden_sizes[-1], input_dim), # output_dim = encoder_hidden_size = input_dim
             ]
@@ -623,7 +668,8 @@ class G2E_projBoth(nn.Module):
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
-                                        depth=encoder_depth)
+                                        depth=encoder_depth,
+                                        dropout=encoder_dropout)
         
         proj_activation = model_utils.get_activation_function(proj_activation)
         self.projection_r = self.build_projection(
@@ -708,7 +754,20 @@ class G2E_projBoth(nn.Module):
 
 class G2E_sep_projBoth_FFout(nn.Module): 
     # separate encoders, linear projections, then a final linear output layer (vs dot product)
-    def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, proj_hidden_sizes, proj_activation, proj_dropout, **kwargs):
+    def __init__(
+            self, 
+            args,
+            encoder_hidden_size,
+            encoder_depth,
+            encoder_dropout,
+            proj_hidden_sizes,
+            proj_activation,
+            proj_dropout,
+            out_hidden_sizes,
+            out_activation,
+            out_dropout,
+            **kwargs
+        ):
         super().__init__()
         self.model_repr = "GraphEBM_sep_projBoth_FFout"
         self.args = args
@@ -722,26 +781,28 @@ class G2E_sep_projBoth_FFout(nn.Module):
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
-                                        depth=encoder_depth)
+                                        depth=encoder_depth,
+                                        dropout=encoder_dropout)
         
         self.encoder_r = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type="gru",
                                         h_size=encoder_hidden_size,
-                                        depth=encoder_depth)
+                                        depth=encoder_depth,
+                                        dropout=encoder_dropout)
 
         proj_activation = model_utils.get_activation_function(proj_activation)
         self.projection_r = self.build_projection(
-            proj_activation, proj_hidden_sizes, proj_dropout, encoder_hidden_size # output_dim = proj_hidden_sizes[-1]
+            proj_activation, proj_hidden_sizes, proj_dropout, encoder_hidden_size
         )
         self.projection_p = self.build_projection(
-            proj_activation, proj_hidden_sizes, proj_dropout, encoder_hidden_size # output_dim = proj_hidden_sizes[-1]
+            proj_activation, proj_hidden_sizes, proj_dropout, encoder_hidden_size
         )
-
-        self.output = nn.Sequential(*[
-            nn.Dropout(proj_dropout),
-            nn.Linear(proj_hidden_sizes[-1] * 4, 1)
-        ])
+        out_activation = model_utils.get_activation_function(out_activation)
+        self.output = self.build_output(
+            out_activation, out_hidden_sizes, out_dropout,
+            proj_hidden_sizes[-1] * 4
+        )
 
         if args.do_finetune:
             logging.info("Setting self.reactant first to False for finetuning")
@@ -749,6 +810,35 @@ class G2E_sep_projBoth_FFout(nn.Module):
         else:
             logging.info("Setting self.reactant first to True for pretraining")
             self.reactant_first = True
+    
+    def build_output(
+        self,
+        activation: nn.Module,
+        hidden_sizes: List[int],
+        dropout: float,
+        input_dim: int,
+    ):
+        num_layers = len(hidden_sizes)
+        ffn = [
+                # nn.Dropout(dropout),
+                nn.Linear(input_dim, hidden_sizes[0])
+            ]
+        for i, layer in enumerate(range(num_layers - 1)):
+            ffn.extend(
+                [
+                    activation,
+                    nn.Dropout(dropout),
+                    nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]),
+                ]
+                )
+        ffn.extend(
+            [
+                activation,
+                nn.Dropout(dropout),
+                nn.Linear(hidden_sizes[-1], 1),
+            ]
+        )
+        return nn.Sequential(*ffn)
     
     def build_projection(
         self,
@@ -759,9 +849,9 @@ class G2E_sep_projBoth_FFout(nn.Module):
     ):
         num_layers = len(hidden_sizes)
         ffn = [
-                nn.Dropout(dropout),
+                # nn.Dropout(dropout),
                 nn.Linear(input_dim, hidden_sizes[0])
-            ] # could add nn.Dropout(dropout) if we wish
+            ]
         for i, layer in enumerate(range(num_layers - 1)):
             ffn.extend(
                 [
@@ -818,9 +908,130 @@ class G2E_sep_projBoth_FFout(nn.Module):
                                     batch_pooled_p_mols
                                 )                                               # [bsz, mini_bsz, h] => [bsz, mini_bsz, d]
 
-        diff = torch.abs(proj_p_mols - proj_r_mols)                             # [bsz, mini_bsz, d]
-        prod = proj_r_mols * proj_p_mols                                        # [bsz, mini_bsz, d]
+        diff = proj_p_mols - proj_r_mols # torch.abs(proj_p_mols - proj_r_mols) # [bsz, mini_bsz, d]
+        prod = proj_p_mols * proj_r_mols                                        # [bsz, mini_bsz, d]
 
         concat = torch.cat([proj_r_mols, proj_p_mols, diff, prod], dim=-1)      # [bsz, mini_bsz, d*4]
         energies = self.output(concat)                                          # [bsz, mini_bsz, 1]
+        return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]
+
+
+class G2E_sep_FFout(nn.Module): 
+    # separate encoders, then a final MLP to get the energy
+    def __init__(
+            self,
+            args,
+            encoder_hidden_size,
+            encoder_depth,
+            encoder_dropout,
+            out_hidden_sizes,
+            out_activation,
+            out_dropout,
+            **kwargs
+        ):
+        super().__init__()
+        self.model_repr = "GraphEBM_sep_FFout"
+        self.args = args
+
+        if torch.cuda.is_available() and self.args.dataparallel:
+            self.num_devices = torch.cuda.device_count()
+        else:
+            self.num_devices = 1
+
+        self.encoder_p = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
+                                        n_bond_feat=BOND_FDIM,
+                                        rnn_type="gru",
+                                        h_size=encoder_hidden_size,
+                                        depth=encoder_depth,
+                                        dropout=encoder_dropout)
+        
+        self.encoder_r = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
+                                        n_bond_feat=BOND_FDIM,
+                                        rnn_type="gru",
+                                        h_size=encoder_hidden_size,
+                                        depth=encoder_depth,
+                                        dropout=encoder_dropout)
+
+        out_activation = model_utils.get_activation_function(out_activation)
+        self.output = self.build_output(
+            out_activation, out_hidden_sizes, out_dropout,
+            encoder_hidden_size * 4
+        )
+
+        if args.do_finetune:
+            logging.info("Setting self.reactant first to False for finetuning")
+            self.reactant_first = False
+        else:
+            logging.info("Setting self.reactant first to True for pretraining")
+            self.reactant_first = True
+    
+    def build_output(
+        self,
+        activation: nn.Module,
+        hidden_sizes: List[int],
+        dropout: float,
+        input_dim: int,
+    ):
+        num_layers = len(hidden_sizes)
+        ffn = [
+                # nn.Dropout(dropout),
+                nn.Linear(input_dim, hidden_sizes[0])
+            ]
+        for i, layer in enumerate(range(num_layers - 1)):
+            ffn.extend(
+                [
+                    activation,
+                    nn.Dropout(dropout),
+                    nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]),
+                ]
+                )
+        ffn.extend(
+            [
+                activation,
+                nn.Dropout(dropout),
+                nn.Linear(hidden_sizes[-1], 1),
+            ]
+        )
+        return nn.Sequential(*ffn)
+
+    def forward(self, batch, probs: Optional[torch.Tensor]=None):
+        """
+        batch: a N x K x 1 tensor of N training samples
+            each sample contains a positive rxn on the first column,
+            and K-1 negative rxns on all subsequent columns
+        """
+        graph_tensors, scopes, batch_size = batch
+        hatom_r, hmol_r = self.encoder_r(graph_tensors=graph_tensors,
+                                   scopes=scopes)
+        hatom_p, hmol_p = self.encoder_p(graph_tensors=graph_tensors,
+                                   scopes=scopes)
+
+        hmol_r = [torch.sum(h, dim=0, keepdim=True) for h in hmol_r]        # list of [n_molecules, h] => list of [1, h]
+        hmol_p = [torch.sum(h, dim=0, keepdim=True) for h in hmol_p]        # list of [n_molecules, h] => list of [1, h]
+
+        batch_pooled_hmols = []
+    
+        mols_per_minibatch = len(hmol_r) // batch_size // self.num_devices  # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
+        for i in range(batch_size):
+            if self.reactant_first:                         # (1) r + mini_bsz p
+                r_hmol = hmol_r[i*mols_per_minibatch]                           # [1, h]
+                r_hmols = r_hmol.repeat(mols_per_minibatch - 1, 1)              # [mini_bsz, h]
+                p_hmols = hmol_p[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
+                p_hmols = torch.cat(p_hmols, 0)                                 # [mini_bsz, h]
+            else:
+                p_hmols = hmol_p[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
+                p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
+                r_hmols = hmol_r[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
+                r_hmols = torch.cat(r_hmols, 0)
+
+            diff = p_hmols - r_hmols # torch.abs(p_hmols - r_hmols)             # [mini_bsz, h]
+            prod = r_hmols * p_hmols                                            # [mini_bsz, h]
+
+            pooled_hmols = torch.cat([r_hmols, p_hmols, diff, prod], 1)         # [mini_bsz, h*4]
+            pooled_hmols = torch.unsqueeze(pooled_hmols, 0)                     # [1, mini_bsz, h*4]
+
+            batch_pooled_hmols.append(pooled_hmols)
+
+        batch_pooled_hmols = torch.cat(batch_pooled_hmols, 0)                   # [bsz, mini_bsz, h*4]
+        energies = self.output(batch_pooled_hmols)                              # [bsz, mini_bsz, 1]
         return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]

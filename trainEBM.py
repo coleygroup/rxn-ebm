@@ -49,7 +49,8 @@ def parse_args():
                         help='number of gpus per node')
     parser.add_argument('-nr', '--nr', default=0, type=int,
                         help='ranking within the nodes')
-    parser.add_argument("--local_rank", type=int) # output by torch.distributed.launch
+    # parser.add_argument("--local_rank", type=int) # output by torch.distributed.launch
+    parser.add_argument("--port", type=str, default='12345')
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--mol_smi_filename", help="do not change", type=str,
@@ -150,6 +151,9 @@ def parse_args():
     parser.add_argument("--encoder_hidden_size", help="MPN encoder_hidden_size", type=int, default=256)
     parser.add_argument("--encoder_depth", help="MPN encoder_depth", type=int, default=3)
     parser.add_argument("--encoder_dropout", help="MPN encoder dropout", type=float, default=0)
+    parser.add_argument("--out_hidden_sizes", help="Output hidden sizes", type=int, nargs='+')
+    parser.add_argument("--out_activation", help="Output activation", type=str, default="PReLU")
+    parser.add_argument("--out_dropout", help="Output dropout", type=float, default=0.2)
     parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+')
     parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
     parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
@@ -198,7 +202,7 @@ def main_dist(
     rank = args.nr * args.gpus + gpu
     dist.init_process_group(
         backend='nccl',
-        init_method='tcp://127.0.0.1:12345', # for single-node, multi-GPU training # 'env://',
+        init_method=f'tcp://127.0.0.1:{args.port}', # for single-node, multi-GPU training # 'env://', # 12345
         world_size=args.world_size,
         rank=rank
     )
@@ -264,6 +268,7 @@ def main_dist(
         # reload best checkpoint & use just 1 GPU to run
         args.ddp = False
         args.old_expt_name = args.expt_name
+        args.date_trained = experiment.checkpoint_folder[-11:-1]
         args.load_checkpoint = True
         args.do_test = True
         args.do_not_train = True
@@ -376,12 +381,26 @@ def main(args):
                 "encoder_hidden_size": args.encoder_hidden_size,
                 "encoder_depth": args.encoder_depth,
                 "encoder_dropout": args.encoder_dropout,
+                "out_hidden_sizes": args.out_hidden_sizes,
+                "out_activation": args.out_activation,
+                "out_dropout": args.out_dropout,
                 "proj_hidden_sizes": args.proj_hidden_sizes,
                 "proj_activation": args.proj_activation,
                 "proj_dropout": args.proj_dropout,
             }
             model = G2E.G2E_sep_projBoth_FFout(args, **model_args)
 
+        elif args.model_name == "GraphEBM_sep_FFout":        # Graph to energy, separate encoders, feedforward output
+            model_args = {
+                "encoder_hidden_size": args.encoder_hidden_size,
+                "encoder_depth": args.encoder_depth,
+                "encoder_dropout": args.encoder_dropout,
+                "out_hidden_sizes": args.out_hidden_sizes,
+                "out_activation": args.out_activation,
+                "out_dropout": args.out_dropout,
+            }
+            model = G2E.G2E_sep_FFout(args, **model_args)
+            
         elif args.model_name == "TransformerEBM":           # Sequence to energy
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
             vocab = expt_utils.load_or_create_vocab(args)
@@ -425,11 +444,18 @@ def main(args):
             )
     else:
         if torch.cuda.device_count() > 1 and args.dataparallel:
-            logging.info(f'Using {torch.cuda.device_count()} GPUs!')
+            logging.info(f'Using {torch.cuda.device_count()} GPUs!!!')
             dataparallel = True
             model = nn.DataParallel(model)
+        elif torch.cuda.device_count() > 1:
+            logging.info(f'Using only 1 GPU out of {torch.cuda.device_count()} GPUs! \
+                You should either do --ddp (recommended) or --dataparallel training!')
+            dataparallel = False
+        elif torch.cuda.is_available():
+            logging.info(f"Using 1 GPU out of 1 GPU! Where're the rest?")
+            dataparallel = False
         else:
-            logging.info(f'Using {torch.cuda.device_count()} GPUs!')
+            logging.info(f'Using CPU! Warning! Training will be slowwwwww')
             dataparallel = False
 
         logging.info("Setting up experiment")
@@ -460,24 +486,24 @@ def main(args):
 
         if args.do_test:
             logging.info("Start testing")
-            if args.do_compute_graph_feat and experiment.train_loader is not None:
-                del experiment.train_loader # free up memory
-                gc.collect()
+            # if args.do_compute_graph_feat and experiment.train_loader is not None:
+            #     del experiment.train_loader # free up memory
+            #     gc.collect()
             experiment.test()
 
         if args.do_get_energies_and_acc:
-            for phase in ["valid", "test"]: # "train", 
+            for phase in ["train", "valid", "test"]:  
                 experiment.get_energies_and_loss(
                     phase=phase, save_energies=True, path_to_energies=args.path_to_energies)
 
             # just print accuracies to compare experiments
-            for phase in ["valid", "test"]: # "train", 
+            for phase in ["train", "valid", "test"]:  
                 logging.info(f"\nGetting {phase} accuracies")
                 for k in [1, 3, 5, 10, 20, 50]:
                     experiment.get_topk_acc(phase=phase, k=k)
 
             # full accuracies
-            for phase in ["valid", "test"]: # "train", 
+            for phase in ["train", "valid", "test"]:
                 logging.info(f"\nGetting {phase} accuracies")
                 for k in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200]:
                     experiment.get_topk_acc(phase=phase, k=k)
