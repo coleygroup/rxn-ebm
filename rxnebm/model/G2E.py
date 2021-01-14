@@ -149,6 +149,136 @@ class GRU(nn.Module):
             h = index_scatter(sub_h, h, submess)
         return h
 
+class LSTM(nn.Module):
+
+    def __init__(self,
+                 input_size: int,
+                 h_size: int,
+                 depth: int,
+                 **kwargs):
+        """
+        Parameters
+        ----------
+        input_size: int,
+            Size of the input
+        h_size: int,
+            Hidden state size
+        depth: int,
+            Number of time steps of message passing
+        device: str, default cpu
+            Device used for training
+        """
+        super(LSTM, self).__init__(**kwargs)
+        self.h_size = h_size
+        self.input_size = input_size
+        self.depth = depth
+        self._build_layer_components()
+
+    def _build_layer_components(self):
+        """Build layer components."""
+        self.W_i = nn.Sequential(nn.Linear(self.input_size + self.h_size, self.h_size), nn.Sigmoid())
+        self.W_o = nn.Sequential(nn.Linear(self.input_size + self.h_size, self.h_size), nn.Sigmoid())
+        self.W_f = nn.Sequential(nn.Linear(self.input_size + self.h_size, self.h_size), nn.Sigmoid())
+        self.W = nn.Sequential(nn.Linear(self.input_size + self.h_size, self.h_size), nn.Tanh())
+
+    def get_init_state(self, fmess: torch.Tensor,
+                       init_state: torch.Tensor = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Get the initial hidden state of the RNN.
+
+        Parameters
+        ----------
+        fmess: torch.Tensor,
+            Contains the initial features passed as messages
+        init_state: torch.Tensor, default None
+            Custom initial state supplied.
+        """
+        h = torch.zeros(len(fmess), self.h_size, device=fmess.device)
+        c = torch.zeros(len(fmess), self.h_size, device=fmess.device)
+        if init_state is not None:
+            h = torch.cat((h, init_state), dim=0)
+            c = torch.cat((c, torch.zeros_like(init_state)), dim=0)
+        return h, c
+
+    def get_hidden_state(self, h: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
+        """Gets the hidden state.
+
+        Parameters
+        ----------
+        h: Tuple[torch.Tensor, torch.Tensor],
+            Hidden state tuple of the LSTM
+        """
+        return h[0]
+
+    def LSTM(self, x: torch.Tensor, h_nei: torch.Tensor, c_nei: torch.Tensor) -> torch.Tensor:
+        """Implements the LSTM gating equations.
+
+        Parameters
+        ----------
+        x: torch.Tensor,
+            Input tensor
+        h_nei: torch.Tensor,
+            Hidden states of the neighbors
+        c_nei: torch.Tensor,
+            Memory state of the neighbors
+        """
+        h_sum_nei = h_nei.sum(dim=1)
+        x_expand = x.unsqueeze(1).expand(-1, h_nei.size(1), -1)
+        i = self.W_i( torch.cat([x, h_sum_nei], dim=-1) )
+        o = self.W_o( torch.cat([x, h_sum_nei], dim=-1) )
+        f = self.W_f( torch.cat([x_expand, h_nei], dim=-1) )
+        u = self.W( torch.cat([x, h_sum_nei], dim=-1) )
+        c = i * u + (f * c_nei).sum(dim=1)
+        h = o * torch.tanh(c)
+        return h, c
+
+    def forward(self, fmess: torch.Tensor, bgraph: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass of the RNN.
+
+        Parameters
+        ----------
+        fmess: torch.Tensor,
+            Contains the initial features passed as messages
+        bgraph: torch.Tensor,
+            Bond graph tensor. Contains who passes messages to whom.
+        """
+        h = torch.zeros(fmess.size(0), self.h_size, device=fmess.device)
+        c = torch.zeros(fmess.size(0), self.h_size, device=fmess.device)
+        mask = torch.ones(h.size(0), 1, device=h.device)
+        mask[0, 0] = 0                  # first message is padding
+
+        for i in range(self.depth):
+            h_nei = index_select_ND(h, 0, bgraph)
+            c_nei = index_select_ND(c, 0, bgraph)
+            h, c = self.LSTM(fmess, h_nei, c_nei)
+            h = h * mask
+            c = c * mask
+        return h, c
+
+    def sparse_forward(self, h: torch.Tensor, fmess: torch.Tensor,
+                       submess: torch.Tensor, bgraph: torch.Tensor) -> torch.Tensor:
+        """Unknown use.
+
+        Parameters
+        ----------
+        h: torch.Tensor,
+            Hidden state tensor
+        fmess: torch.Tensor,
+            Contains the initial features passed as messages
+        submess: torch.Tensor,
+        bgraph: torch.Tensor,
+            Bond graph tensor. Contains who passes messages to whom.
+        """
+        h, c = h
+        mask = h.new_ones(h.size(0)).scatter_(0, submess, 0)
+        h = h * mask.unsqueeze(1)
+        c = c * mask.unsqueeze(1)
+        for i in range(self.depth):
+            h_nei = index_select_ND(h, 0, bgraph)
+            c_nei = index_select_ND(c, 0, bgraph)
+            sub_h, sub_c = self.LSTM(fmess, h_nei, c_nei)
+            h = index_scatter(sub_h, h, submess)
+            c = index_scatter(sub_c, c, submess)
+        return h, c
 
 class MPNEncoder(nn.Module):
     """MessagePassing Network based encoder. Messages are updated using an RNN
@@ -240,7 +370,8 @@ class GraphFeatEncoder(nn.Module):
                  rnn_type: str,
                  h_size: int,
                  depth: int,
-                 dropout: float = 0.1
+                 dropout: float = 0.1,
+                 atom_pool_type: str = "sum"
                  ):
         """
         Parameters
@@ -264,6 +395,7 @@ class GraphFeatEncoder(nn.Module):
         self.h_size = h_size
         self.depth = depth
         self.dropout = dropout
+        self.atom_pool_type = atom_pool_type
 
         self._build_layers()
 
@@ -275,6 +407,10 @@ class GraphFeatEncoder(nn.Module):
                                   h_size=self.h_size,
                                   depth=self.depth,
                                   dropout=self.dropout)
+        self.attn_hidden_1 = nn.Linear(self.h_size, self.h_size)
+        self.elu = nn.ELU()
+        self.attn_hidden_2 = nn.Linear(self.h_size, self.h_size)
+        self.attn_output = nn.Linear(self.h_size * 2, self.h_size)
 
     def forward(self, graph_tensors: Tuple[torch.Tensor, ...], scopes) -> Tuple[torch.Tensor, ...]:
         """
@@ -303,6 +439,35 @@ class GraphFeatEncoder(nn.Module):
         hatom, _ = self.encoder(hnode, hmess, agraph, bgraph, mask=None)
 
         hmol = []
+        for scope in atom_scope:
+            hmol_single = []
+            for start, length in scope:
+                h = hatom[start:start+length]
+
+                if self.atom_pool_type == "sum":                # Sum pooling
+                    hmol_single.append(h.sum(dim=0))
+                elif self.atom_pool_type == "mean":             # Mean pooling
+                    hmol_single.append(h.mean(dim=0))
+                elif self.atom_pool_type == "attention":        # Attention pooling
+                    h_mean = h.mean(dim=0)
+                    attn_context = self.elu(self.attn_hidden_1(h))          # [length, h] -> [length, h]
+                    attn_logit = self.attn_hidden_2(attn_context)           # [length, h] -> [length, h]
+
+                    attn_weight = torch.exp(attn_logit)
+                    attn_sum = torch.sum(h * attn_weight, dim=0)            # [length, h] -> [h]
+                    attn_pool = attn_sum / attn_weight.sum(dim=0)
+
+                    attn_pool = torch.cat([h_mean, attn_pool])              # [h] -> [h*2]
+                    attn_pool = torch.tanh(self.attn_output(attn_pool))     # [h*2] -> [h]
+
+                    hmol_single.append(attn_pool)
+                else:
+                    raise NotImplementedError(f"Unsupported atom_pool_type {self.atom_pool_type}! "
+                                              f"Please use sum/mean/attention")
+
+            hmol.append(torch.stack(hmol_single))
+
+        """Deprecated
         # if isinstance(atom_scope[0], list):
         if True:
             for scope in atom_scope:
@@ -316,24 +481,16 @@ class GraphFeatEncoder(nn.Module):
             #         for scope in atom_scope]
         else:
             hmol = torch.stack([hatom[st:st+le].sum(dim=0) for st, le in atom_scope])
+        """
         return hatom, hmol
 
 
 class G2E(nn.Module):
-    def __init__(
-            self, 
-            args, 
-            encoder_hidden_size,
-            encoder_depth,
-            encoder_dropout,
-            out_activation,
-            out_hidden_sizes,
-            out_dropout,
-            **kwargs
-        ):
+    def __init__(self, args):
         super().__init__()
         self.model_repr = "GraphEBM"
         self.args = args
+        self.mol_pool_type = args.mol_pool_type
 
         if torch.cuda.is_available() and self.args.dataparallel:
             self.num_devices = torch.cuda.device_count()
@@ -342,17 +499,16 @@ class G2E(nn.Module):
         
         self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
-                                        rnn_type="gru",
-                                        h_size=encoder_hidden_size,
-                                        depth=encoder_depth,
-                                        dropout=encoder_dropout)
-        out_activation = model_utils.get_activation_function(out_activation)
+                                        rnn_type=args.encoder_rnn_type,
+                                        h_size=args.encoder_hidden_size,
+                                        depth=args.encoder_depth,
+                                        dropout=args.encoder_dropout,
+                                        atom_pool_type=args.atom_pool_type)
+        out_activation = model_utils.get_activation_function(args.out_activation)
         self.output = self.build_output(
-            out_activation, out_hidden_sizes, out_dropout,
-            encoder_hidden_size * 4
+            out_activation, args.out_hidden_sizes, args.out_dropout,
+            args.encoder_hidden_size * 4
         )
-        # nn.Linear(encoder_hidden_size * 4, 1)
-        
         if args.do_finetune:
             logging.info("Setting self.reactant first to False for finetuning")
             self.reactant_first = False
@@ -432,7 +588,13 @@ class G2E(nn.Module):
         # want energies to be 2 * 32
         # list of 66 [n_molecules, 400] => [2, 32]
 
-        hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]
+        if self.mol_pool_type == "sum":
+            hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]
+        elif self.mol_pool_type == "mean":
+            hmol = [torch.mean(h, dim=0, keepdim=True) for h in hmol]
+        else:
+            raise NotImplementedError(f"Unsupported mol_pool_type {self.mol_pool_type}! "
+                                      f"Please use sum/mean")
         # logging.info([h.size() for h in hmol])
 
         batch_pooled_hmols = []
@@ -467,6 +629,116 @@ class G2E(nn.Module):
         # logging.info("-------energies-------")
         # logging.info(energies)
         return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]
+
+
+class G2ECross(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.model_repr = "GraphEBM_Cross"
+        self.args = args
+        self.mol_pool_type = args.mol_pool_type
+
+        if torch.cuda.is_available() and self.args.dataparallel:
+            self.num_devices = torch.cuda.device_count()
+        else:
+            self.num_devices = 1
+
+        self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
+                                        n_bond_feat=BOND_FDIM,
+                                        rnn_type=args.encoder_rnn_type,
+                                        h_size=args.encoder_hidden_size,
+                                        depth=args.encoder_depth,
+                                        dropout=args.encoder_dropout,
+                                        atom_pool_type=args.atom_pool_type)
+
+        self.h_size = args.encoder_hidden_size
+
+        self.SegmentEmbed = nn.Linear(6, self.h_size, bias=False)
+
+        self.attn_hidden_1 = nn.Linear(self.h_size, self.h_size)
+        self.elu = nn.ELU()
+        self.attn_hidden_2 = nn.Linear(self.h_size, self.h_size)
+        self.attn_output = nn.Linear(self.h_size * 2, self.h_size)
+
+        self.output = nn.Linear(args.encoder_hidden_size, 1)
+        if args.do_finetune:
+            logging.info("Setting self.reactant first to False for finetuning")
+            self.reactant_first = False
+        else:
+            logging.info("Setting self.reactant first to True for pretraining")
+            self.reactant_first = True
+        logging.info("Initializing weights")
+        model_utils.initialize_weights(self)
+
+    def segment_embedding(self, side: str, idx: int):
+        if side == "p":
+            idx += 3
+        one_hot_idx = torch.zeros(6, dtype=torch.float).cuda()
+        one_hot_idx[idx] = 1
+
+        return self.SegmentEmbed(one_hot_idx)
+
+    def forward(self, batch, probs: Optional[torch.Tensor] = None):
+        """
+        batch: a N x K x 1 tensor of N training samples
+            each sample contains a positive rxn on the first column,
+            and K-1 negative rxns on all subsequent columns
+        """
+        graph_tensors, scopes, batch_size = batch
+        hatom, _ = self.encoder(graph_tensors=graph_tensors,
+                                scopes=scopes)
+        atom_scope, bond_scope = scopes
+
+        # Operates on hatom (vs. hmol) so it's pretty much blind to atom_pool_type and mol_pool_type
+
+        mols_per_minibatch = len(atom_scope) // batch_size
+
+        batch_pooled_hmols = []
+        for i in range(batch_size):
+            if self.reactant_first:
+                raise NotImplementedError
+            else:
+                atom_scope_p = atom_scope[i*mols_per_minibatch]
+                atom_scope_r = atom_scope[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
+
+                # product atom encodings with segment embedding
+                h_p = []
+                for segment_idx_p, (start, length) in enumerate(atom_scope_p):
+                    segment_embedding = self.segment_embedding("p", segment_idx_p)
+                    h_p.append(hatom[start:start+length] + segment_embedding)
+
+                h_rxn = []
+                for scope in atom_scope_r:
+                    # reactant atom encodings with segment embedding, for each r in the minibatch
+                    h = []
+                    for segment_idx_r, (start, length) in enumerate(scope):
+                        segment_embedding = self.segment_embedding("r", segment_idx_r)
+                        h.append(hatom[start:start + length] + segment_embedding)
+                    h.extend(h_p)               # combine r + p atoms to make it a 'cross-encoder'
+                    h = torch.cat(h, dim=0)
+
+                    # Attention pool over all atoms in the reaction
+                    h_mean = h.mean(dim=0)
+                    attn_context = self.elu(self.attn_hidden_1(h))          # [length, h] -> [length, h]
+                    attn_logit = self.attn_hidden_2(attn_context)           # [length, h] -> [length, h]
+
+                    attn_weight = torch.exp(attn_logit)
+                    attn_sum = torch.sum(h * attn_weight, dim=0)            # [length, h] -> [h]
+                    attn_pool = attn_sum / attn_weight.sum(dim=0)
+
+                    attn_pool = torch.cat([h_mean, attn_pool])              # [h] -> [h*2]
+                    attn_pool = torch.tanh(self.attn_output(attn_pool))     # [h*2] -> [h]
+
+                    h_rxn.append(attn_pool)
+
+                h_rxn = torch.stack(h_rxn, dim=0)                           # [mini_bsz, h]
+
+            batch_pooled_hmols.append(h_rxn)
+
+        batch_pooled_hmols = torch.stack(batch_pooled_hmols, 0)             # [bsz, mini_bsz, h]
+        energies = self.output(batch_pooled_hmols)                          # [bsz, mini_bsz, 1]
+
+        return energies.squeeze(dim=-1)
 
 class G2E_sep(nn.Module): # separate encoders
     def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, **kwargs):

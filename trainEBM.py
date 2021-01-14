@@ -17,7 +17,6 @@ from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_dist, expt_utils
 from rxnebm.model import FF, G2E, S2E, model_utils
 from rxnebm.model.FF_args import FF_args
-from rxnebm.model.G2E_args import G2E_args
 from rxnebm.model.S2E_args import S2E_args
 
 torch.backends.cudnn.benchmark = True
@@ -154,6 +153,11 @@ def parse_args():
     parser.add_argument("--out_hidden_sizes", help="Output hidden sizes", type=int, nargs='+')
     parser.add_argument("--out_activation", help="Output activation", type=str, default="PReLU")
     parser.add_argument("--out_dropout", help="Output dropout", type=float, default=0.2)
+    parser.add_argument("--encoder_rnn_type", help="RNN type for graph encoder (gru/lstm)", type=str, default="gru")
+    parser.add_argument("--atom_pool_type", help="Atom pooling method (sum/mean/attention)",
+                        type=str, default="sum")
+    parser.add_argument("--mol_pool_type", help="Molecule(s) pooling method (sum/mean)",
+                        type=str, default="sum")
     parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+')
     parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
     parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
@@ -315,6 +319,7 @@ def main(args):
     '''
 
     vocab = {}
+    model_args = {}
     if args.load_checkpoint:
         if not args.ddp:
             logging.info("Loading from checkpoint")
@@ -350,12 +355,9 @@ def main(args):
             model = FF.FeedforwardSingle(**model_args, **fp_args)
 
         elif args.model_name == "GraphEBM":                 # Graph to energy
-            model_args = {
-                "encoder_hidden_size": args.encoder_hidden_size,
-                "encoder_depth": args.encoder_depth,
-                "encoder_dropout": args.encoder_dropout
-            }
-            model = G2E.G2E(args, **model_args)
+            model = G2E.G2E(args)
+        elif args.model_name == "GraphEBM_Cross":           # Graph to energy, cross attention pool for r and p atoms
+            model = G2E.G2ECross(args)
         
         elif args.model_name == "GraphEBM_sep":                 # Graph to energy, separate encoders
             model_args = {
@@ -417,7 +419,7 @@ def main(args):
         logging.info("Logging model summary")
         logging.info(model)
         logging.info(f"\nModel #Params: {sum([x.nelement() for x in model.parameters()]) / 1000} k")
-        logging.info(f'{model_args}')
+        logging.info(f'Model args: {model_args}')
     
     if args.ddp:
         args.world_size = args.gpus * args.nodes
