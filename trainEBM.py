@@ -351,6 +351,8 @@ def main(args):
 
         elif args.model_name == "GraphEBM":                 # Graph to energy
             model = G2E.G2E(args)
+        elif args.model_name == "GraphEBM_Cross":           # Graph to energy, cross attention pool for r and p atoms
+            model = G2E.G2ECross(args)
         
         elif args.model_name == "GraphEBM_sep":                 # Graph to energy, separate encoders
             model_args = {

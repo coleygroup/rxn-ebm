@@ -600,6 +600,116 @@ class G2E(nn.Module):
         # logging.info(energies)
         return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]
 
+
+class G2ECross(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.model_repr = "GraphEBM_Cross"
+        self.args = args
+        self.mol_pool_type = args.mol_pool_type
+
+        if torch.cuda.is_available() and self.args.dataparallel:
+            self.num_devices = torch.cuda.device_count()
+        else:
+            self.num_devices = 1
+
+        self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
+                                        n_bond_feat=BOND_FDIM,
+                                        rnn_type=args.encoder_rnn_type,
+                                        h_size=args.encoder_hidden_size,
+                                        depth=args.encoder_depth,
+                                        dropout=args.encoder_dropout,
+                                        atom_pool_type=args.atom_pool_type)
+
+        self.h_size = args.encoder_hidden_size
+
+        self.SegmentEmbed = nn.Linear(6, self.h_size, bias=False)
+
+        self.attn_hidden_1 = nn.Linear(self.h_size, self.h_size)
+        self.elu = nn.ELU()
+        self.attn_hidden_2 = nn.Linear(self.h_size, self.h_size)
+        self.attn_output = nn.Linear(self.h_size * 2, self.h_size)
+
+        self.output = nn.Linear(args.encoder_hidden_size, 1)
+        if args.do_finetune:
+            logging.info("Setting self.reactant first to False for finetuning")
+            self.reactant_first = False
+        else:
+            logging.info("Setting self.reactant first to True for pretraining")
+            self.reactant_first = True
+        logging.info("Initializing weights")
+        model_utils.initialize_weights(self)
+
+    def segment_embedding(self, side: str, idx: int):
+        if side == "p":
+            idx += 3
+        one_hot_idx = torch.zeros(6, dtype=torch.float).cuda()
+        one_hot_idx[idx] = 1
+
+        return self.SegmentEmbed(one_hot_idx)
+
+    def forward(self, batch, probs: Optional[torch.Tensor] = None):
+        """
+        batch: a N x K x 1 tensor of N training samples
+            each sample contains a positive rxn on the first column,
+            and K-1 negative rxns on all subsequent columns
+        """
+        graph_tensors, scopes, batch_size = batch
+        hatom, _ = self.encoder(graph_tensors=graph_tensors,
+                                scopes=scopes)
+        atom_scope, bond_scope = scopes
+
+        # Operates on hatom (vs. hmol) so it's pretty much blind to atom_pool_type and mol_pool_type
+
+        mols_per_minibatch = len(atom_scope) // batch_size
+
+        batch_pooled_hmols = []
+        for i in range(batch_size):
+            if self.reactant_first:
+                raise NotImplementedError
+            else:
+                atom_scope_p = atom_scope[i*mols_per_minibatch]
+                atom_scope_r = atom_scope[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
+
+                # product atom encodings with segment embedding
+                h_p = []
+                for segment_idx_p, (start, length) in enumerate(atom_scope_p):
+                    segment_embedding = self.segment_embedding("p", segment_idx_p)
+                    h_p.append(hatom[start:start+length] + segment_embedding)
+
+                h_rxn = []
+                for scope in atom_scope_r:
+                    # reactant atom encodings with segment embedding, for each r in the minibatch
+                    h = []
+                    for segment_idx_r, (start, length) in enumerate(scope):
+                        segment_embedding = self.segment_embedding("r", segment_idx_r)
+                        h.append(hatom[start:start + length] + segment_embedding)
+                    h.extend(h_p)               # combine r + p atoms to make it a 'cross-encoder'
+                    h = torch.cat(h, dim=0)
+
+                    # Attention pool over all atoms in the reaction
+                    h_mean = h.mean(dim=0)
+                    attn_context = self.elu(self.attn_hidden_1(h))          # [length, h] -> [length, h]
+                    attn_logit = self.attn_hidden_2(attn_context)           # [length, h] -> [length, h]
+
+                    attn_weight = torch.exp(attn_logit)
+                    attn_sum = torch.sum(h * attn_weight, dim=0)            # [length, h] -> [h]
+                    attn_pool = attn_sum / attn_weight.sum(dim=0)
+
+                    attn_pool = torch.cat([h_mean, attn_pool])              # [h] -> [h*2]
+                    attn_pool = torch.tanh(self.attn_output(attn_pool))     # [h*2] -> [h]
+
+                    h_rxn.append(attn_pool)
+
+                h_rxn = torch.stack(h_rxn, dim=0)                           # [mini_bsz, h]
+
+            batch_pooled_hmols.append(h_rxn)
+
+        batch_pooled_hmols = torch.stack(batch_pooled_hmols, 0)             # [bsz, mini_bsz, h]
+        energies = self.output(batch_pooled_hmols)                          # [bsz, mini_bsz, 1]
+
+        return energies.squeeze(dim=-1)
+
 class G2E_sep(nn.Module): # separate encoders
     def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, **kwargs):
         super().__init__()
