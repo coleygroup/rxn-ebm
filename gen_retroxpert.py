@@ -68,7 +68,8 @@ def process_csv(
                         else:
                             try:
                                 cand_ = Chem.MolFromSmiles(cand)
-                                if cand_ is not None: # https://github.com/rdkit/rdkit/issues/2289
+                                if cand_ is not None and cand_.GetNumAtoms() > cand.count('.') + 1: 
+                                    # https://github.com/rdkit/rdkit/issues/2289 --> explicit valence for N exceeds 3 etc.
                                     predictions.append(cand)
                             except:
                                 continue
@@ -113,7 +114,8 @@ def process_csv(
                         else:
                             try:
                                 cand_ = Chem.MolFromSmiles(cand)
-                                if cand_ is not None: # https://github.com/rdkit/rdkit/issues/2289
+                                if cand_ is not None and cand_.GetNumAtoms() > cand.count('.') + 1: 
+                                    # https://github.com/rdkit/rdkit/issues/2289
                                     cand_split = cand.split('.')
                                     cand_split.sort()
                                     if cand_split == r_smi_true_split:

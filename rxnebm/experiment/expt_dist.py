@@ -174,7 +174,7 @@ class Experiment:
         self.train_topk_accs = {}  
         self.val_topk_accs = {}  
         self.test_topk_accs = {} 
-        self.k_to_calc = [1, 2, 3, 5, 10, 50]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
+        self.k_to_calc = [1, 3, 5, 10, 20]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
         k_not_to_calc = []
         for k in self.k_to_calc:
             if k > self.maxk:
@@ -873,18 +873,22 @@ class Experiment:
                     break
 
             if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
-                logging.info('\nCalled a step of ReduceLROnPlateau')
                 if self.args.lr_scheduler_criteria == 'loss':
                     self.lr_scheduler.step(self.val_losses[-1])
                 elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
                     self.lr_scheduler.step(self.val_topk_accs[1][-1])
-                
+                logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
                 # if self.optimizer.param_groups[0]['lr'] < self.current_lr:
                 #     # reset early stop counter
                 #     logging.info('Reset early stopping patience counter')
                 #     self.wait = 0
                 # self.current_lr = self.optimizer.param_groups[0]['lr']
-
+            if 3 in self.train_topk_accs:
+                epoch_top3_train_acc = self.train_topk_accs[3][-1]
+                epoch_top3_val_acc = self.val_topk_accs[3][-1]
+            else:
+                epoch_top3_train_acc = np.nan
+                epoch_top3_val_acc = np.nan
             if 5 in self.train_topk_accs:
                 epoch_top5_train_acc = self.train_topk_accs[5][-1]
                 epoch_top5_val_acc = self.val_topk_accs[5][-1]
@@ -897,13 +901,21 @@ class Experiment:
             else:
                 epoch_top10_train_acc = np.nan
                 epoch_top10_val_acc = np.nan
+            if 20 in self.train_topk_accs:
+                epoch_top20_train_acc = self.train_topk_accs[20][-1]
+                epoch_top20_val_acc = self.val_topk_accs[20][-1]
+            else:
+                epoch_top20_train_acc = np.nan
+                epoch_top20_val_acc = np.nan
             if self.rank == 0:
                 logging.info(
                     f"\nEnd of epoch: {epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
-                    \ntop-5 train acc: {epoch_top5_train_acc:.4f}, top-10 train acc: {epoch_top10_train_acc:.4f}, \
+                    \ntop-3 train acc: {epoch_top3_train_acc:.4f}, top-5 train acc: {epoch_top5_train_acc:.4f}, \
+                    \ntop-10 train acc: {epoch_top10_train_acc:.4f}, top-20 train acc: {epoch_top20_train_acc:.4f}, \
                     \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
-                    \ntop-5 val acc: {epoch_top5_val_acc:.4f}, top-10 val acc: {epoch_top10_val_acc:.4f} \
+                    \ntop-3 val acc: {epoch_top3_val_acc:.4f}, top-5 val acc: {epoch_top5_val_acc:.4f} \
+                    \ntop-10 val acc: {epoch_top10_val_acc:.4f}, top-20 val acc: {epoch_top20_val_acc:.4f} \
                     \n"
                 )
                 if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < 1e-6:

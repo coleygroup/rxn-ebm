@@ -75,7 +75,6 @@ def load_model_opt_and_stats(
     checkpoint_folder: Union[str, bytes, os.PathLike],
     model_name: str = "FeedforwardFingerprint",
     optimizer_name: str = "Adam",
-    load_best: bool = True,
     load_epoch : Optional[int] = None
 ):
     """
@@ -85,13 +84,8 @@ def load_model_opt_and_stats(
         filename or pathlike object to the saved stats dictionary (.pkl)
     checkpoint_folder : Union[str, bytes, os.PathLike]
         path to the checkpoint folder containing the .pth.tar file of the saved model & optimizer weights
-    load_best : bool (Default = True)
-        whether to load the checkpointed model from the best epoch (based on validation loss)
-        if false, load_epochs must be provided
     load_epoch : int (Default = None)
         the end of the epoch to load the checkpointed model from
-
-    TODO: will need to specify cuda:device_id if doing distributed training
     """
     curr_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     saved_stats = torch.load(
@@ -131,6 +125,8 @@ def load_model_opt_and_stats(
             saved_model = G2E.G2E_projBoth(args, **saved_stats["model_args"])
         elif model_name == "GraphEBM_sep_projBoth_FFout":
             saved_model = G2E.G2E_sep_projBoth_FFout(args, **saved_stats["model_args"])
+        elif model_name == "GraphEBM_sep_FFout":
+            saved_model = G2E.G2E_sep_FFout(args, **saved_stats["model_args"])
         elif model_name == "GraphEBM_sep":
             saved_model = G2E.G2E_sep(args, **saved_stats["model_args"])
         elif model_name == "TransformerEBM":
@@ -138,8 +134,10 @@ def load_model_opt_and_stats(
             vocab = load_or_create_vocab(args)
             saved_model = S2E.S2E(args, vocab, **saved_stats["model_args"])
         else:
-            raise ValueError("Only FeedforwardSingle, FeedforwardTriple3indiv3prod1cos, "
-                             "GraphEBM, GraphEBM_projBoth and TransformerEBM are supported currently!")
+            raise ValueError("Only FeedforwardSingle, FeedforwardTriple3indiv3prod1cos, \
+                             GraphEBM, GraphEBM_projBoth, GraphEBM_sep_projBoth_FFout, \
+                             GraphEBM_sep_FFout, GraphEBM_sep \
+                             and TransformerEBM are supported currently!")
 
         # override bug in name of optimizer when saving checkpoint
         saved_stats["train_args"]["optimizer"] = model_utils.get_optimizer(optimizer_name)
@@ -163,7 +161,7 @@ def load_model_opt_and_stats(
                         state[k] = v.cuda()
 
     except Exception as e:
-        logging.info(e)
+        print(e)
         # logging.info("best_epoch: {}".format(saved_stats["best_epoch"]))
 
     return saved_model, saved_optimizer, saved_stats

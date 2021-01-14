@@ -61,6 +61,11 @@ def get_features_per_graph_helper(_args: Tuple[int, List[str]]):
 
 def get_features_per_graph_helper_finetune(_args: Tuple[int, List[str]]):
     i, rxn_smiles = _args
+    # if i > 1600 and i < 1700:
+    #     if i % 1 == 0:
+    #         logging.info(f"Processing {i}th rxn_smi")      
+    # elif i % 100 == 0:
+    #     logging.info(f"Processing {i}th rxn_smi")
     if i % 1000 == 0:
         logging.info(f"Processing {i}th rxn_smi")
 
@@ -591,7 +596,7 @@ class ReactionDatasetSMILES(Dataset):
                             smiles = []
                             for j in range(1, self.args.minibatch_eval + 1): # go through columns for proposed precursors
                                 cand = row[f"cand_precursor_{j}"]
-                                if cand.isnumeric() and int(cand) == 9999: # actly can break the loop (but need change if else flow)
+                                if cand.isnumeric() and int(cand) == 9999: # actly can break the loop (but need change if else flow) # cand.isnumeric() and 
                                     continue
                                 smiles.append(f"{cand}>>{p_smi}")
                             self.all_smiles.append(smiles)
