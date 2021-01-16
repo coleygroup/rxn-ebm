@@ -35,7 +35,7 @@ def parse_args():
     parser.add_argument("--onthefly", help="whether to do on-the-fly computation", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default=date.today().strftime("%d_%m_%Y"))
-    parser.add_argument("--load_epoch", help="epoch to load from", type=int, default=None)
+    parser.add_argument("--load_epoch", help="epoch to load from", type=int)
     parser.add_argument("--expt_name", help="experiment name", type=str, default="")
     parser.add_argument("--old_expt_name", help="old experiment name", type=str, default="")
     parser.add_argument("--checkpoint_folder", help="checkpoint folder",
@@ -48,7 +48,6 @@ def parse_args():
                         help='number of gpus per node')
     parser.add_argument('-nr', '--nr', default=0, type=int,
                         help='ranking within the nodes')
-    # parser.add_argument("--local_rank", type=int) # output by torch.distributed.launch
     parser.add_argument("--port", type=str, default='12345')
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
@@ -86,7 +85,7 @@ def parse_args():
     parser.add_argument("--prodfp_size", help="product fp size", type=int, default=16384)
     parser.add_argument("--difffp_size", help="product fp size", type=int, default=16384)
     parser.add_argument("--fp_radius", help="fp radius", type=int, default=3)
-    parser.add_argument("--rxn_type", help="aggregation type", type=str, default="diff")
+    parser.add_argument("--rxn_type", help="aggregation type", type=str, default="hybrid_all")
     parser.add_argument("--fp_type", help="fp type", type=str, default="count")
     # training params
     parser.add_argument("--batch_size", help="batch_size", type=int, default=128)
@@ -100,11 +99,14 @@ def parse_args():
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
-    parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < 1e-6", 
+    parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < --lr_floor", 
                         action="store_true", default=False)
+    parser.add_argument("--lr_floor", help="LR below which training will stop", type=float, default=1e-7)
     parser.add_argument("--lr_min", help="minimum learning rate (CosineAnnealingWarmRestarts)", 
                         type=float, default=0)
-    parser.add_argument("--lr_cooldown", help="epochs to wait before resuming normal operation (ReduceLROnPlateau)", 
+    parser.add_argument("--new_lr", help="new learning rate after reloading checkpoint", 
+                        type=float)
+    parser.add_argument("--lr_cooldown", help="epochs to wait before resuming normal operation (ReduceLROnPlateau)",
                         type=int, default=0)
     parser.add_argument("--lr_scheduler",
                         help="learning rate schedule ['ReduceLROnPlateau', 'CosineAnnealingWarmRestarts', 'OneCycleLR']", 
@@ -145,11 +147,13 @@ def parse_args():
     parser.add_argument("--drop_last",
                         help="Whether to drop last minibatch in train/valid/test dataloader",
                         action="store_true")
-    # model params, for now just use model_args with different models
-    # G2E args
-    parser.add_argument("--encoder_hidden_size", help="MPN encoder_hidden_size", type=int, default=256)
+    # model params, TODO: add S2E args here
+    # G2E/FF args
+    parser.add_argument("--encoder_hidden_size", help="MPN/FFN encoder_hidden_size", type=int, nargs='+', default=256)
+    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size", type=int, default=256)
     parser.add_argument("--encoder_depth", help="MPN encoder_depth", type=int, default=3)
-    parser.add_argument("--encoder_dropout", help="MPN encoder dropout", type=float, default=0)
+    parser.add_argument("--encoder_dropout", help="MPN/FFN encoder dropout", type=float, default=0)
+    parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="PReLU") # TODO: add into G2E
     parser.add_argument("--out_hidden_sizes", help="Output hidden sizes", type=int, nargs='+')
     parser.add_argument("--out_activation", help="Output activation", type=str, default="PReLU")
     parser.add_argument("--out_dropout", help="Output dropout", type=float, default=0.2)
@@ -272,7 +276,7 @@ def main_dist(
         # reload best checkpoint & use just 1 GPU to run
         args.ddp = False
         args.old_expt_name = args.expt_name
-        args.date_trained = experiment.checkpoint_folder[-11:-1]
+        args.date_trained = str(args.checkpoint_folder)[-10:]
         args.load_checkpoint = True
         args.do_test = True
         args.do_not_train = True
@@ -292,8 +296,6 @@ def main(args):
     begin_epoch = 0
     augmentations = {
         "rdm": {"num_neg": 2},
-        # "cos": {"num_neg": 0, "query_params": None},
-        # "bit": {"num_neg": 0, "num_bits": 3, "increment_bits": 1},
         "mut": {"num_neg": 13}
     }
 
@@ -320,6 +322,9 @@ def main(args):
 
     vocab = {}
     model_args = {}
+    if isinstance(args.encoder_hidden_size, list) and args.model_name.split('_')[0] == 'GraphEBM':
+        assert len(args.encoder_hidden_size) == 1, 'MPN encoder_hidden_size must be a single integer!'
+        args.encoder_hidden_size = args.encoder_hidden_size[0]
     if args.load_checkpoint:
         if not args.ddp:
             logging.info("Loading from checkpoint")
@@ -328,7 +333,7 @@ def main(args):
         )
         saved_stats_filename = f'{args.model_name}_{args.old_expt_name}_stats.pkl'
         saved_model, saved_optimizer, saved_stats = expt_utils.load_model_opt_and_stats(
-            args, saved_stats_filename, old_checkpoint_folder, args.model_name, args.optimizer,
+            args, saved_stats_filename, old_checkpoint_folder, args.optimizer,
             load_epoch=args.load_epoch 
         )
         if not args.ddp:
@@ -349,64 +354,25 @@ def main(args):
     else:
         if not args.ddp:
             logging.info(f"Not loading from checkpoint, creating model {args.model_name}")
-        if args.model_name == "FeedforwardEBM":
-            model_args = FF_args
-            fp_args = args_to_dict(args, "fp_args")
-            model = FF.FeedforwardSingle(**model_args, **fp_args)
+        if args.model_name == "FeedforwardEBM" or args.model_name == "FeedforwardTriple3indiv3prod1cos":
+            model = FF.FeedforwardTriple3indiv3prod1cos(args)
 
         elif args.model_name == "GraphEBM":                 # Graph to energy
             model = G2E.G2E(args)
         elif args.model_name == "GraphEBM_Cross":           # Graph to energy, cross attention pool for r and p atoms
             model = G2E.G2ECross(args)
-        
         elif args.model_name == "GraphEBM_sep":                 # Graph to energy, separate encoders
-            model_args = {
-                "encoder_hidden_size": args.encoder_hidden_size,
-                "encoder_depth": args.encoder_depth,
-                "encoder_dropout": args.encoder_dropout
-            }
-            model = G2E.G2E_sep(args, **model_args)
-            
+            raise NotImplementedError('No longer implemented. Use GraphEBM_sep_FFout')
         elif args.model_name == "GraphEBM_projBoth":        # Graph to energy, project both reactants & products w/ dot product output
-            model_args = {
-                "encoder_hidden_size": args.encoder_hidden_size,
-                "encoder_depth": args.encoder_depth,
-                "encoder_dropout": args.encoder_dropout,
-                "proj_hidden_sizes": args.proj_hidden_sizes,
-                "proj_activation": args.proj_activation,
-                "proj_dropout": args.proj_dropout,
-            }
-            model = G2E.G2E_projBoth(args, **model_args)
-        
+            model = G2E.G2E_projBoth(args)
         elif args.model_name == "GraphEBM_sep_projBoth_FFout":        # Graph to energy, separate encoders + projections, feedforward output
-            model_args = {
-                "encoder_hidden_size": args.encoder_hidden_size,
-                "encoder_depth": args.encoder_depth,
-                "encoder_dropout": args.encoder_dropout,
-                "out_hidden_sizes": args.out_hidden_sizes,
-                "out_activation": args.out_activation,
-                "out_dropout": args.out_dropout,
-                "proj_hidden_sizes": args.proj_hidden_sizes,
-                "proj_activation": args.proj_activation,
-                "proj_dropout": args.proj_dropout,
-            }
-            model = G2E.G2E_sep_projBoth_FFout(args, **model_args)
-
+            model = G2E.G2E_sep_projBoth_FFout(args)
         elif args.model_name == "GraphEBM_sep_FFout":        # Graph to energy, separate encoders, feedforward output
-            model_args = {
-                "encoder_hidden_size": args.encoder_hidden_size,
-                "encoder_depth": args.encoder_depth,
-                "encoder_dropout": args.encoder_dropout,
-                "out_hidden_sizes": args.out_hidden_sizes,
-                "out_activation": args.out_activation,
-                "out_dropout": args.out_dropout,
-            }
-            model = G2E.G2E_sep_FFout(args, **model_args)
+            model = G2E.G2E_sep_FFout(args)
             
         elif args.model_name == "TransformerEBM":           # Sequence to energy
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
             vocab = expt_utils.load_or_create_vocab(args)
-
             model_args = S2E_args
             model = S2E.S2E(args, vocab, **model_args)
         else:

@@ -817,7 +817,7 @@ class Experiment:
                 \ntop-5 val acc: {epoch_top5_val_acc:.4f}, top-10 val acc: {epoch_top10_val_acc:.4f} \
                 \n"
             )
-            if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < 1e-6:
+            if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
                 logging.info('Stopping training as learning rate has dropped below 1e-6')
                 break 
 

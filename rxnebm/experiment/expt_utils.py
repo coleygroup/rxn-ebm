@@ -1,6 +1,8 @@
 import logging
 import os
 import random
+import traceback
+
 from datetime import date
 from pathlib import Path
 from typing import Optional, Union
@@ -9,8 +11,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import get_worker_info
-
 import nmslib
+
 from rxnebm.model import FF, G2E, S2E, model_utils
 
 def setup_paths(
@@ -73,7 +75,6 @@ def load_model_opt_and_stats(
     args,
     saved_stats_filename: Union[str, bytes, os.PathLike],
     checkpoint_folder: Union[str, bytes, os.PathLike],
-    model_name: str = "FeedforwardFingerprint",
     optimizer_name: str = "Adam",
     load_epoch : Optional[int] = None
 ):
@@ -115,21 +116,27 @@ def load_model_opt_and_stats(
             )
             print("loaded checkpoint from load_epoch: ", load_epoch)
 
-        if model_name == "FeedforwardFingerprint" or model_name == 'FeedforwardSingle' or model_name == "FeedforwardEBM":
+        if args.model_name == "FeedforwardFingerprint" or args.model_name == 'FeedforwardSingle':
             saved_model = FF.FeedforwardSingle(**saved_stats["model_args"], **saved_stats["fp_args"])
-        elif model_name == 'FeedforwardTriple3indiv3prod1cos':
-            saved_model = FF.FeedforwardTriple3indiv3prod1cos(**saved_stats["model_args"], **saved_stats["fp_args"])
-        elif model_name == "GraphEBM":
-            saved_model = G2E.G2E(args, **saved_stats["model_args"])
-        elif model_name == "GraphEBM_projBoth":
-            saved_model = G2E.G2E_projBoth(args, **saved_stats["model_args"])
-        elif model_name == "GraphEBM_sep_projBoth_FFout":
-            saved_model = G2E.G2E_sep_projBoth_FFout(args, **saved_stats["model_args"])
-        elif model_name == "GraphEBM_sep_FFout":
-            saved_model = G2E.G2E_sep_FFout(args, **saved_stats["model_args"])
-        elif model_name == "GraphEBM_sep":
-            saved_model = G2E.G2E_sep(args, **saved_stats["model_args"])
-        elif model_name == "TransformerEBM":
+        elif args.model_name == 'FeedforwardTriple3indiv3prod1cos' or args.model_name == "FeedforwardEBM":
+            try:
+                saved_model = FF.FeedforwardTriple3indiv3prod1cos(args)
+            except:
+                saved_model = FF.FeedforwardTriple3indiv3prod1cos(**saved_stats["model_args"], **saved_stats["fp_args"])
+        elif args.model_name == "GraphEBM":                 # Graph to energy
+            saved_model = G2E.G2E(args)
+        elif args.model_name == "GraphEBM_Cross":           # Graph to energy, cross attention pool for r and p atoms
+            saved_model = G2E.G2ECross(args)
+        elif args.model_name == "GraphEBM_sep":                 # Graph to energy, separate encoders
+            raise NotImplementedError('No longer implemented. Use GraphEBM_sep_FFout')
+        elif args.model_name == "GraphEBM_projBoth":        # Graph to energy, project both reactants & products w/ dot product output
+            saved_model = G2E.G2E_projBoth(args)
+        elif args.model_name == "GraphEBM_sep_projBoth_FFout":        # Graph to energy, separate encoders + projections, feedforward output
+            saved_model = G2E.G2E_sep_projBoth_FFout(args)
+            # print('Created model GraphEBM_sep_projBoth_FFout')
+        elif args.model_name == "GraphEBM_sep_FFout":        # Graph to energy, separate encoders, feedforward output
+            saved_model = G2E.G2E_sep_FFout(args)
+        elif args.model_name == "TransformerEBM":
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
             vocab = load_or_create_vocab(args)
             saved_model = S2E.S2E(args, vocab, **saved_stats["model_args"])
@@ -142,7 +149,7 @@ def load_model_opt_and_stats(
         # override bug in name of optimizer when saving checkpoint
         saved_stats["train_args"]["optimizer"] = model_utils.get_optimizer(optimizer_name)
         saved_optimizer = saved_stats["train_args"]["optimizer"](
-            saved_model.parameters(), lr=args.learning_rate # saved_stats["train_args"]["learning_rate"]
+            saved_model.parameters(), lr=args.learning_rate
         )
         # https://discuss.pytorch.org/t/missing-keys-unexpected-keys-in-state-dict-when-loading-self-trained-model/22379/14
         for key in list(checkpoint["state_dict"].keys()):
@@ -151,18 +158,18 @@ def load_model_opt_and_stats(
                 del checkpoint["state_dict"][key]
         saved_model.load_state_dict(checkpoint["state_dict"])
         saved_optimizer.load_state_dict(checkpoint["optimizer"])
+        print('Loaded model and optimizer state dicts')
 
-        if torch.cuda.is_available() and not args.ddp:  
+        if torch.cuda.is_available() and not args.ddp: # if ddp, need to move within each process  
             # move optimizer tensors to gpu  https://github.com/pytorch/pytorch/issues/2830
-            # if ddp, need to move within each process
             for state in saved_optimizer.state.values():
                 for k, v in state.items():
                     if torch.is_tensor(v):
                         state[k] = v.cuda()
 
     except Exception as e:
-        print(e)
-        # logging.info("best_epoch: {}".format(saved_stats["best_epoch"]))
+        tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+        print("".join(tb_str))
 
     return saved_model, saved_optimizer, saved_stats
 

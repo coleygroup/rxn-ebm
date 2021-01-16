@@ -35,7 +35,7 @@ class FeedforwardSingle(base.Feedforward):
         **kwargs
     ):
         super().__init__(hidden_sizes, dropout, activation, output_size, rctfp_size, prodfp_size, rxn_type)
-        self.model_repr = "FeedforwardEBM"
+        self.model_repr = "FeedforwardSingle"
 
         if rxn_type == "sep":
             input_dim = rctfp_size + prodfp_size
@@ -117,71 +117,73 @@ class FeedforwardTriple3indiv3prod1cos(nn.Module):
     TODO: bayesian optimisation
     """
 
-    def __init__(
-        self,
-        hidden_sizes: List[int],
-        dropout: int,
-        activation: str,
-        output_size: Optional[int] = 1,
-        rctfp_size: Optional[int] = 16384,
-        prodfp_size: Optional[int] = 16384,
-        difffp_size: Optional[int] = 16384,
-        rxn_type: Optional[str] = "hybrid_all",
-        **kwargs
-    ):
-      super().__init__()
-      self.model_repr = "FeedforwardTriple3indiv3prod1cos"
+    def __init__(self, args):
+        super().__init__()
+        self.model_repr = "FeedforwardTriple3indiv3prod1cos"
 
-      if rxn_type == "hybrid_all": # [rcts_fp, prod_fp, diff_fp]
-        self.rctfp_size = rctfp_size
-        self.prodfp_size = prodfp_size
-        self.difffp_size = difffp_size
-      else:
-        raise ValueError(f'Not compatible with {rxn_type} fingerprints! Only works with hybrid_all')
+        if args.rxn_type == "hybrid_all": # [rcts_fp, prod_fp, diff_fp]
+            self.rctfp_size = args.rctfp_size
+            self.prodfp_size = args.prodfp_size
+            self.difffp_size = args.difffp_size
+        else:
+            raise ValueError(f'Not compatible with {args.rxn_type} fingerprints! Only works with hybrid_all')
 
-      num_layers = len(hidden_sizes)
-      dropout_layer = nn.Dropout(dropout)
-      activation = model_utils.get_activation_function(activation)
-      self.encoder_rcts = self.build_encoder(
-          dropout_layer, activation, hidden_sizes, rctfp_size, num_layers
-      )
-      self.encoder_prod = self.build_encoder(
-          dropout_layer, activation, hidden_sizes, prodfp_size, num_layers
-      )
-      self.encoder_diff = self.build_encoder(
-          dropout_layer, activation, hidden_sizes, difffp_size, num_layers
-      )
-      self.output_layer = nn.Sequential(*[
-                                          dropout_layer, 
-                                          nn.Linear(hidden_sizes[-1] * 6 + 1, output_size) 
-                                        ])
+        self.encoder_rcts = self.build_encoder(
+            args.encoder_dropout, args.encoder_activation, args.encoder_hidden_size, self.rctfp_size
+        )
+        self.encoder_prod = self.build_encoder(
+            args.encoder_dropout, args.encoder_activation, args.encoder_hidden_size, self.prodfp_size
+        )
+        self.encoder_diff = self.build_encoder(
+            args.encoder_dropout, args.encoder_activation, args.encoder_hidden_size, self.difffp_size
+        )
 
-      model_utils.initialize_weights(self)
+        self.output_layer = self.build_encoder(
+            args.out_dropout, args.out_activation, args.out_hidden_sizes, args.encoder_hidden_size[-1] * 6 + 1,
+            output=True
+        )
+    #   self.output_layer = nn.Sequential(*[
+    #                                       nn.Dropout(args.dropout), 
+    #                                       nn.Linear(hidden_sizes[-1] * 6 + 1, output_size) 
+    #                                     ])
 
+        model_utils.initialize_weights(self)
 
     def build(self):
       pass 
 
     def build_encoder(
         self,
-        dropout: nn.Dropout,
-        activation: nn.Module,
+        dropout: float,
+        activation: str,
         hidden_sizes_encoder: List[int],
-        input_dim: int, 
-        num_layers: int,
+        input_dim: int,
+        output: bool = False
     ):
-        ffn = [nn.Linear(input_dim, hidden_sizes_encoder[0])]
+        num_layers = len(hidden_sizes_encoder)
+        activation = model_utils.get_activation_function(activation)
+        ffn = [
+                nn.Linear(input_dim, hidden_sizes_encoder[0])
+            ]
         for i, layer in enumerate(range(num_layers - 1)):
             ffn.extend(
                 [
                     activation,
-                    dropout,
+                    nn.Dropout(dropout),
                     nn.Linear(hidden_sizes_encoder[i], hidden_sizes_encoder[i + 1]),
+                ]
+                )
+        if output:
+            ffn.extend(
+                [
+                    activation,
+                    nn.Dropout(dropout),
+                    nn.Linear(hidden_sizes_encoder[-1], 1),
                 ]
                 )
         return nn.Sequential(*ffn)
 
-    def forward(self, batch: Tensor) -> Tensor:
+    def forward(self, batch: Tensor, probs: Optional[Tensor]=None) -> Tensor:
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,

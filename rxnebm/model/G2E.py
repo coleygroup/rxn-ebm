@@ -121,8 +121,9 @@ class GRU(nn.Module):
 
         for i in range(self.depth):
             h_nei = index_select_ND(h, 0, bgraph)
-            h_nei = self.Dropout(h_nei)
             h = self.GRU(fmess, h_nei)
+            if i < self.depth - 1: # last iteration is w/o Dropout
+                h = self.Dropout(h)
             h = h * mask
         
         return h
@@ -155,6 +156,7 @@ class LSTM(nn.Module):
                  input_size: int,
                  h_size: int,
                  depth: int,
+                 dropout: float = 0.05,
                  **kwargs):
         """
         Parameters
@@ -172,6 +174,7 @@ class LSTM(nn.Module):
         self.h_size = h_size
         self.input_size = input_size
         self.depth = depth
+        self.dropout = dropout
         self._build_layer_components()
 
     def _build_layer_components(self):
@@ -180,6 +183,7 @@ class LSTM(nn.Module):
         self.W_o = nn.Sequential(nn.Linear(self.input_size + self.h_size, self.h_size), nn.Sigmoid())
         self.W_f = nn.Sequential(nn.Linear(self.input_size + self.h_size, self.h_size), nn.Sigmoid())
         self.W = nn.Sequential(nn.Linear(self.input_size + self.h_size, self.h_size), nn.Tanh())
+        self.Dropout = nn.Dropout(p=self.dropout)
 
     def get_init_state(self, fmess: torch.Tensor,
                        init_state: torch.Tensor = None) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -246,12 +250,15 @@ class LSTM(nn.Module):
         mask = torch.ones(h.size(0), 1, device=h.device)
         mask[0, 0] = 0                  # first message is padding
 
-        for i in range(self.depth):
+        for i in range(self.depth - 1):
             h_nei = index_select_ND(h, 0, bgraph)
             c_nei = index_select_ND(c, 0, bgraph)
             h, c = self.LSTM(fmess, h_nei, c_nei)
+            if i < self.depth - 1: # last iteration is w/o Dropout
+                h, c = self.Dropout(h), self.Dropout(c)
             h = h * mask
             c = c * mask
+        
         return h, c
 
     def sparse_forward(self, h: torch.Tensor, fmess: torch.Tensor,
@@ -289,7 +296,9 @@ class MPNEncoder(nn.Module):
                  input_size: int,
                  node_fdim: int,
                  h_size: int,
-                 depth: int,
+                 h_size_inner: int = None, # minhtoo testing
+                 preemb: bool = False, # minhtoo testing
+                 depth: int = 3,
                  dropout: float = 0.1
                  ):
         """
@@ -308,6 +317,8 @@ class MPNEncoder(nn.Module):
         """
         super().__init__()
         self.h_size = h_size
+        self.h_size_inner = h_size_inner
+        self.preemb = preemb
         self.input_size = input_size
         self.rnn_type = rnn_type
         self.depth = depth
@@ -317,12 +328,26 @@ class MPNEncoder(nn.Module):
 
     def _build_layers(self) -> None:
         """Build layers associated with the MPNEncoder."""
-        # TODO: add dropout here
-        self.W_o = nn.Sequential(nn.Linear(self.node_fdim + self.h_size, self.h_size), nn.ReLU())
+        # if self.preemb: # TODO: figure out correct input dims of fmess & bgraph
+        #     self.W_e_fmess = nn.Linear(self.input_size, self.input_size)
+        #     self.W_e_bgraph = nn.Linear(self.input_size, self.input_size)
+        if self.h_size_inner: # 2 layers
+            self.W_o = nn.Sequential(
+                    nn.Linear(self.node_fdim + self.h_size, self.h_size_inner), 
+                    nn.ReLU(),
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.h_size_inner, self.h_size),
+                    nn.ReLU()
+                )
+        else:
+            self.W_o = nn.Sequential(
+                    nn.Linear(self.node_fdim + self.h_size, self.h_size), 
+                    nn.ReLU()
+                )
         if self.rnn_type == 'gru':
             self.rnn = GRU(self.input_size, self.h_size, self.depth, self.dropout)
         elif self.rnn_type == 'lstm':
-            self.rnn = LSTM(self.input_size, self.h_size, self.depth)
+            self.rnn = LSTM(self.input_size, self.h_size, self.depth, self.dropout)
         else:
             raise ValueError('unsupported rnn cell type ' + self.rnn_type)
 
@@ -344,6 +369,8 @@ class MPNEncoder(nn.Module):
         mask: torch.Tensor,
             Masks on nodes
         """
+        # if self.preemb: # TODO: figure out correct input dims of fmess & bgraph
+        #     fmess, bgraph = self.W_e(fmess), self.W_e(bgraph)
         h = self.rnn(fmess, bgraph)
         h = self.rnn.get_hidden_state(h)
         nei_message = index_select_ND(h, 0, agraph)
@@ -369,7 +396,8 @@ class GraphFeatEncoder(nn.Module):
                  n_bond_feat: int,
                  rnn_type: str,
                  h_size: int,
-                 depth: int,
+                 h_size_inner: int = None,
+                 depth: int = 3,
                  dropout: float = 0.1,
                  atom_pool_type: str = "sum"
                  ):
@@ -393,6 +421,7 @@ class GraphFeatEncoder(nn.Module):
         self.rnn_type = rnn_type
         self.atom_size = n_atom_feat
         self.h_size = h_size
+        self.h_size_inner = h_size_inner
         self.depth = depth
         self.dropout = dropout
         self.atom_pool_type = atom_pool_type
@@ -405,6 +434,7 @@ class GraphFeatEncoder(nn.Module):
                                   input_size=self.n_atom_feat + self.n_bond_feat,
                                   node_fdim=self.atom_size,
                                   h_size=self.h_size,
+                                  h_size_inner=self.h_size_inner,
                                   depth=self.depth,
                                   dropout=self.dropout)
         self.attn_hidden_1 = nn.Linear(self.h_size, self.h_size)
@@ -497,18 +527,24 @@ class G2E(nn.Module):
         else:
             self.num_devices = 1
         
+        if isinstance(args.encoder_hidden_size, list):
+            assert len(args.encoder_hidden_size) == 1, 'MPN encoder_hidden_size must be a single integer!'
+            args.encoder_hidden_size = args.encoder_hidden_size[0]
         self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
+                                        h_size_inner=args.encoder_inner_hidden_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         atom_pool_type=args.atom_pool_type)
+
         out_activation = model_utils.get_activation_function(args.out_activation)
         self.output = self.build_output(
             out_activation, args.out_hidden_sizes, args.out_dropout,
             args.encoder_hidden_size * 4
         )
+
         if args.do_finetune:
             logging.info("Setting self.reactant first to False for finetuning")
             self.reactant_first = False
@@ -647,6 +683,7 @@ class G2ECross(nn.Module):
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
+                                        h_size_inner=args.encoder_inner_hidden_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         atom_pool_type=args.atom_pool_type)
@@ -740,196 +777,12 @@ class G2ECross(nn.Module):
 
         return energies.squeeze(dim=-1)
 
-class G2E_sep(nn.Module): # separate encoders
-    def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, **kwargs):
-        super().__init__()
-        self.model_repr = "GraphEBM_sep"
-        self.args = args
-
-        if torch.cuda.is_available() and self.args.dataparallel:
-            self.num_devices = torch.cuda.device_count()
-        else:
-            self.num_devices = 1
-
-        self.encoder_p = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
-                                        n_bond_feat=BOND_FDIM,
-                                        rnn_type="gru",
-                                        h_size=encoder_hidden_size,
-                                        depth=encoder_depth,
-                                        dropout=encoder_dropout)
-        
-        self.encoder_r = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
-                                        n_bond_feat=BOND_FDIM,
-                                        rnn_type="gru",
-                                        h_size=encoder_hidden_size,
-                                        depth=encoder_depth,
-                                        dropout=encoder_dropout)
-
-        self.output = nn.Linear(encoder_hidden_size * 4, 1)
-        if args.do_finetune:
-            logging.info("Setting self.reactant first to False for finetuning")
-            self.reactant_first = False
-        else:
-            logging.info("Setting self.reactant first to True for pretraining")
-            self.reactant_first = True
-        logging.info("Initializing weights")
-        model_utils.initialize_weights(self)
-
-    def forward(self, batch, probs: Optional[torch.Tensor]=None):
-        """
-        batch: a N x K x 1 tensor of N training samples
-            each sample contains a positive rxn on the first column,
-            and K-1 negative rxns on all subsequent columns
-        """
-        graph_tensors, scopes, batch_size = batch
-        hatom_r, hmol_r = self.encoder_r(graph_tensors=graph_tensors,
-                                   scopes=scopes)
-        hatom_p, hmol_p = self.encoder_p(graph_tensors=graph_tensors,
-                                   scopes=scopes)
-
-        hmol_r = [torch.sum(h, dim=0, keepdim=True) for h in hmol_r]        # list of [n_molecules, h] => list of [1, h]
-        hmol_p = [torch.sum(h, dim=0, keepdim=True) for h in hmol_p]        # list of [n_molecules, h] => list of [1, h]
-
-        batch_pooled_hmols = []
-    
-        mols_per_minibatch = len(hmol_r) // batch_size // self.num_devices  # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
-        # assert mols_per_minibatch == self.args.minibatch_size + 1, \
-        #     f"calculated minibatch size: {mols_per_minibatch-1}, given in args: {self.args.minibatch_size}"
-
-        for i in range(batch_size):
-            if self.reactant_first:                         # (1) r + mini_bsz p
-                r_hmol = hmol_r[i*mols_per_minibatch]                           # [1, h]
-                r_hmols = r_hmol.repeat(mols_per_minibatch - 1, 1)              # [mini_bsz, h]
-                p_hmols = hmol_p[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                p_hmols = torch.cat(p_hmols, 0)                                 # [mini_bsz, h]
-            else:
-                p_hmols = hmol_p[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
-                p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
-                r_hmols = hmol_r[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                r_hmols = torch.cat(r_hmols, 0)
-
-            diff = torch.abs(p_hmols - r_hmols)                                 # [mini_bsz, h]
-            prod = r_hmols * p_hmols                                            # [mini_bsz, h]
-
-            pooled_hmols = torch.cat([r_hmols, p_hmols, diff, prod], 1)         # [mini_bsz, h*4]
-            pooled_hmols = torch.unsqueeze(pooled_hmols, 0)                     # [1, mini_bsz, h*4]
-
-            batch_pooled_hmols.append(pooled_hmols)
-
-        batch_pooled_hmols = torch.cat(batch_pooled_hmols, 0)                   # [bsz, mini_bsz, h*4]
-        energies = self.output(batch_pooled_hmols)                              # [bsz, mini_bsz, 1]
-        return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]
-
-
-class G2E_projR(nn.Module): # just project reactant, not using for now
-    def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, proj_hidden_sizes, proj_activation, proj_dropout, **kwargs):
-        super().__init__()
-        self.model_repr = "GraphEBM_projR"
-        self.args = args
-
-        if torch.cuda.is_available() and self.args.dataparallel:
-            self.num_devices = torch.cuda.device_count()
-        else:
-            self.num_devices = 1
-
-        self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
-                                        n_bond_feat=BOND_FDIM,
-                                        rnn_type="gru",
-                                        h_size=encoder_hidden_size,
-                                        depth=encoder_depth,
-                                        dropout=encoder_dropout)
-        
-        self.projection = self.build_projection(
-            proj_activation, proj_hidden_sizes, proj_dropout,
-            encoder_hidden_size, # output_dim = encoder_hidden_size
-        )
-        
-        if args.do_finetune:
-            logging.info("Setting self.reactant first to False for finetuning")
-            self.reactant_first = False
-        else:
-            logging.info("Setting self.reactant first to True for pretraining")
-            self.reactant_first = True
-        logging.info("Initializing weights")
-        model_utils.initialize_weights(self)
-    
-    def build_projection(
-        self,
-        activation: nn.Module,
-        hidden_sizes: List[int],
-        dropout: float,
-        input_dim: int,
-    ):
-        num_layers = len(hidden_sizes)
-        ffn = [nn.Linear(input_dim, hidden_sizes[0])] # could add nn.Dropout(dropout) before this, if we wish
-        for i, layer in enumerate(range(num_layers - 1)):
-            ffn.extend(
-                [
-                    activation,
-                    nn.Dropout(dropout),
-                    nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]),
-                ]
-                )
-        ffn.extend(
-            [
-                activation,
-                nn.Dropout(dropout),
-                nn.Linear(hidden_sizes[-1], input_dim), # output_dim = encoder_hidden_size = input_dim
-            ]
-        )
-        return nn.Sequential(*ffn)
-
-    def forward(self, batch, probs: Optional[torch.Tensor]=None):
-        """
-        batch: a N x K x 1 tensor of N training samples
-            each sample contains a positive rxn on the first column,
-            and K-1 negative rxns on all subsequent columns
-        """
-        graph_tensors, scopes, batch_size = batch
-        hatom, hmol = self.encoder(graph_tensors=graph_tensors,
-                                   scopes=scopes)
-        
-        hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]
-        batch_pooled_r_mols = []
-        batch_pooled_p_mols = []
-    
-        mols_per_minibatch = len(hmol) // batch_size // self.num_devices  # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
-        for i in range(batch_size):
-            if self.reactant_first:                         # (1) r + mini_bsz p
-                r_hmol = hmol[i*mols_per_minibatch]                             # [1, h]
-                r_hmols = r_hmol.repeat(mols_per_minibatch - 1, 1)              # [mini_bsz, h]
-                p_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                p_hmols = torch.cat(p_hmols, 0)                                 # [mini_bsz, h]
-            else:
-                p_hmols = hmol[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
-                p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
-                r_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                r_hmols = torch.cat(r_hmols, 0)
-
-            pooled_r_hmols = torch.unsqueeze(r_hmols, 0)                        # [1, mini_bsz, h]
-            pooled_p_hmols = torch.unsqueeze(p_hmols, 0)                        # [1, mini_bsz, h]
-            batch_pooled_r_mols.append(pooled_r_hmols)
-            batch_pooled_p_mols.append(pooled_p_hmols)
-
-        batch_pooled_r_mols = torch.cat(batch_pooled_r_mols, 0)                 # [bsz, mini_bsz, h]
-        batch_pooled_p_mols = torch.cat(batch_pooled_p_mols, 0)                 # [bsz, mini_bsz, h]
-
-        proj_pooled_r_mols = self.projection(
-                                    batched_pooled_r_mols
-                                ).unsqueeze(dim=-1)                             # [bsz, mini_bsz, h] => [bsz, mini_bsz, h] => [bsz, mini_bsz, h, 1]
-        
-        energies = torch.matmul(
-                        batch_pooled_p_mols.tranpose(),
-                        proj_pooled_r_mols
-                    ).squeeze(dim=-1)                                           # [bsz, mini_bsz, 1, h] x [bsz, mini_bsz, h, 1] => [bsz, mini_bsz, 1]
-        return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]
-
-
 class G2E_projBoth(nn.Module):
-    def __init__(self, args, encoder_hidden_size, encoder_depth, encoder_dropout, proj_hidden_sizes, proj_activation, proj_dropout, **kwargs):
+    def __init__(self, args):
         super().__init__()
         self.model_repr = "GraphEBM_projBoth"
         self.args = args
+        self.mol_pool_type = args.mol_pool_type
 
         if torch.cuda.is_available() and self.args.dataparallel:
             self.num_devices = torch.cuda.device_count()
@@ -938,17 +791,19 @@ class G2E_projBoth(nn.Module):
 
         self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
-                                        rnn_type="gru",
-                                        h_size=encoder_hidden_size,
-                                        depth=encoder_depth,
-                                        dropout=encoder_dropout)
+                                        rnn_type=args.encoder_rnn_type,
+                                        h_size=args.encoder_hidden_size,
+                                        h_size_inner=args.encoder_inner_hidden_size,
+                                        depth=args.encoder_depth,
+                                        dropout=args.encoder_dropout,
+                                        atom_pool_type=args.atom_pool_type)
         
-        proj_activation = model_utils.get_activation_function(proj_activation)
+        proj_activation = model_utils.get_activation_function(args.proj_activation)
         self.projection_r = self.build_projection(
-            proj_activation, proj_hidden_sizes, proj_dropout, encoder_hidden_size # output_dim = proj_hidden_sizes[-1]
+            proj_activation, args.proj_hidden_sizes, args.proj_dropout, args.encoder_hidden_size # output_dim = proj_hidden_sizes[-1]
         )
         self.projection_p = self.build_projection(
-            proj_activation, proj_hidden_sizes, proj_dropout, encoder_hidden_size # output_dim = proj_hidden_sizes[-1]
+            proj_activation, args.proj_hidden_sizes, args.proj_dropout, args.encoder_hidden_size # output_dim = proj_hidden_sizes[-1]
         )
         
         if args.do_finetune:
@@ -966,7 +821,9 @@ class G2E_projBoth(nn.Module):
         input_dim: int,
     ):
         num_layers = len(hidden_sizes)
-        ffn = [nn.Linear(input_dim, hidden_sizes[0])] # could add nn.Dropout(dropout) if we wish
+        ffn = [
+                nn.Linear(input_dim, hidden_sizes[0])
+            ]
         for i, layer in enumerate(range(num_layers - 1)):
             ffn.extend(
                 [
@@ -986,7 +843,13 @@ class G2E_projBoth(nn.Module):
         graph_tensors, scopes, batch_size = batch
         hatom, hmol = self.encoder(graph_tensors=graph_tensors,
                                    scopes=scopes)
-        hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]
+        if self.mol_pool_type == "sum":
+            hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]
+        elif self.mol_pool_type == "mean":
+            hmol = [torch.mean(h, dim=0, keepdim=True) for h in hmol]
+        else:
+            raise NotImplementedError(f"Unsupported mol_pool_type {self.mol_pool_type}! "
+                                      f"Please use sum/mean")
         batch_pooled_r_mols = []
         batch_pooled_p_mols = []
     
@@ -1026,23 +889,11 @@ class G2E_projBoth(nn.Module):
 
 class G2E_sep_projBoth_FFout(nn.Module): 
     # separate encoders, linear projections, then a final linear output layer (vs dot product)
-    def __init__(
-            self, 
-            args,
-            encoder_hidden_size,
-            encoder_depth,
-            encoder_dropout,
-            proj_hidden_sizes,
-            proj_activation,
-            proj_dropout,
-            out_hidden_sizes,
-            out_activation,
-            out_dropout,
-            **kwargs
-        ):
+    def __init__(self, args):
         super().__init__()
         self.model_repr = "GraphEBM_sep_projBoth_FFout"
         self.args = args
+        self.mol_pool_type = args.mol_pool_type
 
         if torch.cuda.is_available() and self.args.dataparallel:
             self.num_devices = torch.cuda.device_count()
@@ -1051,29 +902,33 @@ class G2E_sep_projBoth_FFout(nn.Module):
 
         self.encoder_p = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
-                                        rnn_type="gru",
-                                        h_size=encoder_hidden_size,
-                                        depth=encoder_depth,
-                                        dropout=encoder_dropout)
+                                        rnn_type=args.encoder_rnn_type,
+                                        h_size=args.encoder_hidden_size,
+                                        h_size_inner=args.encoder_inner_hidden_size,
+                                        depth=args.encoder_depth,
+                                        dropout=args.encoder_dropout,
+                                        atom_pool_type=args.atom_pool_type)
         
         self.encoder_r = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
-                                        rnn_type="gru",
-                                        h_size=encoder_hidden_size,
-                                        depth=encoder_depth,
-                                        dropout=encoder_dropout)
+                                        rnn_type=args.encoder_rnn_type,
+                                        h_size=args.encoder_hidden_size,
+                                        h_size_inner=args.encoder_inner_hidden_size,
+                                        depth=args.encoder_depth,
+                                        dropout=args.encoder_dropout,
+                                        atom_pool_type=args.atom_pool_type)
 
-        proj_activation = model_utils.get_activation_function(proj_activation)
+        proj_activation = model_utils.get_activation_function(args.proj_activation)
         self.projection_r = self.build_projection(
-            proj_activation, proj_hidden_sizes, proj_dropout, encoder_hidden_size
+            proj_activation, args.proj_hidden_sizes, args.proj_dropout, args.encoder_hidden_size
         )
         self.projection_p = self.build_projection(
-            proj_activation, proj_hidden_sizes, proj_dropout, encoder_hidden_size
+            proj_activation, args.proj_hidden_sizes, args.proj_dropout, args.encoder_hidden_size
         )
-        out_activation = model_utils.get_activation_function(out_activation)
+        out_activation = model_utils.get_activation_function(args.out_activation)
         self.output = self.build_output(
-            out_activation, out_hidden_sizes, out_dropout,
-            proj_hidden_sizes[-1] * 4
+            out_activation, args.out_hidden_sizes, args.out_dropout,
+            args.proj_hidden_sizes[-1] * 4
         )
 
         if args.do_finetune:
@@ -1082,6 +937,8 @@ class G2E_sep_projBoth_FFout(nn.Module):
         else:
             logging.info("Setting self.reactant first to True for pretraining")
             self.reactant_first = True
+        logging.info("Initializing weights")
+        model_utils.initialize_weights(self)
     
     def build_output(
         self,
@@ -1092,7 +949,6 @@ class G2E_sep_projBoth_FFout(nn.Module):
     ):
         num_layers = len(hidden_sizes)
         ffn = [
-                # nn.Dropout(dropout),
                 nn.Linear(input_dim, hidden_sizes[0])
             ]
         for i, layer in enumerate(range(num_layers - 1)):
@@ -1121,7 +977,6 @@ class G2E_sep_projBoth_FFout(nn.Module):
     ):
         num_layers = len(hidden_sizes)
         ffn = [
-                # nn.Dropout(dropout),
                 nn.Linear(input_dim, hidden_sizes[0])
             ]
         for i, layer in enumerate(range(num_layers - 1)):
@@ -1146,9 +1001,15 @@ class G2E_sep_projBoth_FFout(nn.Module):
         hatom_p, hmol_p = self.encoder_p(graph_tensors=graph_tensors,
                                    scopes=scopes)
 
-        hmol_r = [torch.sum(h, dim=0, keepdim=True) for h in hmol_r]        # list of [n_molecules, h] => list of [1, h]
-        hmol_p = [torch.sum(h, dim=0, keepdim=True) for h in hmol_p]        # list of [n_molecules, h] => list of [1, h]
-
+        if self.mol_pool_type == "sum":
+            hmol_r = [torch.sum(h, dim=0, keepdim=True) for h in hmol_r]        # list of [n_molecules, h] => list of [1, h]
+            hmol_p = [torch.sum(h, dim=0, keepdim=True) for h in hmol_p]
+        elif self.mol_pool_type == "mean":
+            hmol_r = [torch.mean(h, dim=0, keepdim=True) for h in hmol_r]
+            hmol_p = [torch.mean(h, dim=0, keepdim=True) for h in hmol_p]
+        else:
+            raise NotImplementedError(f"Unsupported mol_pool_type {self.mol_pool_type}! "
+                                      f"Please use sum/mean")
         batch_pooled_r_mols = []
         batch_pooled_p_mols = []
     
@@ -1190,20 +1051,11 @@ class G2E_sep_projBoth_FFout(nn.Module):
 
 class G2E_sep_FFout(nn.Module): 
     # separate encoders, then a final MLP to get the energy
-    def __init__(
-            self,
-            args,
-            encoder_hidden_size,
-            encoder_depth,
-            encoder_dropout,
-            out_hidden_sizes,
-            out_activation,
-            out_dropout,
-            **kwargs
-        ):
+    def __init__(self, args):
         super().__init__()
         self.model_repr = "GraphEBM_sep_FFout"
         self.args = args
+        self.mol_pool_type = args.mol_pool_type
 
         if torch.cuda.is_available() and self.args.dataparallel:
             self.num_devices = torch.cuda.device_count()
@@ -1212,22 +1064,26 @@ class G2E_sep_FFout(nn.Module):
 
         self.encoder_p = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
-                                        rnn_type="gru",
-                                        h_size=encoder_hidden_size,
-                                        depth=encoder_depth,
-                                        dropout=encoder_dropout)
+                                        rnn_type=args.encoder_rnn_type,
+                                        h_size=args.encoder_hidden_size,
+                                        h_size_inner=args.encoder_inner_hidden_size,
+                                        depth=args.encoder_depth,
+                                        dropout=args.encoder_dropout,
+                                        atom_pool_type=args.atom_pool_type)
         
         self.encoder_r = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
-                                        rnn_type="gru",
-                                        h_size=encoder_hidden_size,
-                                        depth=encoder_depth,
-                                        dropout=encoder_dropout)
+                                        rnn_type=args.encoder_rnn_type,
+                                        h_size=args.encoder_hidden_size,
+                                        h_size_inner=args.encoder_inner_hidden_size,
+                                        depth=args.encoder_depth,
+                                        dropout=args.encoder_dropout,
+                                        atom_pool_type=args.atom_pool_type)
 
-        out_activation = model_utils.get_activation_function(out_activation)
+        out_activation = model_utils.get_activation_function(args.out_activation)
         self.output = self.build_output(
-            out_activation, out_hidden_sizes, out_dropout,
-            encoder_hidden_size * 4
+            out_activation, args.out_hidden_sizes, args.out_dropout,
+            args.encoder_hidden_size * 4
         )
 
         if args.do_finetune:
@@ -1236,6 +1092,8 @@ class G2E_sep_FFout(nn.Module):
         else:
             logging.info("Setting self.reactant first to True for pretraining")
             self.reactant_first = True
+        logging.info("Initializing weights")
+        model_utils.initialize_weights(self)
     
     def build_output(
         self,
@@ -1246,7 +1104,6 @@ class G2E_sep_FFout(nn.Module):
     ):
         num_layers = len(hidden_sizes)
         ffn = [
-                # nn.Dropout(dropout),
                 nn.Linear(input_dim, hidden_sizes[0])
             ]
         for i, layer in enumerate(range(num_layers - 1)):
@@ -1278,9 +1135,15 @@ class G2E_sep_FFout(nn.Module):
         hatom_p, hmol_p = self.encoder_p(graph_tensors=graph_tensors,
                                    scopes=scopes)
 
-        hmol_r = [torch.sum(h, dim=0, keepdim=True) for h in hmol_r]        # list of [n_molecules, h] => list of [1, h]
-        hmol_p = [torch.sum(h, dim=0, keepdim=True) for h in hmol_p]        # list of [n_molecules, h] => list of [1, h]
-
+        if self.mol_pool_type == "sum":
+            hmol_r = [torch.sum(h, dim=0, keepdim=True) for h in hmol_r]        # list of [n_molecules, h] => list of [1, h]
+            hmol_p = [torch.sum(h, dim=0, keepdim=True) for h in hmol_p]
+        elif self.mol_pool_type == "mean":
+            hmol_r = [torch.mean(h, dim=0, keepdim=True) for h in hmol_r]
+            hmol_p = [torch.mean(h, dim=0, keepdim=True) for h in hmol_p]
+        else:
+            raise NotImplementedError(f"Unsupported mol_pool_type {self.mol_pool_type}! "
+                                      f"Please use sum/mean")
         batch_pooled_hmols = []
     
         mols_per_minibatch = len(hmol_r) // batch_size // self.num_devices  # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
@@ -1297,7 +1160,7 @@ class G2E_sep_FFout(nn.Module):
                 r_hmols = torch.cat(r_hmols, 0)
 
             diff = p_hmols - r_hmols # torch.abs(p_hmols - r_hmols)             # [mini_bsz, h]
-            prod = r_hmols * p_hmols                                            # [mini_bsz, h]
+            prod = p_hmols * r_hmols                                            # [mini_bsz, h]
 
             pooled_hmols = torch.cat([r_hmols, p_hmols, diff, prod], 1)         # [mini_bsz, h*4]
             pooled_hmols = torch.unsqueeze(pooled_hmols, 0)                     # [1, mini_bsz, h*4]

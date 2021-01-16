@@ -458,7 +458,8 @@ class ReactionDatasetFingerprints(Dataset):
         augmented_data: Optional[AugmentedDataFingerprints] = None,
         query_params: Optional[dict] = None,
         search_index_filename: Optional[str] = None,
-        proposals_csv_filename: Optional[str] = None, 
+        proposals_csv_filename: Optional[str] = None,
+        prob_filename: Optional[str] = None,
         root: Optional[str] = None,
     ):
         self.input_dim = input_dim # needed to reshape row vector in self.__getitem__()
@@ -486,6 +487,9 @@ class ReactionDatasetFingerprints(Dataset):
             raise RuntimeError(
                 "Please provide precomp_rxnfp_filename or set onthefly = True!"
             )
+        
+        if prob_filename is not '':
+            raise NotImplementedError
 
     def __getitem__(self, idx: Union[int, Tensor]) -> Tuple[Tensor, Tensor]:
         """Returns tuple of minibatch & boolean mask

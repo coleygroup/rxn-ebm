@@ -24,7 +24,7 @@ separately stored .npz files will make it much easier.
 def rcts_prod_fps_from_rxn_smi(
     rxn_smi: str, fp_type: str, smi_to_fp_dict: dict, mol_fps: sparse_fp
 ) -> Tuple[sparse_fp, sparse_fp]:
-    prod_smi = rxn_smi.split(">")[-1]
+    prod_smi = rxn_smi.split(">>")[-1]
     prod_idx = smi_to_fp_dict[prod_smi]
     prod_fp = mol_fps[prod_idx]
 
@@ -35,7 +35,7 @@ def rcts_prod_fps_from_rxn_smi(
         dtype = "int32"  # or maybe to infer dtype, but that adds computation overhead
         final_dtype = dtype
 
-    rcts_smis = rxn_smi.split(">")[0].split(".")
+    rcts_smis = rxn_smi.split(">>")[0].split(".")
     for i, rct_smi in enumerate(rcts_smis):
         rct_idx = smi_to_fp_dict[rct_smi]
         if i == 0:
@@ -44,6 +44,32 @@ def rcts_prod_fps_from_rxn_smi(
             rcts_fp = rcts_fp + mol_fps[rct_idx].astype(dtype)
     return rcts_fp.astype(final_dtype), prod_fp
 
+def rcts_prod_fps_from_rxn_smi_dist(
+    rxn_smi: str, fp_type: str, radius: int, fp_size: int, dtype: str
+) -> Tuple[sparse_fp, sparse_fp]:
+    ''' 
+    The idea is not to pickle the memory-heavy count_mol_fps sparse matrix across processes
+    We trade that memory for compute, since now we have to make each count mol fp on the fly
+    But hopefully when multiprocessing w/ enough processes (say 32 or 64), 
+    the parallelization should overall speed up the whole process
+    '''
+    prod_smi = rxn_smi.split(">>")[-1]
+    prod_fp = smi_to_fp.mol_smi_to_count_fp(prod_smi, radius, fp_size, dtype)
+
+    if fp_type == "bit":
+        dtype = "bool"  # to add rcts_fp w/o exceeding value of 1
+        final_dtype = "int32"  # to cast rcts_fp back into 'int8'
+    else:  # count
+        dtype = "int32"  # or maybe to infer dtype, but that adds computation overhead
+        final_dtype = dtype
+
+    rcts_smis = rxn_smi.split(">>")[0].split(".")
+    for i, rct_smi in enumerate(rcts_smis):
+        if i == 0:
+            rcts_fp = smi_to_fp.mol_smi_to_count_fp(rct_smi, radius, fp_size, dtype)
+        else:
+            rcts_fp = rcts_fp + smi_to_fp.mol_smi_to_count_fp(rct_smi, radius, fp_size, dtype)
+    return rcts_fp.astype(final_dtype), prod_fp
 
 def make_rxn_fp(
     rcts_fp: sparse_fp, prod_fp: sparse_fp, rxn_type: str = "diff"

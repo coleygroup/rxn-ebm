@@ -174,7 +174,7 @@ class Experiment:
         self.train_topk_accs = {}  
         self.val_topk_accs = {}  
         self.test_topk_accs = {} 
-        self.k_to_calc = [1, 3, 5, 10, 20]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
+        self.k_to_calc = [1, 3, 5, 10]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
         k_not_to_calc = []
         for k in self.k_to_calc:
             if k > self.maxk:
@@ -250,6 +250,9 @@ class Experiment:
                 if torch.is_tensor(v):
                     state[k] = v.cuda(self.gpu)
         self.optimizer = saved_optimizer  # load optimizer w/ state dict from checkpoint
+        if self.args.new_lr is not None:
+            for g in self.optimizer.param_groups:
+                g['lr'] = self.args.new_lr
         if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
             if self.args.lr_scheduler_criteria == 'acc':
@@ -432,13 +435,13 @@ class Experiment:
             prob_filename=self.prob_filenames['valid']
         )
         if self.gpu is not None:
-            val_sampler = torch.utils.data.distributed.DistributedSampler(
+            self.val_sampler = torch.utils.data.distributed.DistributedSampler(
                 val_dataset,
                 num_replicas=self.args.world_size,
                 rank=self.rank
             )
         else:
-            val_sampler = None
+            self.val_sampler = None
         self.val_loader = DataLoader(
             val_dataset,
             self.args.batch_size_eval,
@@ -447,7 +450,7 @@ class Experiment:
             shuffle=False,
             pin_memory=self.args.pin_memory,
             drop_last=self.args.drop_last,
-            sampler=val_sampler
+            sampler=self.val_sampler
         )
         self.val_size = len(val_dataset)
 
@@ -461,13 +464,13 @@ class Experiment:
             prob_filename=self.prob_filenames['test']
         )
         if self.gpu is not None:
-            test_sampler = torch.utils.data.distributed.DistributedSampler(
+            self.test_sampler = torch.utils.data.distributed.DistributedSampler(
                 test_dataset,
                 num_replicas=self.args.world_size,
                 rank=self.rank
             )
         else:
-            test_sampler = None
+            self.test_sampler = None
         self.test_loader = DataLoader(
             test_dataset,
             self.args.batch_size_eval,
@@ -476,7 +479,7 @@ class Experiment:
             shuffle=False,
             pin_memory=self.args.pin_memory,
             drop_last=self.args.drop_last,
-            sampler=test_sampler
+            sampler=self.test_sampler
         )
         self.test_size = len(test_dataset)
         del train_dataset, val_dataset, test_dataset
@@ -532,12 +535,12 @@ class Experiment:
         logging.info("Initialising SMILES dataloaders...")
         if onthefly and self.args.do_compute_graph_feat: # don't load test data yet, to save memory
             self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
-            self.val_loader, self.val_size, _ = self._get_smi_dl(phase="valid", shuffle=False)
+            self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
             self.test_loader, self.test_size = None, None # self._get_smi_dl(phase="test", shuffle=False)
         elif onthefly:
             self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
-            self.val_loader, self.val_size, _ = self._get_smi_dl(phase="valid", shuffle=False)
-            self.test_loader, self.test_size, _ = self._get_smi_dl(phase="test", shuffle=False)
+            self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
+            self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
         else:
             raise NotImplementedError('Only onthefly available for smi loader')
 
@@ -650,7 +653,8 @@ class Experiment:
         torch.cuda.synchronize()
         self.start = time.time()  # timeit.default_timer()
         self.to_break = 0
-        self.current_lr = self.learning_rate # initialize lr tracker
+        self.val_sampler.set_epoch(0) # no need to change this throughout training
+        # self.current_lr = self.learning_rate # initialize lr tracker
         for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
             self.train_sampler.set_epoch(epoch)
             self.model.train()
@@ -660,6 +664,7 @@ class Experiment:
                 train_loader = tqdm(self.train_loader, desc='training...')
             else:
                 train_loader = self.train_loader
+            dist.barrier()
             for i, batch in enumerate(train_loader):
                 batch_data = batch[0]
                 if not isinstance(batch_data, tuple):
@@ -676,13 +681,13 @@ class Experiment:
                     batch_loss, batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=True
                     )
-                batch_loss = torch.tensor([batch_loss]).cuda(self.gpu)
+                batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
                 dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
                 batch_loss = batch_loss.item()
                 train_loss += batch_loss
 
                 train_batch_size = batch_energies.shape[0]
-                train_batch_size = torch.tensor([train_batch_size]).cuda(self.gpu)
+                train_batch_size = torch.tensor([train_batch_size]).cuda(self.gpu, non_blocking=True)
                 dist.all_reduce(train_batch_size, dist.ReduceOp.SUM)
                 train_batch_size = train_batch_size.item()
                 epoch_train_size += train_batch_size
@@ -697,7 +702,7 @@ class Experiment:
                     batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
                     # for training, true rxn is always at 0th-index 
                     batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0]
-                    batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu)
+                    batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
                     dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
                     batch_correct_preds = batch_correct_preds.item()
 
@@ -721,6 +726,7 @@ class Experiment:
             for k in self.k_to_calc:
                 self.train_topk_accs[k].append(train_correct_preds[k] / epoch_train_size)
             self.train_losses.append(train_loss / epoch_train_size)
+            dist.barrier()
 
             # validation
             self.model.eval()
@@ -748,14 +754,14 @@ class Experiment:
                             batch_data, batch_mask, backprop=False
                         )
                     val_batch_size = batch_energies.shape[0]
-                    val_batch_size = torch.tensor([val_batch_size]).cuda(self.gpu)
+                    val_batch_size = torch.tensor([val_batch_size]).cuda(self.gpu, non_blocking=True)
                     dist.all_reduce(val_batch_size, dist.ReduceOp.SUM)
                     val_batch_size = val_batch_size.item()
                     epoch_val_size += val_batch_size
 
                     # for validation/test data, true rxn may not be present!
                     # only provide for finetuning step on retro proposals
-                    if self.args.do_finetune and self.debug:
+                    if self.args.do_finetune:
                         batch_idx = batch[2] # List
                         batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
                         batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
@@ -776,7 +782,7 @@ class Experiment:
                             # index with lowest energy is what the model deems to be the most feasible rxn
                             batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
                             batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
-                            batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu)
+                            batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
                             dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
                             batch_correct_preds = batch_correct_preds.item()
 
@@ -787,10 +793,10 @@ class Experiment:
                                 if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                     try:
                                         for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                            if j % (self.val_size // 5) == random.randint(0, 10):  # peek at a random sample of current batch to monitor training progress
+                                            if j % (self.val_size // 5) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
                                                 sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
                                                 sample_true_rank = batch_true_ranks_array[sample_idx]
-                                                sample_pred_rank = batch_preds[sample_idx, 0].item() 
+                                                sample_pred_rank = batch_preds[sample_idx, 0].item()
                                                 sample_true_prod = self.proposals_data['valid'][batch_idx[sample_idx], 0]
                                                 sample_true_prec = self.proposals_data['valid'][batch_idx[sample_idx], 1]
 
@@ -806,6 +812,7 @@ class Experiment:
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
                                         logging.info("".join(tb_str))
                                         logging.info('\nIndex out of range (last minibatch)')
+                                dist.barrier()
                             elif k == 5:
                                 running_top5_acc = val_correct_preds[k] / epoch_val_size
                             elif k == 10:
@@ -818,7 +825,7 @@ class Experiment:
                         for k in self.k_to_calc:
                             batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
                             batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
-                            batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu)
+                            batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
                             dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
                             batch_correct_preds = batch_correct_preds.item()
                             
@@ -835,7 +842,7 @@ class Experiment:
                     if 10 not in self.k_to_calc:
                         running_top10_acc = np.nan
 
-                    batch_loss = torch.tensor([batch_loss]).cuda(self.gpu)
+                    batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
                     dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
                     batch_loss = batch_loss.item()
                     val_loss += batch_loss
@@ -901,24 +908,26 @@ class Experiment:
             else:
                 epoch_top10_train_acc = np.nan
                 epoch_top10_val_acc = np.nan
-            if 20 in self.train_topk_accs:
-                epoch_top20_train_acc = self.train_topk_accs[20][-1]
-                epoch_top20_val_acc = self.val_topk_accs[20][-1]
-            else:
-                epoch_top20_train_acc = np.nan
-                epoch_top20_val_acc = np.nan
+            # if 20 in self.train_topk_accs:
+            #     epoch_top20_train_acc = self.train_topk_accs[20][-1]
+            #     epoch_top20_val_acc = self.val_topk_accs[20][-1]
+            # else:
+            #     epoch_top20_train_acc = np.nan
+            #     epoch_top20_val_acc = np.nan
             if self.rank == 0:
                 logging.info(
                     f"\nEnd of epoch: {epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
                     \ntop-3 train acc: {epoch_top3_train_acc:.4f}, top-5 train acc: {epoch_top5_train_acc:.4f}, \
-                    \ntop-10 train acc: {epoch_top10_train_acc:.4f}, top-20 train acc: {epoch_top20_train_acc:.4f}, \
+                    \ntop-10 train acc: {epoch_top10_train_acc:.4f}, \
                     \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
                     \ntop-3 val acc: {epoch_top3_val_acc:.4f}, top-5 val acc: {epoch_top5_val_acc:.4f} \
-                    \ntop-10 val acc: {epoch_top10_val_acc:.4f}, top-20 val acc: {epoch_top20_val_acc:.4f} \
+                    \ntop-10 val acc: {epoch_top10_val_acc:.4f} \
                     \n"
                 )
-                if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < 1e-6:
+                # top-20 train acc: {epoch_top20_train_acc:.4f},
+                # , top-20 val acc: {epoch_top20_val_acc:.4f} 
+                if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
                     logging.info('Stopping training as learning rate has dropped below 1e-6')
                     break 
 
@@ -937,7 +946,8 @@ class Experiment:
         self.model.eval()
         test_loss, test_correct_preds = 0, defaultdict(int)
         if self.test_loader is None: # running G2E
-            self.test_loader, self.test_size, _ = self._get_smi_dl(phase="test", shuffle=False)
+            self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
+        self.test_sampler.set_epoch(0)
         if self.rank == 0:
             test_loader = tqdm(self.test_loader, desc='testing...')
         else:
@@ -961,14 +971,14 @@ class Experiment:
                         batch_data, batch_mask, backprop=False
                     )
                 test_batch_size = batch_energies.shape[0]
-                test_batch_size = torch.tensor([test_batch_size]).cuda(self.gpu)
+                test_batch_size = torch.tensor([test_batch_size]).cuda(self.gpu, non_blocking=True)
                 dist.all_reduce(test_batch_size, dist.ReduceOp.SUM)
                 test_batch_size = test_batch_size.item()
                 epoch_test_size += test_batch_size
 
                 # for validation/test data, true rxn may not be present!
                 # only provide for finetuning step on retro proposals
-                if self.args.do_finetune and self.debug:
+                if self.args.do_finetune:
                     batch_idx = batch[2]
                     batch_true_ranks_array = self.proposals_data['test'][batch_idx, 2].astype('int')
                     batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
@@ -989,7 +999,7 @@ class Experiment:
                         # index with lowest energy is what the model deems to be the most feasible rxn
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
                         batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
-                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu)
+                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
                         dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
                         batch_correct_preds = batch_correct_preds.item()
 
@@ -1023,7 +1033,7 @@ class Experiment:
                             running_top5_acc = test_correct_preds[k] / epoch_test_size
                         elif k == 10:
                             running_top10_acc = test_correct_preds[k] / epoch_test_size
-
+                        dist.barrier()
                 else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                     batch_true_ranks = 0
                     batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
@@ -1032,7 +1042,7 @@ class Experiment:
                     for k in self.k_to_calc:
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
                         batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
-                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu)
+                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
                         dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
                         batch_correct_preds = batch_correct_preds.item()
                         
@@ -1044,12 +1054,13 @@ class Experiment:
                             running_top5_acc = test_correct_preds[k] / epoch_test_size
                         elif k == 10:
                             running_top10_acc = test_correct_preds[k] / epoch_test_size
+                        dist.barrier()
                 if 5 not in self.k_to_calc:
                     running_top5_acc = np.nan
                 if 10 not in self.k_to_calc:
                     running_top10_acc = np.nan
                 
-                batch_loss = torch.tensor([batch_loss]).cuda(self.gpu)
+                batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
                 dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
                 batch_loss = batch_loss.item()
                 test_loss += batch_loss
@@ -1066,7 +1077,7 @@ class Experiment:
             raise RuntimeError(
                 "self.stats only has 2 keys or less. If loading checkpoint, you need to provide load_stats!"
             )
-
+        dist.barrier()
         self.stats["test_loss"] = test_loss / epoch_test_size 
         self.stats["test_topk_accs"] = self.test_topk_accs
         if self.rank == 0:

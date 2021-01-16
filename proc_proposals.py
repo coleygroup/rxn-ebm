@@ -15,12 +15,35 @@ from pathlib import Path
 from scipy import sparse
 from rdkit import RDLogger
 
+from joblib import Parallel, delayed
+import multiprocessing
+
 from rxnebm.data import augmentors
 from rxnebm.data.preprocess import smi_to_fp
 from rxnebm.proposer import retrosim_model
 
-''' TODO: add support for representation: ['Graphs'] for transformer/GNNs
-'''
+import joblib
+import contextlib
+
+@contextlib.contextmanager
+def tqdm_joblib(tqdm_object):
+    # https://stackoverflow.com/questions/24983493/tracking-progress-of-joblib-parallel-execution
+    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
+    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
+        def __call__(self, *args, **kwargs):
+            tqdm_object.update(n=self.batch_size)
+            return super().__call__(*args, **kwargs)
+
+    old_batch_callback = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_batch_callback
+        tqdm_object.close()
 
 def parse_args():
     parser = argparse.ArgumentParser("proc_proposals.py")
@@ -33,31 +56,24 @@ def parse_args():
     parser.add_argument("--output_file_prefix", help="Prefix of 3 output files containing proposals in chosen representation", type=str) # add graphs to prefix when necessary
     parser.add_argument("--helper_file_prefix", help="Prefix of helper files for count_mol_fps & mol_smi_to_fp", type=str) # add graphs to prefix when necessary
 
+    parser.add_argument("--parallelize", help="Whether to parallelize over all available cores", action="store_true")
     parser.add_argument("--split_every", help="Split train .npz every N steps to prevent out of memory error", 
-                        type=int, default=10000)
-
+                        type=int)
     parser.add_argument("--proposer", help="Proposer ['retrosim', 'GLN']", type=str)
-    parser.add_argument("--topk", help="No. of proposals Retrosim should try to generate per product SMILES (not guaranteed)", type=int, default=200)
-
+    parser.add_argument("--topk", help="No. of proposals per product SMILES for training data (not guaranteed)", type=int, default=50)
+    parser.add_argument("--maxk", help="No. of proposals per product SMILES for evaluation data (not guaranteed)", type=int, default=200)
+    
     # GLN arguments 
-    parser.add_argument("--beam_size", help="Beam size", type=int, default=50)
+    parser.add_argument("--beam_size", help="Beam size", type=int, default=200)
 
     # Retrosim arguments (rxnebm/proposer/retrosim_model.py)
     parser.add_argument("--max_precedents", help="No. of similar products Retrosim should compare against", type=int, default=200)
-    parser.add_argument("--similarity_type", 
-        help="Metric to use for similarity search of product fingerprints ['Tanimoto', 'Dice', 'TverskyA', 'TverskyB']", 
-        type=str, default="Tanimoto")
-    parser.add_argument("--retrosim_fp_type", 
-        help="Fingerprint type to use ['Morgan2noFeat', 'Morgan3noFeat', 'Morgan2Feat', 'Morgan3Feat']", 
-        type=str, default="Morgan2Feat")
-    parser.add_argument("--parallelize", help="Whether to parallelize the proposal generation step", action="store_true")
 
-    # TODO: add graphs 
     parser.add_argument("--representation", help='the representation to compute ["fingerprints", "rxn_smiles"]', default='fingerprints')
     # fingerprint arguments, only apply if --representation=='fingerprints'
     parser.add_argument("--radius", help="Fingerprint radius", type=int, default=3)
-    parser.add_argument("--fp_size", help="Fingerprint size", type=int, default=4096)
-    parser.add_argument("--rxn_type", help='Fingerprint reaction type ["diff", "sep"]', type=str, default="diff")
+    parser.add_argument("--fp_size", help="Fingerprint size", type=int, default=16384)
+    parser.add_argument("--rxn_type", help='Fingerprint reaction type ["diff", "sep", "hybrid", "hybrid_all"]', type=str, default="hybrid_all")
     parser.add_argument("--fp_type", help='Fingerprint type ["count", "bit"]', type=str, default="count")
 
     return parser.parse_args()
@@ -73,8 +89,6 @@ def main(args):
     beam_size = args.beam_size
     topk = args.topk
     maxk = args.maxk
-    similarity_type = args.similarity_type
-    retrosim_fp_type = args.retrosim_fp_type
     parallelize = args.parallelize
     rxn_smi_file_prefix = args.rxn_smi_file_prefix
     helper_file_prefix = args.helper_file_prefix
@@ -101,29 +115,18 @@ def main(args):
 
     if args.proposer == 'retrosim':
         proposals_file_prefix = f"retrosim_{topk}maxtest_{max_prec}maxprec" # do not change
-    elif args.proposer == 'GLN':
-        proposals_file_prefix = f"GLN_{topk}topk_{maxk}maxk_{beam_size}beam" # do not change
+    elif args.proposer == 'GLN_retrain':
+        proposals_file_prefix = f"GLN_retrain_{topk}topk_{maxk}maxk_{beam_size}beam" # do not change
+    elif args.proposer == 'retroxpert':
+        proposals_file_prefix = f"retroxpert_{topk}top_{maxk}max_{beam_size}beam" # do not change
 
-    if args.proposer == 'retrosim':
-        #TODO: move this to a different script: gen_proposals.py, merge gen_gln.py/gen_mt.py and handle all proposers over there
-        for phase in ['train', 'valid', 'test']:
-            logging.info(f"finding proposals CSV file at : {cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv'}")
-            if not (cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv').exists():
-                logging.info('Could not find proposals CSV file by retrosim; generating them now! (Can take up to 13 hours!!!)')
-                retrosim_model = retrosim_model.Retrosim(topk=topk, max_prec=max_prec, similarity_type=similarity_type,
-                                        input_data_file_prefix=rxn_smi_file_prefix, fp_type=retrosim_fp_type, parallelize=parallelize)
-                retrosim_model.prep_valid_and_test_data()
-                retrosim_model.propose_all()
-                retrosim_model.analyse_proposed() 
-                break # propose_all() settles all 3 of train, valid & test
-
-    elif args.proposer == 'GLN' or args.proposer == 'MT': #TODO: fully implement MT 
+    if args.proposer == 'GLN_retrain' or args.proposer == 'MT' or args.proposer == 'retroxpert' or args.proposer == 'retrosim': #TODO: fully implement MT 
         for phase in ['train', 'valid', 'test']:
             files = os.listdir(cleaned_data_root)
             if proposals_file_prefix not in files:
                 topk_pass, maxk_pass = False, False
                 for filename in files:
-                    if args.proposer in filename and 'train.csv' in filename and f'{beam_size}beam' in filename: 
+                    if args.proposer in filename and f'{beam_size}beam_train.csv' in filename and not '.csv.' in filename: 
                         for kwarg in filename.split('_'): # split into ['GLN', '200topk', '200maxk', '200beam', 'valid.csv']
                             if 'topk' in kwarg:
                                 if int(kwarg.strip('topk')) >= topk: 
@@ -165,7 +168,6 @@ def main(args):
         proposals_trimmed = proposals.drop(['orig_rxn_smi', 'rank_of_true_precursor'], axis=1)
         proposals_numpy = proposals_trimmed.values
 
-        # TODO: merge proposals from multiple proposers into a single file for training & testing
         phase_topk = topk if phase == 'train' else maxk
         processed_rxn_smis = []
         for row in proposals_numpy:
@@ -187,112 +189,123 @@ def main(args):
             logging.info(f'Saved {phase} rxn_smi!')
 
         elif representation == 'fingerprints':
-            uniq_mol_smis = set() 
-            for rxn in tqdm(processed_rxn_smis, desc='Generating uniq mol smis'):
-                for rxn_smi in rxn:
-                    rcts = rxn_smi.split(">")[0]
-                    prod = rxn_smi.split(">")[-1] 
-                    rcts_prod_smis = rcts + "." + prod
-                    for mol_smi in rcts_prod_smis.split("."):
-                        if mol_smi == '': 
-                            continue 
-                        uniq_mol_smis.add(mol_smi)
+            # comment out for now, to test parallelization
+            # uniq_mol_smis = set()
+            # for rxn in tqdm(processed_rxn_smis, desc='Generating uniq mol smis'):
+            #     for rxn_smi in rxn:
+            #         rcts = rxn_smi.split(">>")[0]
+            #         prod = rxn_smi.split(">>")[-1] 
+            #         rcts_prod_smis = rcts + "." + prod
+            #         for mol_smi in rcts_prod_smis.split("."):
+            #             if mol_smi == '' or str(mol_smi) == '9999': 
+            #                 continue 
+            #             else:
+            #                 uniq_mol_smis.add(mol_smi)
 
-            uniq_mol_smis = list(uniq_mol_smis)
-            logging.info('Generated unique mol smis!')
-            time.sleep(0.5)
-
-            mol_smi_to_fp_load = None
-            try:
-                with open(cleaned_data_root / f'{helper_file_prefix}_mol_smi_to_fp.pickle', 'rb') as handle:
-                    mol_smi_to_fp_load = pickle.load(handle)
-                logging.info('Loaded mol_smi_to_fp')
-            except Exception as e:
-                logging.info(f'{e}')
- 
-            mol_smi_to_fp = {} 
-            for i, mol_smi in enumerate(uniq_mol_smis):
-                mol_smi_to_fp[mol_smi] = i
-
-            count_mol_fps_load = None
-            try:
-                count_mol_fps_load = sparse.load_npz(
-                    cleaned_data_root / f'{helper_file_prefix}_count_mol_fps.npz'
-                )
-                logging.info('Loaded count_mol_fps')
-            except Exception as e:
-                logging.info(f'{e}')
- 
-            if mol_smi_to_fp_load is not None and count_mol_fps_load is not None: # both files already exist
-                count_mol_fps = [] 
-                for i, mol_smi in enumerate(tqdm(uniq_mol_smis, total=len(uniq_mol_smis), desc='Generating mol fps...')):
-                    if mol_smi in mol_smi_to_fp_load:  # load precomputed count_mol_fp if it exists 
-                        cand_mol_fp_idx = mol_smi_to_fp_load[mol_smi]
-                        cand_mol_fp = count_mol_fps_load[cand_mol_fp_idx]
-                        count_mol_fps.append(cand_mol_fp)
-                    else: # compute from scratch
-                        try: # have to use try except bcos the mol_smi may not be valid (esp w/ transformers)
-                            cand_mol_fp = smi_to_fp.mol_smi_to_count_fp(mol_smi, radius, fp_size, dtype)
-                            count_mol_fps.append(cand_mol_fp)
-                        except Exception as e:
-                            logging.info(f'Error {e} at index {i} for {mol_smi}')
-                            continue
+            # uniq_mol_smis = list(uniq_mol_smis)
+            # logging.info('Generated unique mol smis!')
+            # time.sleep(0.5)
             
-                try:
-                    for mol_smi, fp_idx in mol_smi_to_fp_load.items():
-                        if mol_smi not in mol_smi_to_fp:
-                            missing_mol_fp_idx = mol_smi_to_fp_load[mol_smi]
-                            missing_mol_fp = count_mol_fps_load[missing_mol_fp_idx]
-                            count_mol_fps.append(missing_mol_fp)
-                            mol_smi_to_fp[mol_smi] = len(count_mol_fps) - 1 # fp_idx is simply length - 1
+            # mol_smi_to_fp_load = None
+            # try:
+            #     with open(cleaned_data_root / f'{helper_file_prefix}_mol_smi_to_fp.pickle', 'rb') as handle:
+            #         mol_smi_to_fp_load = pickle.load(handle)
+            #     logging.info('Loaded mol_smi_to_fp')
+            # except Exception as e:
+            #     logging.info(f'{e}')
+ 
+            # mol_smi_to_fp = {} 
+            # for i, mol_smi in enumerate(uniq_mol_smis):
+            #     mol_smi_to_fp[mol_smi] = i
 
-                    sparse_count_mol_fps = sparse.vstack(count_mol_fps)
-                    sparse.save_npz(cleaned_data_root / f'{helper_file_prefix}_count_mol_fps.npz', 
-                                    sparse_count_mol_fps)
+            # count_mol_fps_load = None
+            # try:
+            #     count_mol_fps_load = sparse.load_npz(
+            #         cleaned_data_root / f'{helper_file_prefix}_count_mol_fps.npz'
+            #     )
+            #     logging.info('Loaded count_mol_fps')
+            # except Exception as e:
+            #     logging.info(f'{e}')
+ 
+            # if mol_smi_to_fp_load is not None and count_mol_fps_load is not None: # both files already exist
+            #     count_mol_fps = []
+            #     for i, mol_smi in enumerate(tqdm(uniq_mol_smis, total=len(uniq_mol_smis), desc='Generating mol fps...')):
+            #         if mol_smi in mol_smi_to_fp_load:  # load precomputed count_mol_fp if it exists 
+            #             cand_mol_fp_idx = mol_smi_to_fp_load[mol_smi]
+            #             cand_mol_fp = count_mol_fps_load[cand_mol_fp_idx]
+            #             count_mol_fps.append(cand_mol_fp)
+            #         else: # compute from scratch
+            #             try: # have to use try except bcos the mol_smi may not be valid (esp w/ transformers)
+            #                 cand_mol_fp = smi_to_fp.mol_smi_to_count_fp(mol_smi, radius, fp_size, dtype)
+            #                 count_mol_fps.append(cand_mol_fp)
+            #             except Exception as e:
+            #                 logging.info(f'Error {e} at index {i} for {mol_smi}')
+            #                 continue
+            
+            #     try:
+            #         for mol_smi, fp_idx in mol_smi_to_fp_load.items():
+            #             if mol_smi not in mol_smi_to_fp:
+            #                 missing_mol_fp_idx = mol_smi_to_fp_load[mol_smi]
+            #                 missing_mol_fp = count_mol_fps_load[missing_mol_fp_idx]
+            #                 count_mol_fps.append(missing_mol_fp)
+            #                 mol_smi_to_fp[mol_smi] = len(count_mol_fps) - 1 # fp_idx is simply length - 1
+
+            #         sparse_count_mol_fps = sparse.vstack(count_mol_fps)
+            #         sparse.save_npz(cleaned_data_root / f'{helper_file_prefix}_count_mol_fps.npz', 
+            #                         sparse_count_mol_fps)
                     
-                    with open(cleaned_data_root / f'{helper_file_prefix}_mol_smi_to_fp.pickle', 'wb') as handle:
-                        pickle.dump(mol_smi_to_fp, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                    logging.info('Saved count_mol_fps and mol_smi_to_fp!')
-                except Exception as e:
-                    logging.info(f'{e}')
+            #         with open(cleaned_data_root / f'{helper_file_prefix}_mol_smi_to_fp.pickle', 'wb') as handle:
+            #             pickle.dump(mol_smi_to_fp, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            #         logging.info('Saved count_mol_fps and mol_smi_to_fp!')
+            #     except Exception as e:
+            #         logging.info(f'{e}')
 
-            else:
-                count_mol_fps = [] 
-                for i, mol_smi in enumerate(tqdm(uniq_mol_smis, total=len(uniq_mol_smis), desc='Generating mol fps...')):
-                    try:
-                        cand_mol_fp = smi_to_fp.mol_smi_to_count_fp(mol_smi, radius, fp_size, dtype)
-                        count_mol_fps.append(cand_mol_fp)
-                    except Exception as e:
-                        logging.info(f'Error {e} at index {i} for {mol_smi}')
-                        continue
+            # else:
+            #     # the part we want to parallelise
+            #     num_cores = len(os.sched_getaffinity(0)) # multiprocessing.cpu_count()
+            #     logging.info(f'Using {num_cores}')
+            #     with tqdm_joblib(tqdm(desc="Generating mol fps", total=len(uniq_mol_smis))) as progress_bar:
+            #         count_mol_fps = Parallel(n_jobs=num_cores, verbose=5)(
+            #                             delayed(mol_smi_to_count_fp_helper)(
+            #                                 mol_smi, radius, fp_size, dtype
+            #                             ) for mol_smi in uniq_mol_smis
+            #                         )
+            #     # count_mol_fps = []
+            #     # for i, mol_smi in enumerate(tqdm(uniq_mol_smis, total=len(uniq_mol_smis), desc='Generating mol fps...')):
+            #     #     try:
+            #     #         cand_mol_fp = smi_to_fp.mol_smi_to_count_fp(mol_smi, radius, fp_size, dtype)
+            #     #         count_mol_fps.append(cand_mol_fp)
+            #     #     except Exception as e:
+            #     #         logging.info(f'Error {e} at index {i} for {mol_smi}')
+            #     #         continue
             
-                try:
-                    sparse_count_mol_fps = sparse.vstack(count_mol_fps)
-                    sparse.save_npz(cleaned_data_root / f'{helper_file_prefix}_count_mol_fps.npz', 
-                                    sparse_count_mol_fps)
-                    with open(cleaned_data_root / f'{helper_file_prefix}_mol_smi_to_fp.pickle', 'wb') as handle:
-                        pickle.dump(mol_smi_to_fp, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                    logging.info('Saved count_mol_fps and mol_smi_to_fp!')
-                except Exception as e:
-                    logging.info(f'{e}')
+            #     try:
+            #         count_mol_fps = sparse.vstack(count_mol_fps)
+            #         sparse.save_npz(cleaned_data_root / f'{helper_file_prefix}_count_mol_fps.npz', 
+            #                         count_mol_fps)
+            #         with open(cleaned_data_root / f'{helper_file_prefix}_mol_smi_to_fp.pickle', 'wb') as handle:
+            #             pickle.dump(mol_smi_to_fp, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            #         logging.info('Saved count_mol_fps and mol_smi_to_fp!')
+            #     except Exception as e:
+            #         logging.info(f'{e}')
                     
     
             phase_rxn_fps = [] # sparse.csr_matrix((len(proposals_file_prefix), fp_size)) # init big output sparse matrix
             if phase == 'train':
-                for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
+                def rxn_fp_helper_train(rxn, i):
                     pos_rxn_smi = rxn[0]
                     neg_rxn_smis = rxn[1:]
 
-                    pos_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(pos_rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
+                    pos_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(pos_rxn_smi, fp_type, radius, fp_size, dtype)
                     pos_rxn_fp = augmentors.make_rxn_fp(pos_rcts_fp, prod_fp, rxn_type)
 
                     neg_rxn_fps = []
                     for neg_rxn_smi in neg_rxn_smis:
                         try:
-                            neg_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(neg_rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
+                            neg_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(neg_rxn_smi, fp_type, radius, fp_size, dtype)
                             neg_rxn_fp = augmentors.make_rxn_fp(neg_rcts_fp, prod_fp, rxn_type)
                             neg_rxn_fps.append(neg_rxn_fp)
-                        except Exception as e: 
+                        except Exception as e:
                             logging.info(f'Error {e} at index {i}')
                             continue 
 
@@ -306,23 +319,62 @@ def main(args):
                         neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps))) 
 
                     this_rxn_fps = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
-                    # phase_rxn_fps[i] = sparse.hstack([pos_rxn_fp, *neg_rxn_fps]) # significantly slower! 
-                    phase_rxn_fps.append(this_rxn_fps)
-                    
-                    if (i % args.split_every == 0 and i > 0) or (i == len(processed_rxn_smis) - 1):
-                        logging.info(f'Checkpointing {i}')
-                        phase_rxn_fps_checkpoint = sparse.vstack(phase_rxn_fps)
-                        sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}_{i}.npz", phase_rxn_fps_checkpoint)
-                        phase_rxn_fps = [] # reset to empty list 
+                    return this_rxn_fps
 
-            else: # do not assume pos_rxn_smi is inside 
-                for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
+                num_cores = len(os.sched_getaffinity(0))
+                logging.info(f'Using {num_cores}')
+                with tqdm_joblib(tqdm(desc="Generating rxn fps", total=len(processed_rxn_smis))) as progress_bar:
+                    phase_rxn_fps = Parallel(n_jobs=num_cores)(
+                                        delayed(rxn_fp_helper_train)(
+                                            rxn, i,
+                                        ) for i, rxn in enumerate(processed_rxn_smis)
+                                    )
+
+                # unparallelized version
+                # for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
+                #     pos_rxn_smi = rxn[0]
+                #     neg_rxn_smis = rxn[1:]
+
+                #     pos_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(pos_rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
+                #     pos_rxn_fp = augmentors.make_rxn_fp(pos_rcts_fp, prod_fp, rxn_type)
+
+                #     neg_rxn_fps = []
+                #     for neg_rxn_smi in neg_rxn_smis:
+                #         try:
+                #             neg_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(neg_rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
+                #             neg_rxn_fp = augmentors.make_rxn_fp(neg_rcts_fp, prod_fp, rxn_type)
+                #             neg_rxn_fps.append(neg_rxn_fp)
+                #         except Exception as e: 
+                #             logging.info(f'Error {e} at index {i}')
+                #             continue 
+
+                #     if len(neg_rxn_fps) < topk:
+                #         if rxn_type == 'sep' or rxn_type == 'hybrid':
+                #             dummy_fp = np.zeros((1, fp_size * 2))
+                #         elif rxn_type == 'hybrid_all':
+                #             dummy_fp = np.zeros((1, fp_size * 3))
+                #         else: # diff 
+                #             dummy_fp = np.zeros((1, fp_size))
+                #         neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps))) 
+
+                #     this_rxn_fps = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
+                #     # phase_rxn_fps[i] = sparse.hstack([pos_rxn_fp, *neg_rxn_fps]) # significantly slower! 
+                #     phase_rxn_fps.append(this_rxn_fps)
+                    
+                    # if (i % args.split_every == 0 and i > 0) or (i == len(processed_rxn_smis) - 1):
+                    #     logging.info(f'Checkpointing {i}')
+                    #     phase_rxn_fps_checkpoint = sparse.vstack(phase_rxn_fps)
+                    #     sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}_{i}.npz", phase_rxn_fps_checkpoint)
+                    #     phase_rxn_fps = [] # reset to empty list
+
+            else: # do not assume pos_rxn_smi is inside
+                def rxn_fp_helper_test(rxn, i):
                     rxn_smis = rxn[1:] 
 
                     rxn_fps = []
                     for rxn_smi in rxn_smis:
                         try:
-                            rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
+                            rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(rxn_smi, fp_type, radius, fp_size, dtype)
                             rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type) # log=True (take log(x+1) of rct & prodfps)
                             rxn_fps.append(rxn_fp)
                         except Exception as e:
@@ -339,11 +391,46 @@ def main(args):
                         rxn_fps.extend([dummy_fp] * (maxk - len(rxn_fps)))
 
                     this_rxn_fps = sparse.hstack(rxn_fps)
-                    phase_rxn_fps.append(this_rxn_fps)
+                    return this_rxn_fps
 
-                phase_rxn_fps = sparse.vstack(phase_rxn_fps)
-                sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}.npz", phase_rxn_fps)
-                phase_rxn_fps = [] # reset to empty list 
+                num_cores = len(os.sched_getaffinity(0))
+                logging.info(f'Using {num_cores}')
+                with tqdm_joblib(tqdm(desc="Generating rxn fps", total=len(processed_rxn_smis))) as progress_bar:
+                    phase_rxn_fps = Parallel(n_jobs=num_cores)(
+                                        delayed(rxn_fp_helper_test)(
+                                            rxn, i,
+                                        ) for i, rxn in enumerate(processed_rxn_smis)
+                                    )
+                
+                # unparallelized version
+                # for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
+                #     rxn_smis = rxn[1:] 
+
+                #     rxn_fps = []
+                #     for rxn_smi in rxn_smis:
+                #         try:
+                #             rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
+                #             rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type) # log=True (take log(x+1) of rct & prodfps)
+                #             rxn_fps.append(rxn_fp)
+                #         except Exception as e:
+                #             logging.info(f'Error {e} at index {i}')
+                #             continue 
+
+                #     if len(rxn_fps) < maxk:
+                #         if rxn_type == 'sep' or rxn_type == 'hybrid':
+                #             dummy_fp = np.zeros((1, fp_size * 2))
+                #         elif rxn_type == 'hybrid_all':
+                #             dummy_fp = np.zeros((1, fp_size * 3))
+                #         else: # diff 
+                #             dummy_fp = np.zeros((1, fp_size))
+                #         rxn_fps.extend([dummy_fp] * (maxk - len(rxn_fps)))
+
+                #     this_rxn_fps = sparse.hstack(rxn_fps)
+                #     phase_rxn_fps.append(this_rxn_fps)
+
+            phase_rxn_fps = sparse.vstack(phase_rxn_fps)
+            sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}.npz", phase_rxn_fps)
+            del phase_rxn_fps 
         
         else:
             raise ValueError(f'{representation} not supported!')
@@ -389,23 +476,21 @@ if __name__ == '__main__':
     else:
         args.cleaned_data_root = Path(args.cleaned_data_root)
 
-    #TODO: implement parallelization (for count mol fp generation & rxn fp generation) 
-    for fp_size in [4096*4]:  
-        #NOTE: takes 8+12 min for valid & test each, and 1hr+2hrs for train :') 
-        args.proposer = 'GLN' 
-        args.topk = 200 # OOM if one shot, need to split into chunks
-        args.maxk = 200
-        args.beam_size = 200
-        args.split_every = 10000 
-        args.fp_size = fp_size
-        args.rxn_type = 'hybrid_all' 
-        args.helper_file_prefix = f'{fp_size}'
-        args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{args.beam_size}beam_{args.fp_size}_{args.rxn_type}"
-        logging.info(f'Processing {args.proposer} proposals into {args.fp_size}-dim {args.rxn_type} fingerprints\n')
-        main(args)
+    # for fp_size in [16384]:
+    #     args.proposer = 'retroxpert'
+    #     args.topk = 50
+    #     args.maxk = 200
+    #     args.beam_size = 200
+    #     # args.split_every = 10000
+    #     args.fp_size = fp_size
+    #     args.rxn_type = 'hybrid_all' 
+    # args.helper_file_prefix = f'{fp_size}'
+    args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{args.beam_size}beam_{args.fp_size}_{args.rxn_type}"
+    logging.info(f'Processing {args.proposer} proposals into {args.fp_size}-dim {args.rxn_type} fingerprints\n')
+    main(args)
 
-        args.phase = 'train'
-        args.split_idxs = [0, 10000, 20000, 30000, 39713]
-        merge_chunks(args)
+        # args.phase = 'train'
+        # args.split_idxs = [0, 10000, 20000, 30000, 39713]
+        # merge_chunks(args)
 
     logging.info('Processing finished successfully')
