@@ -107,11 +107,10 @@ class Experiment:
             self.rank = rank
             self.device = torch.cuda.current_device()
         else:
-            raise RuntimeError('gpu is None')
-            # self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            # model = model.to(self.device)
-            # self.gpu = None
-            # self.rank = None
+            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            model = model.to(self.device)
+            self.gpu = None
+            self.rank = None
         self.model = model
         self.model_name = model_name # self.model.model_repr
         self.model_args = model_args
@@ -142,6 +141,7 @@ class Experiment:
         # take into account original probs/scores from retro models
         self.prob_filenames = defaultdict(str)
         if self.args.prob_file_prefix: # will be loaded in Dataset file
+            logging.info(f'Loading probs file {self.args.prob_file_prefix}')
             for phase in ['train', 'valid', 'test']:
                 self.prob_filenames[phase] = self.args.prob_file_prefix + f"_{phase}.npy"
 
@@ -325,7 +325,7 @@ class Experiment:
                                         patience=self.args.lr_scheduler_patience,
                                         cooldown=self.args.lr_cooldown,
                                         verbose=True
-                                        ) 
+                                        )
         elif self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
             logging.info(f'Initialising {self.lr_scheduler_name}')
             self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
@@ -793,7 +793,7 @@ class Experiment:
                                 if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                     try:
                                         for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                            if j % (self.val_size // 5) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
+                                            if j % (self.val_size // 5) == random.randint(0, 6) or j % (self.val_size // 3) in [0, 1, 2, 3]:  # peek at a random sample of current batch to monitor training progress
                                                 sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
                                                 sample_true_rank = batch_true_ranks_array[sample_idx]
                                                 sample_pred_rank = batch_preds[sample_idx, 0].item()
@@ -803,10 +803,10 @@ class Experiment:
                                                 sample_cand_precs = self.proposals_data['valid'][batch_idx[sample_idx], 3:]
                                                 sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
                                                 sample_orig_prec = sample_cand_precs[0]
-                                                logging.info(f'\ntrue product:            {sample_true_prod}')
-                                                logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
-                                                logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
-                                                logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
+                                                logging.info(f'\ntrue product:                {sample_true_prod}')
+                                                logging.info(f'pred precursor (rank {sample_pred_rank}):     {sample_pred_prec}')
+                                                logging.info(f'true precursor (rank {sample_true_rank}):     {sample_true_prec}')
+                                                logging.info(f'orig precursor (rank 0):     {sample_orig_prec}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -885,11 +885,7 @@ class Experiment:
                 elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
                     self.lr_scheduler.step(self.val_topk_accs[1][-1])
                 logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
-                # if self.optimizer.param_groups[0]['lr'] < self.current_lr:
-                #     # reset early stop counter
-                #     logging.info('Reset early stopping patience counter')
-                #     self.wait = 0
-                # self.current_lr = self.optimizer.param_groups[0]['lr']
+
             if 3 in self.train_topk_accs:
                 epoch_top3_train_acc = self.train_topk_accs[3][-1]
                 epoch_top3_val_acc = self.val_topk_accs[3][-1]
@@ -995,7 +991,7 @@ class Experiment:
                     ]
                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
 
-                    for k in self.k_to_calc:
+                    for k in [1, 2, 3, 5, 10, 20, 50]: # self.k_to_calc:
                         # index with lowest energy is what the model deems to be the most feasible rxn
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
                         batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
@@ -1004,13 +1000,12 @@ class Experiment:
                         batch_correct_preds = batch_correct_preds.item()
 
                         test_correct_preds[k] += batch_correct_preds
-
                         if k == 1:
                             running_top1_acc = test_correct_preds[k] / epoch_test_size
                             if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                 try:
                                     for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                        if j % (self.test_size // 5) == random.randint(0, 10):  # peek at a random sample of current batch to monitor training progress
+                                        if j % (self.test_size // 5) == random.randint(0, 6) or j % (self.test_size // 3) in [0, 1, 2, 3]:  # peek at a random sample of current batch to monitor training progress
                                             sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
                                             sample_true_rank = batch_true_ranks_array[sample_idx]
                                             sample_pred_rank = batch_preds[sample_idx, 0].item()
@@ -1020,10 +1015,10 @@ class Experiment:
                                             sample_cand_precs = self.proposals_data['test'][batch_idx[sample_idx], 3:] 
                                             sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
                                             sample_orig_prec = sample_cand_precs[0]
-                                            logging.info(f'\ntrue product:            {sample_true_prod}')
-                                            logging.info(f'pred precursor (rank {sample_pred_rank}): {sample_pred_prec}')
-                                            logging.info(f'true precursor (rank {sample_true_rank}): {sample_true_prec}')
-                                            logging.info(f'orig precursor (rank 0): {sample_orig_prec}\n')
+                                            logging.info(f'\ntrue product:                {sample_true_prod}')
+                                            logging.info(f'pred precursor (rank {sample_pred_rank}):     {sample_pred_prec}')
+                                            logging.info(f'true precursor (rank {sample_true_rank}):     {sample_true_prec}')
+                                            logging.info(f'orig precursor (rank 0):     {sample_orig_prec}\n')
                                             break
                                 except Exception as e:
                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -1039,7 +1034,7 @@ class Experiment:
                     batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
 
                     # calculate top-k acc assuming true index is 0 (for pre-training step)
-                    for k in self.k_to_calc:
+                    for k in [1, 2, 3, 5, 10, 20, 50]:
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
                         batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
                         batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
@@ -1068,7 +1063,7 @@ class Experiment:
                     test_loader.set_description(f"testing...loss={test_loss / test_batch_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
                     test_loader.refresh()
                 
-            for k in self.k_to_calc:
+            for k in [1, 2, 3, 5, 10, 20, 50]: # self.k_to_calc:
                 self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size
 
         if saved_stats:

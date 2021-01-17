@@ -48,7 +48,7 @@ def parse_args():
                         help='number of gpus per node')
     parser.add_argument('-nr', '--nr', default=0, type=int,
                         help='ranking within the nodes')
-    parser.add_argument("--port", type=str, default='12345')
+    parser.add_argument("--port", type=str)
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--mol_smi_filename", help="do not change", type=str,
@@ -208,9 +208,10 @@ def main_dist(
     print('Initiating process group')
     # https://github.com/yangkky/distributed_tutorial/blob/master/ddp_tutorial.md
     rank = args.nr * args.gpus + gpu
+    port = args.port or random.randint(0, 65535)
     dist.init_process_group(
         backend='nccl',
-        init_method=f'tcp://127.0.0.1:{args.port}', # for single-node, multi-GPU training # 'env://', # 12345
+        init_method=f'tcp://127.0.0.1:{port}', # for single-node, multi-GPU training # 'env://'
         world_size=args.world_size,
         rank=rank
     )
@@ -256,7 +257,7 @@ def main_dist(
         vocab=vocab,
     )
 
-    if not args.do_not_train and args.do_pretrain: # some bug?
+    if not args.do_not_train and args.do_pretrain:
         logging.info("Start pretraining")
         experiment.train_distributed()
 
@@ -441,6 +442,7 @@ def main(args):
             begin_epoch=begin_epoch,
             debug=True,
             vocab=vocab,
+            gpu=None, # not doing DDP
         )
 
         if not args.do_not_train and args.do_pretrain:
@@ -454,9 +456,6 @@ def main(args):
 
         if args.do_test:
             logging.info("Start testing")
-            # if args.do_compute_graph_feat and experiment.train_loader is not None:
-            #     del experiment.train_loader # free up memory
-            #     gc.collect()
             experiment.test()
 
         if args.do_get_energies_and_acc:
