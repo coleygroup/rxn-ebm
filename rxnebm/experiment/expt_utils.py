@@ -118,12 +118,9 @@ def load_model_opt_and_stats(
             print("loaded checkpoint from load_epoch: ", load_epoch)
 
         if args.model_name == "FeedforwardFingerprint" or args.model_name == 'FeedforwardSingle':
-            saved_model = FF.FeedforwardSingle(**saved_stats["model_args"], **saved_stats["fp_args"])
+            saved_model = FF.FeedforwardSingle(args)
         elif args.model_name == 'FeedforwardTriple3indiv3prod1cos' or args.model_name == "FeedforwardEBM":
-            try:
-                saved_model = FF.FeedforwardTriple3indiv3prod1cos(args)
-            except:
-                saved_model = FF.FeedforwardTriple3indiv3prod1cos(**saved_stats["model_args"], **saved_stats["fp_args"])
+            saved_model = FF.FeedforwardTriple3indiv3prod1cos(args)
         elif args.model_name == "GraphEBM":                 # Graph to energy
             saved_model = G2E.G2E(args)
         elif args.model_name == "GraphEBM_Cross":           # Graph to energy, cross attention pool for r and p atoms

@@ -1,5 +1,6 @@
 import argparse
 import logging
+import math
 import traceback
 import os
 import random
@@ -203,43 +204,19 @@ class Experiment:
                 with augmentations: {self.augmentations}" 
 
     def _collate_args(self): 
-        if self.representation == 'fingerprint':
-            self.fp_args = {
-                "rxn_type": self.args.rxn_type,
-                "fp_type": self.args.fp_type,
-                "rctfp_size": self.args.rctfp_size,
-                "prodfp_size": self.args.prodfp_size,
-                "difffp_size": self.args.difffp_size,
-                "fp_radius": self.args.fp_radius,
-            }
-        else:
-            self.fp_args = None
         self.train_args = {
             "epochs": self.epochs,
             "batch_size": self.batch_size,
-            "batch_size_eval": self.args.batch_size_eval,
             "learning_rate": self.learning_rate,
-            "lr_min": self.args.lr_min,
             "lr_scheduler": self.lr_scheduler_name,
-            "lr_scheduler_criteria": self.args.lr_scheduler_criteria,
-            "lr_scheduler_factor": self.args.lr_scheduler_factor,
-            "lr_scheduler_patience": self.args.lr_scheduler_patience,
-            "lr_scheduler_T_0": self.args.lr_scheduler_T_0,
-            "lr_scheduler_epoch_offset": self.args.lr_scheduler_epoch_offset,
-            "lr_scheduler_last_batch": self.args.lr_scheduler_last_batch,
             "early_stop": self.early_stop,
-            "early_stop_criteria": self.early_stop_criteria,
             "early_stop_patience": self.early_stop_patience,
-            "early_stop_min_delta": self.early_stop_min_delta,
-            "num_workers": self.num_workers,
-            "checkpoint": self.checkpoint,
-            "checkpoint_every": self.checkpoint_every,
             "random_seed": self.random_seed,
             "expt_name": self.expt_name,
             "device": self.device,
             "model_name": self.model_name,
-            "dataparallel": self.dataparallel, 
-            "optimizer": self.optimizer_name, 
+            "optimizer": self.optimizer_name,
+            "args": self.args,
         }
 
     def _load_checkpoint(
@@ -304,9 +281,8 @@ class Experiment:
             self.checkpoint_folder / f"{self.model_name}_{self.expt_name}_stats.pkl"
         )
         self.stats = {
-            "model_args": self.model_args, # from saved_stats, handled in trainEBM.py
-            "fp_args": self.fp_args, # from saved_stats, handled in trainEBM.py
             "train_args": self.train_args, # new, provided as args
+            "model_args": self.model_args,
             "augmentations": self.augmentations, # can be new or same, provided as args
             "train_time": 0, # reset to 0
         }
@@ -355,9 +331,8 @@ class Experiment:
 
         self.begin_epoch = 0 
         self.stats = {
-            "model_args": self.model_args,
-            "fp_args": self.fp_args,
             "train_args": self.train_args,
+            "model_args": self.model_args,
             "augmentations": self.augmentations,
             "train_time": 0,
         }
@@ -696,6 +671,17 @@ class Experiment:
                 batch_loss = batch_loss.item()
                 train_loss += batch_loss
 
+                if math.isnan(train_loss):
+                    if self.rank == 0:
+                        msg = 'Training loss is nan and training diverged! Reloading from best checkpoint w/ reduced LR'
+                        logging.info(msg)
+                        msg += f'\n{self.expt_name}'
+                        try:
+                            send_message(message)
+                        except Exception as e:
+                            logging.info(e)
+                    return True, self.optimizer.param_groups[0]["lr"], epoch
+
                 train_batch_size = batch_energies.shape[0]
                 train_batch_size = torch.tensor([train_batch_size]).cuda(self.gpu, non_blocking=True)
                 dist.all_reduce(train_batch_size, dist.ReduceOp.SUM)
@@ -803,20 +789,26 @@ class Experiment:
                                 if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                     try:
                                         for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                            if j % (self.val_size // 5) == random.randint(0, 6) or j % (self.val_size // 3) in [0, 1, 2, 3]:  # peek at a random sample of current batch to monitor training progress
-                                                sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                                sample_true_rank = batch_true_ranks_array[sample_idx]
-                                                sample_pred_rank = batch_preds[sample_idx, 0].item()
-                                                sample_true_prod = self.proposals_data['valid'][batch_idx[sample_idx], 0]
-                                                sample_true_prec = self.proposals_data['valid'][batch_idx[sample_idx], 1]
+                                            if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) in random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
+                                                rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                                rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                                rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                                rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                                rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
 
-                                                sample_cand_precs = self.proposals_data['valid'][batch_idx[sample_idx], 3:]
-                                                sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
-                                                sample_orig_prec = sample_cand_precs[0]
-                                                logging.info(f'\ntrue product:                {sample_true_prod}')
-                                                logging.info(f'pred precursor (rank {sample_pred_rank}):     {sample_pred_prec}')
-                                                logging.info(f'true precursor (rank {sample_true_rank}):     {sample_true_prec}')
-                                                logging.info(f'orig precursor (rank 0):     {sample_orig_prec}\n')
+                                                rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
+                                                rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
+                                                rxn_cand_precs = self.proposals_data['valid'][batch_idx[rxn_idx], 3:]
+                                                rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                                rxn_orig_prec = rxn_cand_precs[0]
+                                                rxn_orig_prec2 = rxn_cand_precs[1]
+                                                rxn_orig_prec3 = rxn_cand_precs[2]
+                                                logging.info(f'\ntrue product:                          \t\t\t{rxn_true_prod}')
+                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_true_energy:.2f}):  \t\t{rxn_pred_prec}')
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_pred_energy:.2f}):  \t\t{rxn_true_prec}')
+                                                logging.info(f'orig precursor (rank 0):                \t\t\t{rxn_orig_prec}\n')
+                                                logging.info(f'orig precursor (rank 1):                \t\t\t{rxn_orig_prec2}\n')
+                                                logging.info(f'orig precursor (rank 2):                \t\t\t{rxn_orig_prec3}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -865,22 +857,28 @@ class Experiment:
                     self.val_topk_accs[k].append(val_correct_preds[k] / epoch_val_size)
                 self.val_losses.append(val_loss / epoch_val_size)
 
+            is_best = False
             # track best_epoch to facilitate loading of best checkpoint
             if self.early_stop_criteria == 'loss':
                 if self.val_losses[-1] < self.min_val_loss:
                     self.best_epoch = epoch
                     self.min_val_loss = self.val_losses[-1]
-                    if self.rank == 0 and self.checkpoint: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
-                        self._checkpoint_model_and_opt(current_epoch=epoch)
+                    is_best = True
             elif self.early_stop_criteria.split('_')[-1] == 'acc':
                 k = int(self.early_stop_criteria.split('_')[0][-1:])
                 val_acc_to_compare = self.val_topk_accs[k][-1]
                 if val_acc_to_compare > self.max_val_acc:
                     self.best_epoch = epoch
                     self.max_val_acc = val_acc_to_compare
-                    if self.rank == 0 and self.checkpoint: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
-                        self._checkpoint_model_and_opt(current_epoch=epoch)
+                    is_best = True
             
+            if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
+                if self.rank == 0 and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                    self._checkpoint_model_and_opt(current_epoch=epoch)
+            else: # for G2E/S2E, models are small, is ok to save regularly
+                if self.rank == 0 and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                    self._checkpoint_model_and_opt(current_epoch=epoch)
+
             dist.barrier()
             torch.cuda.synchronize()
             self._update_stats()
@@ -944,6 +942,7 @@ class Experiment:
 
         if self.rank == 0:
             logging.info(f'Total training time: {self.stats["train_time"]}')
+        return False, None, None
 
     def test_distributed(self, saved_stats: Optional[dict] = None):
         """
@@ -1021,19 +1020,25 @@ class Experiment:
                                 try:
                                     for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
                                         if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
-                                            sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                            sample_true_rank = batch_true_ranks_array[sample_idx]
-                                            sample_pred_rank = batch_preds[sample_idx, 0].item()
-                                            sample_true_prod = self.proposals_data['test'][batch_idx[sample_idx], 0]
-                                            sample_true_prec = self.proposals_data['test'][batch_idx[sample_idx], 1] 
+                                            rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                            rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                            rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                            rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                            rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
 
-                                            sample_cand_precs = self.proposals_data['test'][batch_idx[sample_idx], 3:] 
-                                            sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
-                                            sample_orig_prec = sample_cand_precs[0]
-                                            logging.info(f'\ntrue product:                {sample_true_prod}')
-                                            logging.info(f'pred precursor (rank {sample_pred_rank}):     {sample_pred_prec}')
-                                            logging.info(f'true precursor (rank {sample_true_rank}):     {sample_true_prec}')
-                                            logging.info(f'orig precursor (rank 0):     {sample_orig_prec}\n')
+                                            rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
+                                            rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
+                                            rxn_cand_precs = self.proposals_data['test'][batch_idx[rxn_idx], 3:]
+                                            rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                            rxn_orig_prec = rxn_cand_precs[0]
+                                            rxn_orig_prec2 = rxn_cand_precs[1]
+                                            rxn_orig_prec3 = rxn_cand_precs[2]
+                                            logging.info(f'\ntrue product:                          \t\t\t{rxn_true_prod}')
+                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_true_energy:.2f}):  \t\t{rxn_pred_prec}')
+                                            logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_pred_energy:.2f}):  \t\t{rxn_true_prec}')
+                                            logging.info(f'orig precursor (rank 0):                \t\t\t{rxn_orig_prec}\n')
+                                            logging.info(f'orig precursor (rank 1):                \t\t\t{rxn_orig_prec2}\n')
+                                            logging.info(f'orig precursor (rank 2):                \t\t\t{rxn_orig_prec3}\n')
                                             break
                                 except Exception as e:
                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -1093,7 +1098,7 @@ class Experiment:
         message = f"{self.expt_name}\n"
         if self.rank == 0:
             logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
-            for k in self.k_to_calc:
+            for k in [1, 2, 3, 5, 10, 20, 50]:
                 this_topk_message = f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%'
                 logging.info(this_topk_message)
                 message += this_topk_message + '\n'

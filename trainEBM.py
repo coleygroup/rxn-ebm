@@ -35,6 +35,7 @@ def parse_args():
     parser.add_argument("--do_compute_graph_feat", help="whether to compute graph features", action="store_true")
     parser.add_argument("--onthefly", help="whether to do on-the-fly computation", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
+    parser.add_argument("--test_on_train", help="whether to evaluate on the training data", action="store_true")
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default=date.today().strftime("%d_%m_%Y"))
     parser.add_argument("--load_epoch", help="epoch to load from", type=int)
     parser.add_argument("--expt_name", help="experiment name", type=str, default="")
@@ -49,7 +50,7 @@ def parse_args():
                         help='number of gpus per node')
     parser.add_argument('-nr', '--nr', default=0, type=int,
                         help='ranking within the nodes')
-    parser.add_argument("--port", type=str)
+    parser.add_argument("--port", type=int)
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--mol_smi_filename", help="do not change", type=str,
@@ -150,8 +151,8 @@ def parse_args():
                         action="store_true")
     # model params, TODO: add S2E args here
     # G2E/FF args
-    parser.add_argument("--encoder_hidden_size", help="MPN/FFN encoder_hidden_size", type=int, nargs='+', default=256)
-    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size", type=int, nargs='+', default=256)
+    parser.add_argument("--encoder_hidden_size", help="MPN/FFN encoder_hidden_size(s)", type=int, nargs='+', default=256)
+    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size(s)", type=int, nargs='+', default=256)
     parser.add_argument("--encoder_depth", help="MPN encoder_depth", type=int, default=3)
     parser.add_argument("--encoder_dropout", help="MPN/FFN encoder dropout", type=float, default=0.05)
     parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="PReLU")
@@ -166,28 +167,20 @@ def parse_args():
     parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+')
     parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
     parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
+    parser.add_argument("--preembed_size", help="Preembedding layer hidden size(s)",type=int, nargs='+')
 
     return parser.parse_args()
 
-
-def args_to_dict(args, args_type: str) -> dict:
-    """parse args into dict, mainly for compatibility with Min Htoo's code"""
-    parsed_dict = {}
-    if args_type == "fp_args":
-        keys = ["representation",
-                "rctfp_size",
-                "prodfp_size",
-                "difffp_size",
-                "fp_radius",
-                "rxn_type",
-                "fp_type"]
-    else:
-        raise ValueError(f"Unsupported args type: {args_type}")
-
-    for key in keys:
-        parsed_dict[key] = getattr(args, key)
-
-    return parsed_dict
+def setup_logger(args):
+    dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
+    fh.setLevel(logging.INFO)
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setLevel(logging.INFO)
+    logger.addHandler(fh)
+    logger.addHandler(sh)
 
 def main_dist(
         gpu,
@@ -209,24 +202,15 @@ def main_dist(
     print('Initiating process group')
     # https://github.com/yangkky/distributed_tutorial/blob/master/ddp_tutorial.md
     rank = args.nr * args.gpus + gpu
-    port = args.port or random.randint(0, 65535)
     dist.init_process_group(
         backend='nccl',
-        init_method=f'tcp://127.0.0.1:{port}', # for single-node, multi-GPU training # 'env://'
+        init_method=f'tcp://127.0.0.1:{args.port}', # for single-node, multi-GPU training # 'env://'
         world_size=args.world_size,
         rank=rank
     )
     
     if gpu == 0:
-        dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
-        logger = logging.getLogger()
-        logger.setLevel(logging.INFO)
-        fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
-        fh.setLevel(logging.INFO)
-        sh = logging.StreamHandler(sys.stdout)
-        sh.setLevel(logging.INFO)
-        logger.addHandler(fh)
-        logger.addHandler(sh)
+        setup_logger(args)
 
         logging.info("Logging args")
         logging.info(vars(args))
@@ -239,9 +223,8 @@ def main_dist(
         logging.info(f"\nModel #Params: {sum([x.nelement() for x in model.parameters()]) / 1000} k")
         logging.info(f'{model_args}')
 
-       
     logging.info("Setting up DDP experiment")
-    experiment = expt_dist.Experiment(
+    experiment = expt_dist.Experiment( # expt_dist.Experiment
         gpu=gpu,
         args=args,
         model=model,
@@ -265,25 +248,75 @@ def main_dist(
     if not args.do_not_train and args.do_finetune:
         assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
         logging.info("Start finetuning")
-        experiment.train_distributed()
+        diverged, last_LR, last_epoch = experiment.train_distributed()
 
-    if args.do_test:
-        logging.info("Start testing")
-        if args.do_compute_graph_feat and experiment.train_loader is not None:
-            del experiment.train_loader # free up memory
-            gc.collect()
-        experiment.test_distributed()
-
-    if args.do_get_energies_and_acc and gpu == 0:
-        # reload best checkpoint & use just 1 GPU to run
-        args.ddp = False
+    if diverged: # reload checkpoint w/ halved LR
+        args.new_lr = last_LR * 0.4
         args.old_expt_name = args.expt_name
+        args.expt_name += '_reload'
         args.date_trained = str(args.checkpoint_folder)[-10:]
         args.load_checkpoint = True
-        args.do_test = True
-        args.do_not_train = True
+        args.epochs -= last_epoch + 1 # need to add 1 bcos epochs are 0-indexed
+        args.load_epoch = last_epoch - 2 # reload from 2 epochs before, just to be safe
+        args.port += 1
+        args.port %= 65535
 
-        main(args)
+        if gpu == 0:
+            try: # to fix logger double/triple printing issue 
+                while logger.handlers:
+                    logger.handlers.pop()
+            except Exception as e:
+                print(e)
+            try:
+                logger.removeHandler(fh)
+                logger.removeHandler(sh)
+            except Exception as e:
+                print(e)
+            
+            try:
+                main(args)
+            except Exception as e: 
+                # something went wrong in reloading checkpoint to resume training w/ reduced LR. 
+                # most likely, it means model diverged during the first epoch, so there is no stats file & checkpoint to reload from
+                # in which case, it's fine, just let the exception run and quit the program
+                print(e)
+
+            # just in case, reload that missed checkpoint & check
+            if args.do_get_energies_and_acc:
+                args.ddp = False
+                args.old_expt_name = args.expt_name[:-7] # remove '_reload' x 1
+                args.expt_name = args.expt_name.replace('_reload', '_check')
+                args.date_trained = str(args.checkpoint_folder)[-10:]
+                args.load_checkpoint = True
+                args.do_test = True
+                args.do_not_train = True
+                args.test_on_train = False # don't eval on train to save some time
+                args.load_epoch = str(last_epoch - 1)
+
+                setup_logger(args)
+                main(args)
+
+    else:
+        if args.do_test:
+            logging.info("Start testing")
+            if args.do_compute_graph_feat and experiment.train_loader is not None and not self.test_on_train:
+                del experiment.train_loader # free up memory
+                gc.collect()
+            experiment.test_distributed()
+
+        if args.do_get_energies_and_acc and gpu == 0:
+            # reload best checkpoint & use just 1 GPU to run
+            args.ddp = False
+            args.old_expt_name = args.expt_name
+            args.date_trained = str(args.checkpoint_folder)[-10:]
+            args.load_checkpoint = True
+            args.do_test = True
+            args.do_not_train = True
+            args.test_on_train = True
+            args.random_seed += 100 # just to get more diverse random examples of predictions, doesn't affect anything else
+
+            logging.info(f'Reloading expt: {args.expt_name}')
+            main(args)
 
 def main(args):
     model_utils.seed_everything(args.random_seed) # seed before even initializing model
@@ -340,10 +373,6 @@ def main(args):
         )
         if not args.ddp:
             logging.info(f"Saved model {args.model_name} loaded")
-        if saved_stats["fp_args"] is not None:
-            for k, v in saved_stats["fp_args"].items():
-                setattr(args, k, v)
-
         model = saved_model
         model_args = saved_stats["model_args"]
         if args.load_epoch is not None:
@@ -377,6 +406,7 @@ def main(args):
             vocab = expt_utils.load_or_create_vocab(args)
             model_args = S2E_args
             model = S2E.S2E(args, vocab, **model_args)
+            #TODO: just use args for everything, remove model_args
         else:
             raise ValueError(f"Model {args.model_name} not supported!")
 
@@ -391,8 +421,7 @@ def main(args):
     
     if args.ddp:
         args.world_size = args.gpus * args.nodes
-        # os.environ['MASTER_ADDR'] = '10.1.10.107' # os.environ['SLURM_SRUN_COMM_HOST'] #'10.57.23.164'
-        # os.environ['MASTER_PORT'] = '8888' # os.environ['SLURM_SRUN_COMM_PORT'] # '8888'
+        args.port = args.port or random.randint(0, 65535)
         mp.spawn(main_dist,
             nprocs=args.gpus, 
             args=(
@@ -452,47 +481,68 @@ def main(args):
         if not args.do_not_train and args.do_finetune:
             assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
             logging.info("Start finetuning")
-            experiment.train()
+            diverged, last_LR, last_epoch = experiment.train()
+        
+        if diverged:
+            args.new_lr = last_LR * 0.4
+            args.old_expt_name = args.expt_name
+            args.expt_name += '_reload'
+            args.date_trained = str(args.checkpoint_folder)[-10:]
+            args.load_checkpoint = True
+            args.epochs -= last_epoch + 1 # need to add 1 bcos epochs are 0-indexed
+            args.load_epoch = last_epoch - 2 # reload from 2 epochs before, just to be safe
+            
+            try:
+                main(args)
+            except Exception as e:
+                # something went wrong in reloading checkpoint to resume training w/ reduced LR. 
+                # most likely, it means model diverged during the first epoch, so there is no stats file & checkpoint to reload from
+                # in which case, it's fine, just let the exception run and quit the program
+                print(e)
+            
+            if args.do_get_energies_and_acc:
+                args.old_expt_name = args.expt_name.replace('_reload', '') # remove all 'reload'
+                args.date_trained = str(args.checkpoint_folder)[-10:]
+                args.load_checkpoint = True
+                args.do_test = True
+                args.do_not_train = True
+                args.test_on_train = False # don't eval on train to save some time
+                args.load_epoch = str(last_epoch - 1)
 
-        if args.do_test:
-            logging.info("Start testing")
-            experiment.test()
+                main(args)
+        
+        else:
+            if args.do_test:
+                if not args.test_on_train:
+                    del experiment.train_loader # free up memory
+                    gc.collect()
+                logging.info("Start testing")
+                experiment.test()
 
-        if args.do_get_energies_and_acc:
-            for phase in ["train", "valid", "test"]:  
-                experiment.get_energies_and_loss(
-                    phase=phase, save_energies=True, path_to_energies=args.path_to_energies)
+            if args.do_get_energies_and_acc:
+                phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
+                for phase in phases_to_eval:
+                    experiment.get_energies_and_loss(
+                        phase=phase, save_energies=True, path_to_energies=args.path_to_energies)
 
-            # just print accuracies to compare experiments
-            for phase in ["train", "valid", "test"]:  
-                logging.info(f"\nGetting {phase} accuracies")
-                for k in [1, 3, 5, 10, 20, 50]:
-                    experiment.get_topk_acc(phase=phase, k=k)
+                # just print accuracies to compare experiments
+                for phase in phases_to_eval:  
+                    logging.info(f"\nGetting {phase} accuracies")
+                    for k in [1, 3, 5, 10, 20, 50]:
+                        experiment.get_topk_acc(phase=phase, k=k)
 
-            # full accuracies
-            for phase in ["train", "valid", "test"]:
-                logging.info(f"\nGetting {phase} accuracies")
-                for k in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200]:
-                    experiment.get_topk_acc(phase=phase, k=k)
-
+                # full accuracies
+                for phase in phases_to_eval:
+                    logging.info(f"\nGetting {phase} accuracies")
+                    for k in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200]:
+                        experiment.get_topk_acc(phase=phase, k=k)
 
 if __name__ == "__main__":
     args = parse_args()
 
     # logger setup
     RDLogger.DisableLog("rdApp.warning")
-
     os.makedirs("./logs", exist_ok=True)
-    
     if not args.ddp: # if doing ddp training, must spawn logger inside each child process
-        dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
-        logger = logging.getLogger()
-        logger.setLevel(logging.INFO)
-        fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
-        fh.setLevel(logging.INFO)
-        sh = logging.StreamHandler(sys.stdout)
-        sh.setLevel(logging.INFO)
-        logger.addHandler(fh)
-        logger.addHandler(sh)
-
+        setup_logger(args)
     main(args)

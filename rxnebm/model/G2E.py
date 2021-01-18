@@ -298,6 +298,7 @@ class MPNEncoder(nn.Module):
                  h_size: int,
                  h_size_inner: Union[int, List[int]] = None, # minhtoo testing
                  preembed: bool = False, # minhtoo testing
+                 preembed_size: Union[int, List[int]] = 80,
                  depth: int = 3,
                  dropout: float = 0.1,
                  encoder_activation = 'ReLU'
@@ -321,6 +322,7 @@ class MPNEncoder(nn.Module):
         self.h_size_inner = h_size_inner
         self.encoder_activation = encoder_activation
         self.preembed = preembed
+        self.preembed_size = preembed_size
         self.input_size = input_size
         self.rnn_type = rnn_type
         self.depth = depth
@@ -331,9 +333,27 @@ class MPNEncoder(nn.Module):
     def _build_layers(self) -> None:
         """Build layers associated with the MPNEncoder."""
         encoder_activation = model_utils.get_activation_function(self.encoder_activation)
-        # if self.preemb: # TODO: figure out correct input dims of fmess
-        #     self.W_e_fmess = nn.Linear(self.input_size, self.preembed_size)
-        # then need to change input of RNN to self.preemb_size instead of self.input_size
+        if self.preembed:
+            if isinstance(self.preembed_size, int):
+                self.W_emb = nn.Sequential(
+                        nn.Linear(self.input_size, self.preembed_size),
+                    )
+                rnn_input_size = self.preembed_size
+            elif isinstance(self.preembed_size, list) and len(self.preembed_size) == 2:
+                self.W_emb = nn.Sequential(
+                        nn.Linear(self.input_size, self.preembed_size[0]),
+                        encoder_activation,
+                        nn.Dropout(self.dropout),
+                        nn.Linear(self.preembed_size[0], self.preembed_size[1]),
+                        encoder_activation,
+                    )
+                rnn_input_size = self.preembed_size[1]
+            else:
+                raise ValueError
+            # then need to change input of RNN to self.preembed_size instead of self.input_size
+        else:
+            rnn_input_size = self.input_size
+
         if isinstance(self.h_size_inner, list) and len(self.h_size_inner) == 2: # 3 layers
             self.W_o = nn.Sequential(
                     nn.Linear(self.node_fdim + self.h_size, self.h_size_inner[0]), 
@@ -366,10 +386,11 @@ class MPNEncoder(nn.Module):
                     nn.Linear(self.node_fdim + self.h_size, self.h_size), 
                     encoder_activation
                 )
+        
         if self.rnn_type == 'gru':
-            self.rnn = GRU(self.input_size, self.h_size, self.depth, self.dropout)
+            self.rnn = GRU(rnn_input_size, self.h_size, self.depth, self.dropout)
         elif self.rnn_type == 'lstm':
-            self.rnn = LSTM(self.input_size, self.h_size, self.depth, self.dropout)
+            self.rnn = LSTM(rnn_input_size, self.h_size, self.depth, self.dropout)
         else:
             raise ValueError('unsupported rnn cell type ' + self.rnn_type)
 
@@ -391,8 +412,8 @@ class MPNEncoder(nn.Module):
         mask: torch.Tensor,
             Masks on nodes
         """
-        # if self.preemb: # TODO: figure out correct input dims of fmess & bgraph
-        #     fmess = self.W_e(fmess)
+        if self.preembed:
+            fmess = self.W_emb(fmess)
         h = self.rnn(fmess, bgraph)
         h = self.rnn.get_hidden_state(h)
         nei_message = index_select_ND(h, 0, agraph)
@@ -419,6 +440,8 @@ class GraphFeatEncoder(nn.Module):
                  rnn_type: str,
                  h_size: int,
                  h_size_inner: Union[int, List[int]] = None,
+                 preembed: bool = False,
+                 preembed_size: Union[int, List[int]] = None,
                  depth: int = 3,
                  dropout: float = 0.1,
                  atom_pool_type: str = "sum",
@@ -443,6 +466,8 @@ class GraphFeatEncoder(nn.Module):
         self.n_bond_feat = n_bond_feat
         self.rnn_type = rnn_type
         self.atom_size = n_atom_feat
+        self.preembed = preembed
+        self.preembed_size = preembed_size
         self.h_size = h_size
         self.h_size_inner = h_size_inner
         self.encoder_activation = encoder_activation
@@ -457,6 +482,8 @@ class GraphFeatEncoder(nn.Module):
         self.encoder = MPNEncoder(rnn_type=self.rnn_type,
                                   input_size=self.n_atom_feat + self.n_bond_feat,
                                   node_fdim=self.atom_size,
+                                  preembed=self.preembed,
+                                  preembed_size=self.preembed_size,
                                   h_size=self.h_size,
                                   h_size_inner=self.h_size_inner,
                                   depth=self.depth,
@@ -482,13 +509,37 @@ class GraphFeatEncoder(nn.Module):
             atom and bond indices for each molecule in the 2D feature list
         """
         fnode, fmess, agraph, bgraph, _ = graph_tensors
+        # logging.info('------------- agraph -------------')
+        # logging.info(agraph)            # [905, 5]
+        # logging.info(agraph.size())
+        # logging.info(agraph[0])
+
+        # logging.info('------------- bgraph -------------')
+        # logging.info(bgraph)            # [1777, 4]
+        # logging.info(bgraph.size())
+        # logging.info(bgraph[0])
+
+        # logging.info('------------- fmess -------------')
+        # logging.info(fmess)             # [1777 ,8]
+        # logging.info(fmess.size())
+        # logging.info(fmess[0])
+
         atom_scope, bond_scope = scopes
 
         # embed graph, note that for directed graph, fmess[any, 0:2] = u, v
         hnode = fnode.clone()
-        fmess1 = hnode.index_select(index=fmess[:, 0].long(), dim=0)
-        fmess2 = fmess[:, 2:].clone()
+        fmess1 = hnode.index_select(index=fmess[:, 0].long(), dim=0) # [1777, 99]
+        # logging.info('------------- fmess1 -------------')
+        # logging.info(fmess1)
+        # logging.info(fmess1.size())
+        # logging.info(fmess1[0])
+
+        fmess2 = fmess[:, 2:].clone()       # [1777, 6]
         hmess = torch.cat([fmess1, fmess2], dim=-1)
+        # logging.info('------------- hmess -------------')
+        # logging.info(hmess)               # [1777, 105]
+        # logging.info(hmess.size())
+        # logging.info(hmess[0])
 
         # encode
         hatom, _ = self.encoder(hnode, hmess, agraph, bgraph, mask=None)
@@ -560,8 +611,11 @@ class G2E(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
+                                        preembed=True if args.preembed_size is not None else False,
+                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
+                                        encoder_activation=args.encoder_activation,
                                         atom_pool_type=args.atom_pool_type)
 
         out_activation = model_utils.get_activation_function(args.out_activation)
@@ -930,17 +984,23 @@ class G2E_sep_projBoth_FFout(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
+                                        preembed=True if args.preembed_size is not None else False,
+                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
+                                        encoder_activation=args.encoder_activation,
                                         atom_pool_type=args.atom_pool_type)
-        
+
         self.encoder_r = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
+                                        preembed=True if args.preembed_size is not None else False,
+                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
+                                        encoder_activation=args.encoder_activation,
                                         atom_pool_type=args.atom_pool_type)
 
         proj_activation = model_utils.get_activation_function(args.proj_activation)

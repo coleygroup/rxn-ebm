@@ -1,8 +1,11 @@
+import argparse
 import logging
+import math
 import traceback
 import os
 import random
 import time
+from functools import partial
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
@@ -11,6 +14,7 @@ import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm 
 
@@ -19,6 +23,12 @@ from rxnebm.experiment import expt_utils
 from rxnebm.model import model_utils
 
 Tensor = torch.Tensor
+try:
+    send_message = partial(expt_utils.send_message, 
+                       chat_id=os.environ['CHAT_ID'], 
+                       bot_token=os.environ['BOT_TOKEN'])
+except Exception as e:
+    pass
 
 class Experiment:
     """
@@ -192,42 +202,17 @@ class Experiment:
                 with augmentations: {self.augmentations}" 
 
     def _collate_args(self):
-        if self.representation == 'fingerprint':
-            self.fp_args = {
-                "rxn_type": self.args.rxn_type,
-                "fp_type": self.args.fp_type,
-                "rctfp_size": self.args.rctfp_size,
-                "prodfp_size": self.args.prodfp_size,
-                "difffp_size": self.args.difffp_size,
-                "fp_radius": self.args.fp_radius,
-            }
-        else:
-            self.fp_args = None
         self.train_args = {
             "epochs": self.epochs,
             "batch_size": self.batch_size,
-            "batch_size_eval": self.args.batch_size_eval,
             "learning_rate": self.learning_rate,
-            "lr_min": self.args.lr_min,
             "lr_scheduler": self.lr_scheduler_name,
-            "lr_scheduler_criteria": self.args.lr_scheduler_criteria,
-            "lr_scheduler_factor": self.args.lr_scheduler_factor,
-            "lr_scheduler_patience": self.args.lr_scheduler_patience,
-            "lr_scheduler_T_0": self.args.lr_scheduler_T_0,
-            "lr_scheduler_epoch_offset": self.args.lr_scheduler_epoch_offset,
-            "lr_scheduler_last_batch": self.args.lr_scheduler_last_batch,
             "early_stop": self.early_stop,
-            "early_stop_criteria": self.early_stop_criteria,
             "early_stop_patience": self.early_stop_patience,
-            "early_stop_min_delta": self.early_stop_min_delta,
-            "num_workers": self.num_workers,
-            "checkpoint": self.checkpoint,
-            "checkpoint_every": self.checkpoint_every,
             "random_seed": self.random_seed,
             "expt_name": self.expt_name,
             "device": self.device,
             "model_name": self.model_name,
-            "dataparallel": self.dataparallel,
             "optimizer": self.optimizer_name,
             "args": self.args,
         }
@@ -287,9 +272,8 @@ class Experiment:
             self.checkpoint_folder / f"{self.model_name}_{self.expt_name}_stats.pkl"
         )
         self.stats = {
-            "model_args": self.model_args, # from saved_stats, handled in trainEBM.py
-            "fp_args": self.fp_args, # from saved_stats, handled in trainEBM.py
             "train_args": self.train_args, # new, provided as args
+            "model_args": self.model_args,
             "augmentations": self.augmentations, # can be new or same, provided as args
             "train_time": 0, # reset to 0
         }
@@ -338,9 +322,8 @@ class Experiment:
 
         self.begin_epoch = 0 
         self.stats = {
-            "model_args": self.model_args,
-            "fp_args": self.fp_args,
             "train_args": self.train_args,
+            "model_args": self.model_args,
             "augmentations": self.augmentations,
             "train_time": 0,
         }
@@ -534,7 +517,7 @@ class Experiment:
             raise NotImplementedError('Only onthefly available for smi loader')
 
     def _check_earlystop(self, current_epoch):
-        if self.early_stop_criteria == 'loss':
+        if self.early_stop_criteria == 'loss': 
             if self.min_val_loss - self.val_losses[-1] < self.early_stop_min_delta:
                 if self.early_stop_patience <= self.wait:
                     logging.info(
@@ -558,12 +541,16 @@ class Experiment:
 
             if self.max_val_acc - val_acc_to_compare > self.early_stop_min_delta:
                 if self.early_stop_patience <= self.wait:
-                    logging.info(
-                        f"\nEarly stopped at the end of epoch: {current_epoch}, \
+                    message = f"\nEarly stopped at the end of epoch: {current_epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
                     \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f} \
                     \n"
-                    )
+                    logging.info(message)
+                    try:
+                        message += f'{self.expt_name}'
+                        send_message(message)
+                    except Exception as e:
+                        pass
                     self.stats["early_stop_epoch"] = current_epoch
                     self.to_break = 1  # will break loop
                 else:
@@ -667,6 +654,16 @@ class Experiment:
                 train_batch_size = batch_energies.shape[0]
                 epoch_train_size += train_batch_size
 
+                if math.isnan(train_loss):
+                    msg = 'Training loss is nan and training diverged! Reloading from best checkpoint w/ reduced LR'
+                    logging.info(msg)
+                    msg += f'\n{self.expt_name}'
+                    try:
+                        send_message(message)
+                    except Exception as e:
+                        logging.info(e)
+                    return True, self.optimizer.param_groups[0]["lr"], epoch
+
                 if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
                     self.lr_scheduler.step(epoch + i / self.train_size - self.args.lr_scheduler_epoch_offset)
                 elif self.lr_scheduler_name == 'OneCycleLR':
@@ -753,19 +750,25 @@ class Experiment:
                                     try:
                                         for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
                                             if j % (self.val_size // 5) == random.randint(0, 5) or j % (self.val_size // 3) in [0, 1, 2, 3]:  # peek at a random sample of current batch to monitor training progress
-                                                sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                                sample_true_rank = batch_true_ranks_array[sample_idx]
-                                                sample_pred_rank = batch_preds[sample_idx, 0].item() 
-                                                sample_true_prod = self.proposals_data['valid'][batch_idx[sample_idx], 0]
-                                                sample_true_prec = self.proposals_data['valid'][batch_idx[sample_idx], 1]
+                                                rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                                rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                                rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                                rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                                rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
 
-                                                sample_cand_precs = self.proposals_data['valid'][batch_idx[sample_idx], 3:]
-                                                sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
-                                                sample_orig_prec = sample_cand_precs[0]
-                                                logging.info(f'\ntrue product:                {sample_true_prod}')
-                                                logging.info(f'pred precursor (rank {sample_pred_rank}):     {sample_pred_prec}')
-                                                logging.info(f'true precursor (rank {sample_true_rank}):     {sample_true_prec}')
-                                                logging.info(f'orig precursor (rank 0):     {sample_orig_prec}\n')
+                                                rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
+                                                rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
+                                                rxn_cand_precs = self.proposals_data['valid'][batch_idx[rxn_idx], 3:]
+                                                rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                                rxn_orig_prec = rxn_cand_precs[0]
+                                                rxn_orig_prec2 = rxn_cand_precs[1]
+                                                rxn_orig_prec3 = rxn_cand_precs[2]
+                                                logging.info(f'\ntrue product:                          \t\t\t{rxn_true_prod}')
+                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_true_energy:.2f}):  \t\t{rxn_pred_prec}')
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_pred_energy:.2f}):  \t\t{rxn_true_prec}')
+                                                logging.info(f'orig precursor (rank 0):                \t\t\t{rxn_orig_prec}\n')
+                                                logging.info(f'orig precursor (rank 1):                \t\t\t{rxn_orig_prec2}\n')
+                                                logging.info(f'orig precursor (rank 2):                \t\t\t{rxn_orig_prec3}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -808,17 +811,22 @@ class Experiment:
                 if self.val_losses[-1] < self.min_val_loss:
                     self.best_epoch = epoch
                     self.min_val_loss = self.val_losses[-1]
-                    if self.checkpoint: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
-                        self._checkpoint_model_and_opt(current_epoch=epoch)
+                    is_best = True
             elif self.early_stop_criteria.split('_')[-1] == 'acc':
                 k = int(self.early_stop_criteria.split('_')[0][-1:])
                 val_acc_to_compare = self.val_topk_accs[k][-1]
                 if val_acc_to_compare > self.max_val_acc:
                     self.best_epoch = epoch
                     self.max_val_acc = val_acc_to_compare
-                    if self.checkpoint: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
-                        self._checkpoint_model_and_opt(current_epoch=epoch)
+                    is_best = True
             
+            if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
+                if self.rank == 0 and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                    self._checkpoint_model_and_opt(current_epoch=epoch)
+            else: # for G2E/S2E, models are small, is ok to save regularly
+                if self.rank == 0 and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                    self._checkpoint_model_and_opt(current_epoch=epoch)
+
             self._update_stats()
             if self.early_stop:
                 self._check_earlystop(current_epoch=epoch)
@@ -850,19 +858,28 @@ class Experiment:
             else:
                 epoch_top10_train_acc = np.nan
                 epoch_top10_val_acc = np.nan
-            logging.info(
-                f"\nEnd of epoch: {epoch}, \
+
+            message = f"\nEnd of epoch: {epoch}, \
                 \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
-                \ntop-5 train acc: {epoch_top5_train_acc:.4f}, top-10 train acc: {epoch_top10_train_acc:.4f}, \
+                \ntop-3 train acc: {epoch_top3_train_acc:.4f}, top-5 train acc: {epoch_top5_train_acc:.4f}, \
+                \ntop-10 train acc: {epoch_top10_train_acc:.4f}, \
                 \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
-                \ntop-5 val acc: {epoch_top5_val_acc:.4f}, top-10 val acc: {epoch_top10_val_acc:.4f} \
+                \ntop-3 val acc: {epoch_top3_val_acc:.4f}, top-5 val acc: {epoch_top5_val_acc:.4f} \
+                \ntop-10 val acc: {epoch_top10_val_acc:.4f} \
                 \n"
-            )
+            logging.info(message)
+            try:
+                message += f'{self.expt_name}'
+                send_message(message)
+            except Exception as e:
+                logging.info(e)
+                logging.info("Don't worry about this - just a small hack to send messages to Telegram")
             if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
                 logging.info('Stopping training as learning rate has dropped below 1e-6')
                 break 
 
         logging.info(f'Total training time: {self.stats["train_time"]}')
+        return False, None, None
 
     def test(self, saved_stats: Optional[dict] = None):
         """
@@ -929,20 +946,26 @@ class Experiment:
                             if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                 try:
                                     for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                        if j % (self.test_size // 5) == random.randint(0, 6) or j % (self.test_size // 3) in [0, 1, 2, 3]:  # peek at a random sample of current batch to monitor training progress
-                                            sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                            sample_true_rank = batch_true_ranks_array[sample_idx] #[0]
-                                            sample_pred_rank = batch_preds[sample_idx, 0].item()
-                                            sample_true_prod = self.proposals_data['test'][batch_idx[sample_idx], 0]
-                                            sample_true_prec = self.proposals_data['test'][batch_idx[sample_idx], 1] 
+                                        if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
+                                            rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                            rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                            rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                            rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                            rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
 
-                                            sample_cand_precs = self.proposals_data['test'][batch_idx[sample_idx], 3:] 
-                                            sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
-                                            sample_orig_prec = sample_cand_precs[0]
-                                            logging.info(f'\ntrue product:                {sample_true_prod}')
-                                            logging.info(f'pred precursor (rank {sample_pred_rank}):     {sample_pred_prec}')
-                                            logging.info(f'true precursor (rank {sample_true_rank}):     {sample_true_prec}')
-                                            logging.info(f'orig precursor (rank 0):     {sample_orig_prec}\n')
+                                            rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
+                                            rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
+                                            rxn_cand_precs = self.proposals_data['test'][batch_idx[rxn_idx], 3:]
+                                            rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                            rxn_orig_prec = rxn_cand_precs[0]
+                                            rxn_orig_prec2 = rxn_cand_precs[1]
+                                            rxn_orig_prec3 = rxn_cand_precs[2]
+                                            logging.info(f'\ntrue product:                          \t\t\t{rxn_true_prod}')
+                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_true_energy:.2f}):  \t\t{rxn_pred_prec}')
+                                            logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_pred_energy:.2f}):  \t\t{rxn_true_prec}')
+                                            logging.info(f'orig precursor (rank 0):                \t\t\t{rxn_orig_prec}\n')
+                                            logging.info(f'orig precursor (rank 1):                \t\t\t{rxn_orig_prec2}\n')
+                                            logging.info(f'orig precursor (rank 2):                \t\t\t{rxn_orig_prec3}\n')
                                             break
                                 except Exception as e:
                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -990,8 +1013,15 @@ class Experiment:
         self.stats["test_loss"] = test_loss / epoch_test_size # self.test_size 
         logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
         self.stats["test_topk_accs"] = self.test_topk_accs
-        for k in self.k_to_calc:
-            logging.info(f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%')
+        message = f"{self.expt_name}\n"
+        for k in [1, 2, 3, 5, 10, 20, 50]:
+            this_topk_message = f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%'
+            logging.info(this_topk_message)
+            message += this_topk_message + '\n'
+            try:
+                send_message(message)
+            except Exception as e:
+                pass
 
         torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
@@ -1000,7 +1030,6 @@ class Experiment:
         self.start = time.time()  # timeit.default_timer()
         self.to_break = 0
         self.val_sampler.set_epoch(0) # no need to change this throughout training
-        # self.current_lr = self.learning_rate # initialize lr tracker
         for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
             self.train_sampler.set_epoch(epoch)
             self.model.train()
@@ -1012,6 +1041,8 @@ class Experiment:
                 train_loader = self.train_loader
             dist.barrier()
             for i, batch in enumerate(train_loader):
+                # if i > 2:
+                #     break
                 batch_data = batch[0]
                 if not isinstance(batch_data, tuple):
                     batch_data = batch_data.cuda(non_blocking=True)
@@ -1031,6 +1062,17 @@ class Experiment:
                 dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
                 batch_loss = batch_loss.item()
                 train_loss += batch_loss
+
+                if math.isnan(train_loss):
+                    if self.rank == 0:
+                        msg = 'Training loss is nan and training diverged! Reloading from best checkpoint w/ reduced LR'
+                        logging.info(msg)
+                        msg += f'\n{self.expt_name}'
+                        try:
+                            send_message(message)
+                        except Exception as e:
+                            logging.info(e)
+                    return True, self.optimizer.param_groups[0]["lr"], epoch
 
                 train_batch_size = batch_energies.shape[0]
                 train_batch_size = torch.tensor([train_batch_size]).cuda(self.gpu, non_blocking=True)
@@ -1084,6 +1126,8 @@ class Experiment:
                     val_loader = self.val_loader
                 epoch_val_size = 0
                 for i, batch in enumerate(val_loader):
+                    # if i > 1:
+                    #     break
                     batch_data = batch[0]
                     if not isinstance(batch_data, tuple):
                         batch_data = batch_data.cuda(non_blocking=True)
@@ -1139,20 +1183,26 @@ class Experiment:
                                 if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                     try:
                                         for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                            if j % (self.val_size // 5) == random.randint(0, 6) or j % (self.val_size // 3) in [0, 1, 2, 3]:  # peek at a random sample of current batch to monitor training progress
-                                                sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                                sample_true_rank = batch_true_ranks_array[sample_idx]
-                                                sample_pred_rank = batch_preds[sample_idx, 0].item()
-                                                sample_true_prod = self.proposals_data['valid'][batch_idx[sample_idx], 0]
-                                                sample_true_prec = self.proposals_data['valid'][batch_idx[sample_idx], 1]
+                                            if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) in random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
+                                                rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                                rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                                rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                                rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                                rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
 
-                                                sample_cand_precs = self.proposals_data['valid'][batch_idx[sample_idx], 3:]
-                                                sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
-                                                sample_orig_prec = sample_cand_precs[0]
-                                                logging.info(f'\ntrue product:                {sample_true_prod}')
-                                                logging.info(f'pred precursor (rank {sample_pred_rank}):     {sample_pred_prec}')
-                                                logging.info(f'true precursor (rank {sample_true_rank}):     {sample_true_prec}')
-                                                logging.info(f'orig precursor (rank 0):     {sample_orig_prec}\n')
+                                                rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
+                                                rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
+                                                rxn_cand_precs = self.proposals_data['valid'][batch_idx[rxn_idx], 3:]
+                                                rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                                rxn_orig_prec = rxn_cand_precs[0]
+                                                rxn_orig_prec2 = rxn_cand_precs[1]
+                                                rxn_orig_prec3 = rxn_cand_precs[2]
+                                                logging.info(f'\ntrue product:                          \t\t\t{rxn_true_prod}')
+                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_true_energy:.2f}):  \t\t{rxn_pred_prec}')
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_pred_energy:.2f}):  \t\t{rxn_true_prec}')
+                                                logging.info(f'orig precursor (rank 0):                \t\t\t{rxn_orig_prec}\n')
+                                                logging.info(f'orig precursor (rank 1):                \t\t\t{rxn_orig_prec2}\n')
+                                                logging.info(f'orig precursor (rank 2):                \t\t\t{rxn_orig_prec3}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -1201,22 +1251,28 @@ class Experiment:
                     self.val_topk_accs[k].append(val_correct_preds[k] / epoch_val_size)
                 self.val_losses.append(val_loss / epoch_val_size)
 
+            is_best = False
             # track best_epoch to facilitate loading of best checkpoint
             if self.early_stop_criteria == 'loss':
                 if self.val_losses[-1] < self.min_val_loss:
                     self.best_epoch = epoch
                     self.min_val_loss = self.val_losses[-1]
-                    if self.rank == 0 and self.checkpoint: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
-                        self._checkpoint_model_and_opt(current_epoch=epoch)
+                    is_best = True
             elif self.early_stop_criteria.split('_')[-1] == 'acc':
                 k = int(self.early_stop_criteria.split('_')[0][-1:])
                 val_acc_to_compare = self.val_topk_accs[k][-1]
                 if val_acc_to_compare > self.max_val_acc:
                     self.best_epoch = epoch
                     self.max_val_acc = val_acc_to_compare
-                    if self.rank == 0 and self.checkpoint: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
-                        self._checkpoint_model_and_opt(current_epoch=epoch)
+                    is_best = True
             
+            if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
+                if self.rank == 0 and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                    self._checkpoint_model_and_opt(current_epoch=epoch)
+            else: # for G2E/S2E, models are small, is ok to save regularly
+                if self.rank == 0 and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                    self._checkpoint_model_and_opt(current_epoch=epoch)
+
             dist.barrier()
             torch.cuda.synchronize()
             self._update_stats()
@@ -1257,8 +1313,7 @@ class Experiment:
             #     epoch_top20_train_acc = np.nan
             #     epoch_top20_val_acc = np.nan
             if self.rank == 0:
-                logging.info(
-                    f"\nEnd of epoch: {epoch}, \
+                message = f"\nEnd of epoch: {epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
                     \ntop-3 train acc: {epoch_top3_train_acc:.4f}, top-5 train acc: {epoch_top5_train_acc:.4f}, \
                     \ntop-10 train acc: {epoch_top10_train_acc:.4f}, \
@@ -1266,7 +1321,13 @@ class Experiment:
                     \ntop-3 val acc: {epoch_top3_val_acc:.4f}, top-5 val acc: {epoch_top5_val_acc:.4f} \
                     \ntop-10 val acc: {epoch_top10_val_acc:.4f} \
                     \n"
-                )
+                logging.info(message)
+                try:
+                    message += f'{self.expt_name}'
+                    send_message(message)
+                except Exception as e:
+                    logging.info(e)
+                    logging.info("Don't worry about this - just a small hack to send messages to Telegram")
                 # top-20 train acc: {epoch_top20_train_acc:.4f},
                 # , top-20 val acc: {epoch_top20_val_acc:.4f} 
                 if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
@@ -1275,6 +1336,8 @@ class Experiment:
 
         if self.rank == 0:
             logging.info(f'Total training time: {self.stats["train_time"]}')
+        
+        return False, None, None
 
     def test_distributed(self, saved_stats: Optional[dict] = None):
         """
@@ -1421,10 +1484,17 @@ class Experiment:
         dist.barrier()
         self.stats["test_loss"] = test_loss / epoch_test_size 
         self.stats["test_topk_accs"] = self.test_topk_accs
+        message = f"{self.expt_name}\n"
         if self.rank == 0:
             logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
-            for k in self.k_to_calc:
-                logging.info(f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%')
+            for k in [1, 2, 3, 5, 10, 20, 50]:
+                this_topk_message = f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%'
+                logging.info(this_topk_message)
+                message += this_topk_message + '\n'
+            try:
+                send_message(message)
+            except Exception as e:
+                pass
 
             torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
@@ -1457,9 +1527,6 @@ class Experiment:
             energies of shape (# rxns, 1 + # neg rxns)
         loss : float
             the loss value on the provided dataset
-
-        TODO: fix show_neg: index into SMILES molecule vocab to retrieve molecules -->
-        save as groups [true product/rct SMILES, 1st NN SMILES, ... K-1'th NN SMILES])
         """
         if phase == "test":
             dataloader = self.test_loader
@@ -1547,6 +1614,15 @@ class Experiment:
             self.stats["train_loss_nodropout"] = loss
             self.energies[phase] = energies_combined
             return energies_combined, loss
+            
+    def get_energies_and_loss_distributed(
+        self,
+        phase: str = "test",
+        save_energies: Optional[bool] = True,
+        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+    ) -> Tuple[Tensor, float]:
+        raise NotImplementedError('Please reload the best checkpoint and run expt.get_energies_and_loss() on a single GPU')
 
     def get_topk_acc(
         self,
@@ -1574,6 +1650,7 @@ class Experiment:
 
         Also see: self.get_energies_and_loss()
         """
+        message = f"{self.expt_name}\n"
         if self.args.do_finetune and phase != 'train':
             if phase not in self.energies:
                 energies, loss, true_ranks = self.get_energies_and_loss(phase=phase)
@@ -1584,9 +1661,11 @@ class Experiment:
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase} (finetune): {100 * topk_accuracy:.3f}%") 
+                this_topk_message = f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%"
+                logging.info(this_topk_message)
+                message += this_topk_message + '\n'
             else:
-                logging.info(f'{k} out of range for dimension 1 on {phase} (finetune)')
+                logging.info(f'{k} out of range for dimension 1 on ({phase})')
 
         else: # true rank is always 0
             if phase not in self.energies:
@@ -1602,10 +1681,13 @@ class Experiment:
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase}: {100 * topk_accuracy:.3f}%") 
+                logging.info(f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%") 
             else:
-                logging.info(f'{k} out of range for dimension 1 on {phase}')
-
+                logging.info(f'{k} out of range for dimension 1 on ({phase})')
+        try:
+            send_message(message)
+        except Exception as e:
+            pass
 
 # def accuracy(output, target, topk=(1,)):
 # """Computes the accuracy over the k top predictions for the specified values of k"""
