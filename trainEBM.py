@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import sys
+import random
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -150,16 +151,16 @@ def parse_args():
     # model params, TODO: add S2E args here
     # G2E/FF args
     parser.add_argument("--encoder_hidden_size", help="MPN/FFN encoder_hidden_size", type=int, nargs='+', default=256)
-    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size", type=int, default=256)
+    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size", type=int, nargs='+', default=256)
     parser.add_argument("--encoder_depth", help="MPN encoder_depth", type=int, default=3)
-    parser.add_argument("--encoder_dropout", help="MPN/FFN encoder dropout", type=float, default=0)
-    parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="PReLU") # TODO: add into G2E
-    parser.add_argument("--out_hidden_sizes", help="Output hidden sizes", type=int, nargs='+')
-    parser.add_argument("--out_activation", help="Output activation", type=str, default="PReLU")
-    parser.add_argument("--out_dropout", help="Output dropout", type=float, default=0.2)
+    parser.add_argument("--encoder_dropout", help="MPN/FFN encoder dropout", type=float, default=0.05)
+    parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="PReLU")
+    parser.add_argument("--out_hidden_sizes", help="Output layer hidden sizes", type=int, nargs='+')
+    parser.add_argument("--out_activation", help="Output layer activation", type=str, default="PReLU")
+    parser.add_argument("--out_dropout", help="Output layer dropout", type=float, default=0.2)
     parser.add_argument("--encoder_rnn_type", help="RNN type for graph encoder (gru/lstm)", type=str, default="gru")
     parser.add_argument("--atom_pool_type", help="Atom pooling method (sum/mean/attention)",
-                        type=str, default="sum")
+                        type=str, default="attention")
     parser.add_argument("--mol_pool_type", help="Molecule(s) pooling method (sum/mean)",
                         type=str, default="sum")
     parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+')
@@ -239,7 +240,7 @@ def main_dist(
         logging.info(f'{model_args}')
 
        
-    print("Setting up DDP experiment")
+    logging.info("Setting up DDP experiment")
     experiment = expt_dist.Experiment(
         gpu=gpu,
         args=args,
@@ -438,7 +439,6 @@ def main(args):
             load_checkpoint=args.load_checkpoint,
             saved_optimizer=saved_optimizer,
             saved_stats=saved_stats,
-            saved_stats_filename=saved_stats_filename,
             begin_epoch=begin_epoch,
             debug=True,
             vocab=vocab,

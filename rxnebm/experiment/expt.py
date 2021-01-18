@@ -227,7 +227,7 @@ class Experiment:
             "expt_name": self.expt_name,
             "device": self.device,
             "model_name": self.model_name,
-            "distributed": self.distributed,
+            "dataparallel": self.dataparallel,
             "optimizer": self.optimizer_name,
             "args": self.args,
         }

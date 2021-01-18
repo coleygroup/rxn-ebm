@@ -1,7 +1,7 @@
 import logging
 import torch
 import torch.nn as nn
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Union
 from rxnebm.data.chem_utils import ATOM_FDIM, BOND_FDIM
 from rxnebm.model import model_utils
 
@@ -296,10 +296,11 @@ class MPNEncoder(nn.Module):
                  input_size: int,
                  node_fdim: int,
                  h_size: int,
-                 h_size_inner: int = None, # minhtoo testing
-                 preemb: bool = False, # minhtoo testing
+                 h_size_inner: Union[int, List[int]] = None, # minhtoo testing
+                 preembed: bool = False, # minhtoo testing
                  depth: int = 3,
-                 dropout: float = 0.1
+                 dropout: float = 0.1,
+                 encoder_activation = 'ReLU'
                  ):
         """
         Parameters
@@ -318,7 +319,8 @@ class MPNEncoder(nn.Module):
         super().__init__()
         self.h_size = h_size
         self.h_size_inner = h_size_inner
-        self.preemb = preemb
+        self.encoder_activation = encoder_activation
+        self.preembed = preembed
         self.input_size = input_size
         self.rnn_type = rnn_type
         self.depth = depth
@@ -328,21 +330,41 @@ class MPNEncoder(nn.Module):
 
     def _build_layers(self) -> None:
         """Build layers associated with the MPNEncoder."""
-        # if self.preemb: # TODO: figure out correct input dims of fmess & bgraph
-        #     self.W_e_fmess = nn.Linear(self.input_size, self.input_size)
-        #     self.W_e_bgraph = nn.Linear(self.input_size, self.input_size)
-        if self.h_size_inner: # 2 layers
+        encoder_activation = model_utils.get_activation_function(self.encoder_activation)
+        # if self.preemb: # TODO: figure out correct input dims of fmess
+        #     self.W_e_fmess = nn.Linear(self.input_size, self.preembed_size)
+        # then need to change input of RNN to self.preemb_size instead of self.input_size
+        if isinstance(self.h_size_inner, list) and len(self.h_size_inner) == 2: # 3 layers
+            self.W_o = nn.Sequential(
+                    nn.Linear(self.node_fdim + self.h_size, self.h_size_inner[0]), 
+                    encoder_activation,
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.h_size_inner[0], self.h_size_inner[1]), 
+                    encoder_activation,
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.h_size_inner[1], self.h_size),
+                    encoder_activation
+                )
+        elif isinstance(self.h_size_inner, list) and len(self.h_size_inner) == 1: # 2 layers
+            self.W_o = nn.Sequential(
+                    nn.Linear(self.node_fdim + self.h_size, self.h_size_inner[0]), 
+                    encoder_activation,
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.h_size_inner[0], self.h_size),
+                    encoder_activation
+                )
+        elif isinstance(self.h_size_inner, int): # 2 layers
             self.W_o = nn.Sequential(
                     nn.Linear(self.node_fdim + self.h_size, self.h_size_inner), 
-                    nn.ReLU(),
+                    encoder_activation,
                     nn.Dropout(self.dropout),
                     nn.Linear(self.h_size_inner, self.h_size),
-                    nn.ReLU()
+                    encoder_activation
                 )
         else:
             self.W_o = nn.Sequential(
                     nn.Linear(self.node_fdim + self.h_size, self.h_size), 
-                    nn.ReLU()
+                    encoder_activation
                 )
         if self.rnn_type == 'gru':
             self.rnn = GRU(self.input_size, self.h_size, self.depth, self.dropout)
@@ -370,7 +392,7 @@ class MPNEncoder(nn.Module):
             Masks on nodes
         """
         # if self.preemb: # TODO: figure out correct input dims of fmess & bgraph
-        #     fmess, bgraph = self.W_e(fmess), self.W_e(bgraph)
+        #     fmess = self.W_e(fmess)
         h = self.rnn(fmess, bgraph)
         h = self.rnn.get_hidden_state(h)
         nei_message = index_select_ND(h, 0, agraph)
@@ -396,10 +418,11 @@ class GraphFeatEncoder(nn.Module):
                  n_bond_feat: int,
                  rnn_type: str,
                  h_size: int,
-                 h_size_inner: int = None,
+                 h_size_inner: Union[int, List[int]] = None,
                  depth: int = 3,
                  dropout: float = 0.1,
-                 atom_pool_type: str = "sum"
+                 atom_pool_type: str = "sum",
+                 encoder_activation: str = 'ReLU'
                  ):
         """
         Parameters
@@ -422,6 +445,7 @@ class GraphFeatEncoder(nn.Module):
         self.atom_size = n_atom_feat
         self.h_size = h_size
         self.h_size_inner = h_size_inner
+        self.encoder_activation = encoder_activation
         self.depth = depth
         self.dropout = dropout
         self.atom_pool_type = atom_pool_type
@@ -436,7 +460,8 @@ class GraphFeatEncoder(nn.Module):
                                   h_size=self.h_size,
                                   h_size_inner=self.h_size_inner,
                                   depth=self.depth,
-                                  dropout=self.dropout)
+                                  dropout=self.dropout,
+                                  encoder_activation=self.encoder_activation)
         self.attn_hidden_1 = nn.Linear(self.h_size, self.h_size)
         self.elu = nn.ELU()
         self.attn_hidden_2 = nn.Linear(self.h_size, self.h_size)
@@ -459,7 +484,7 @@ class GraphFeatEncoder(nn.Module):
         fnode, fmess, agraph, bgraph, _ = graph_tensors
         atom_scope, bond_scope = scopes
 
-        # embed graph, note that for directed graph, fess[any, 0:2] = u, v
+        # embed graph, note that for directed graph, fmess[any, 0:2] = u, v
         hnode = fnode.clone()
         fmess1 = hnode.index_select(index=fmess[:, 0].long(), dim=0)
         fmess2 = fmess[:, 2:].clone()

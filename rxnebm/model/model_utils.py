@@ -79,6 +79,8 @@ class Mish(nn.Module):
 def get_optimizer(optimizer: str) -> torch.optim.Optimizer:
     if optimizer == 'Adam':
         return torch.optim.Adam
+    elif optimizer == 'AdamW':
+        return torch.optim.AdamW
     elif optimizer == 'Adagrad':
         return torch.optim.Adagrad
     elif optimizer == 'LBFGS':

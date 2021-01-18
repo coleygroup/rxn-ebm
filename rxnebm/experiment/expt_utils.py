@@ -2,6 +2,7 @@ import logging
 import os
 import random
 import traceback
+import requests
 
 from datetime import date
 from pathlib import Path
@@ -173,6 +174,18 @@ def load_model_opt_and_stats(
 
     return saved_model, saved_optimizer, saved_stats
 
+def send_message(msg, chat_id, bot_token):
+    """
+    params:
+    -------
+    msg: message you want to receive
+    chat_id: CHAT_ID
+    bot_token: API_KEY of your bot
+    """
+
+    url  = f'https://api.telegram.org/bot{bot_token}/sendMessage'
+    data = {'chat_id': str(chat_id), 'text': f'{msg}'}
+    requests.post(url, data)
 
 def _worker_init_fn_nmslib(worker_id):
     torch_seed = torch.initial_seed()

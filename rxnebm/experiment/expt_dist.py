@@ -4,6 +4,7 @@ import traceback
 import os
 import random
 import time
+from functools import partial
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
@@ -21,7 +22,13 @@ from rxnebm.experiment import expt_utils
 from rxnebm.model import model_utils
 
 Tensor = torch.Tensor
-
+try:
+    send_message = partial(expt_utils.send_message, 
+                       chat_id=os.environ['CHAT_ID'], 
+                       bot_token=os.environ['BOT_TOKEN'])
+except Exception as e:
+    pass
+    
 class Experiment:
     """
     TODO: wandb/tensorboard for hyperparameter tuning
@@ -569,12 +576,16 @@ class Experiment:
 
             if self.max_val_acc - val_acc_to_compare > self.early_stop_min_delta:
                 if self.early_stop_patience <= self.wait:
-                    logging.info(
-                        f"\nEarly stopped at the end of epoch: {current_epoch}, \
+                    message = f"\nEarly stopped at the end of epoch: {current_epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
                     \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f} \
                     \n"
-                    )
+                    logging.info(message)
+                    try:
+                        message += f'{self.expt_name}'
+                        send_message(message)
+                    except Exception as e:
+                        pass
                     self.stats["early_stop_epoch"] = current_epoch
                     self.to_break = 1  # will break loop
                 else:
@@ -654,7 +665,6 @@ class Experiment:
         self.start = time.time()  # timeit.default_timer()
         self.to_break = 0
         self.val_sampler.set_epoch(0) # no need to change this throughout training
-        # self.current_lr = self.learning_rate # initialize lr tracker
         for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
             self.train_sampler.set_epoch(epoch)
             self.model.train()
@@ -911,8 +921,7 @@ class Experiment:
             #     epoch_top20_train_acc = np.nan
             #     epoch_top20_val_acc = np.nan
             if self.rank == 0:
-                logging.info(
-                    f"\nEnd of epoch: {epoch}, \
+                message = f"\nEnd of epoch: {epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
                     \ntop-3 train acc: {epoch_top3_train_acc:.4f}, top-5 train acc: {epoch_top5_train_acc:.4f}, \
                     \ntop-10 train acc: {epoch_top10_train_acc:.4f}, \
@@ -920,7 +929,13 @@ class Experiment:
                     \ntop-3 val acc: {epoch_top3_val_acc:.4f}, top-5 val acc: {epoch_top5_val_acc:.4f} \
                     \ntop-10 val acc: {epoch_top10_val_acc:.4f} \
                     \n"
-                )
+                logging.info(message)
+                try:
+                    message += f'{self.expt_name}'
+                    send_message(message)
+                except Exception as e:
+                    logging.info(e)
+                    logging.info("Don't worry about this - just a small hack to send messages to Telegram")
                 # top-20 train acc: {epoch_top20_train_acc:.4f},
                 # , top-20 val acc: {epoch_top20_val_acc:.4f} 
                 if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
@@ -1005,7 +1020,7 @@ class Experiment:
                             if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                 try:
                                     for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                        if j % (self.test_size // 5) == random.randint(0, 6) or j % (self.test_size // 3) in [0, 1, 2, 3]:  # peek at a random sample of current batch to monitor training progress
+                                        if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
                                             sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
                                             sample_true_rank = batch_true_ranks_array[sample_idx]
                                             sample_pred_rank = batch_preds[sample_idx, 0].item()
@@ -1075,11 +1090,17 @@ class Experiment:
         dist.barrier()
         self.stats["test_loss"] = test_loss / epoch_test_size 
         self.stats["test_topk_accs"] = self.test_topk_accs
+        message = f"{self.expt_name}\n"
         if self.rank == 0:
             logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
             for k in self.k_to_calc:
-                logging.info(f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%')
-
+                this_topk_message = f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%'
+                logging.info(this_topk_message)
+                message += this_topk_message + '\n'
+            try:
+                send_message(message)
+            except Exception as e:
+                pass
             torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
     def get_energies_and_loss_distributed(
@@ -1237,6 +1258,7 @@ class Experiment:
 
         Also see: self.get_energies_and_loss()
         """
+        message = f"{self.expt_name}\n"
         if self.args.do_finetune and phase != 'train':
             if phase not in self.energies:
                 energies, loss, true_ranks = self.get_energies_and_loss(phase=phase)
@@ -1247,7 +1269,9 @@ class Experiment:
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} accuracy on {phase} (finetune): {100 * topk_accuracy:.3f}%") 
+                this_topk_message = f"Top-{k} accuracy on {phase} (finetune): {100 * topk_accuracy:.3f}%"
+                logging.info(this_topk_message)
+                message += this_topk_message + '\n'
             else:
                 logging.info(f'{k} out of range for dimension 1 on {phase} (finetune)')
 
@@ -1268,7 +1292,10 @@ class Experiment:
                 logging.info(f"Top-{k} accuracy on {phase}: {100 * topk_accuracy:.3f}%") 
             else:
                 logging.info(f'{k} out of range for dimension 1 on {phase}')
-
+        try:
+            send_message(message)
+        except Exception as e:
+            pass
 
 # def accuracy(output, target, topk=(1,)):
 # """Computes the accuracy over the k top predictions for the specified values of k"""
