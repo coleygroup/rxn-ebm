@@ -292,74 +292,75 @@ def main(args):
     
             phase_rxn_fps = [] # sparse.csr_matrix((len(proposals_file_prefix), fp_size)) # init big output sparse matrix
             if phase == 'train':
-                def rxn_fp_helper_train(rxn, i):
-                    pos_rxn_smi = rxn[0]
-                    neg_rxn_smis = rxn[1:]
+                if args.parallelize:
+                    def rxn_fp_helper_train(rxn, i):
+                        pos_rxn_smi = rxn[0]
+                        neg_rxn_smis = rxn[1:]
 
-                    pos_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(pos_rxn_smi, fp_type, radius, fp_size, dtype)
-                    pos_rxn_fp = augmentors.make_rxn_fp(pos_rcts_fp, prod_fp, rxn_type)
+                        pos_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(pos_rxn_smi, fp_type, radius, fp_size, dtype)
+                        pos_rxn_fp = augmentors.make_rxn_fp(pos_rcts_fp, prod_fp, rxn_type)
 
-                    neg_rxn_fps = []
-                    for neg_rxn_smi in neg_rxn_smis:
-                        try:
-                            neg_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(neg_rxn_smi, fp_type, radius, fp_size, dtype)
-                            neg_rxn_fp = augmentors.make_rxn_fp(neg_rcts_fp, prod_fp, rxn_type)
-                            neg_rxn_fps.append(neg_rxn_fp)
-                        except Exception as e:
-                            logging.info(f'Error {e} at index {i}')
-                            continue 
+                        neg_rxn_fps = []
+                        for neg_rxn_smi in neg_rxn_smis:
+                            try:
+                                neg_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(neg_rxn_smi, fp_type, radius, fp_size, dtype)
+                                neg_rxn_fp = augmentors.make_rxn_fp(neg_rcts_fp, prod_fp, rxn_type)
+                                neg_rxn_fps.append(neg_rxn_fp)
+                            except Exception as e:
+                                logging.info(f'Error {e} at index {i}')
+                                continue 
 
-                    if len(neg_rxn_fps) < topk:
-                        if rxn_type == 'sep' or rxn_type == 'hybrid':
-                            dummy_fp = np.zeros((1, fp_size * 2))
-                        elif rxn_type == 'hybrid_all':
-                            dummy_fp = np.zeros((1, fp_size * 3))
-                        else: # diff 
-                            dummy_fp = np.zeros((1, fp_size))
-                        neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps))) 
+                        if len(neg_rxn_fps) < topk:
+                            if rxn_type == 'sep' or rxn_type == 'hybrid':
+                                dummy_fp = np.zeros((1, fp_size * 2))
+                            elif rxn_type == 'hybrid_all':
+                                dummy_fp = np.zeros((1, fp_size * 3))
+                            else: # diff 
+                                dummy_fp = np.zeros((1, fp_size))
+                            neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps))) 
 
-                    this_rxn_fps = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
-                    return this_rxn_fps
+                        this_rxn_fps = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
+                        return this_rxn_fps
 
-                num_cores = len(os.sched_getaffinity(0))
-                logging.info(f'Using {num_cores}')
-                with tqdm_joblib(tqdm(desc="Generating rxn fps", total=len(processed_rxn_smis))) as progress_bar:
-                    phase_rxn_fps = Parallel(n_jobs=num_cores)(
-                                        delayed(rxn_fp_helper_train)(
-                                            rxn, i,
-                                        ) for i, rxn in enumerate(processed_rxn_smis)
-                                    )
+                    num_cores = len(os.sched_getaffinity(0))
+                    logging.info(f'Using {num_cores} cores')
+                    with tqdm_joblib(tqdm(desc="Generating rxn fps", total=len(processed_rxn_smis))) as progress_bar:
+                        phase_rxn_fps = Parallel(n_jobs=num_cores)(
+                                            delayed(rxn_fp_helper_train)(
+                                                rxn, i,
+                                            ) for i, rxn in enumerate(processed_rxn_smis)
+                                        )
+                else:
+                    # unparallelized version
+                    for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
+                        pos_rxn_smi = rxn[0]
+                        neg_rxn_smis = rxn[1:]
 
-                # unparallelized version
-                # for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
-                #     pos_rxn_smi = rxn[0]
-                #     neg_rxn_smis = rxn[1:]
+                        pos_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(pos_rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
+                        pos_rxn_fp = augmentors.make_rxn_fp(pos_rcts_fp, prod_fp, rxn_type)
 
-                #     pos_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(pos_rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
-                #     pos_rxn_fp = augmentors.make_rxn_fp(pos_rcts_fp, prod_fp, rxn_type)
+                        neg_rxn_fps = []
+                        for neg_rxn_smi in neg_rxn_smis:
+                            try:
+                                neg_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(neg_rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
+                                neg_rxn_fp = augmentors.make_rxn_fp(neg_rcts_fp, prod_fp, rxn_type)
+                                neg_rxn_fps.append(neg_rxn_fp)
+                            except Exception as e: 
+                                logging.info(f'Error {e} at index {i}')
+                                continue 
 
-                #     neg_rxn_fps = []
-                #     for neg_rxn_smi in neg_rxn_smis:
-                #         try:
-                #             neg_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(neg_rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
-                #             neg_rxn_fp = augmentors.make_rxn_fp(neg_rcts_fp, prod_fp, rxn_type)
-                #             neg_rxn_fps.append(neg_rxn_fp)
-                #         except Exception as e: 
-                #             logging.info(f'Error {e} at index {i}')
-                #             continue 
+                        if len(neg_rxn_fps) < topk:
+                            if rxn_type == 'sep' or rxn_type == 'hybrid':
+                                dummy_fp = np.zeros((1, fp_size * 2))
+                            elif rxn_type == 'hybrid_all':
+                                dummy_fp = np.zeros((1, fp_size * 3))
+                            else: # diff 
+                                dummy_fp = np.zeros((1, fp_size))
+                            neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps))) 
 
-                #     if len(neg_rxn_fps) < topk:
-                #         if rxn_type == 'sep' or rxn_type == 'hybrid':
-                #             dummy_fp = np.zeros((1, fp_size * 2))
-                #         elif rxn_type == 'hybrid_all':
-                #             dummy_fp = np.zeros((1, fp_size * 3))
-                #         else: # diff 
-                #             dummy_fp = np.zeros((1, fp_size))
-                #         neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps))) 
-
-                #     this_rxn_fps = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
-                #     # phase_rxn_fps[i] = sparse.hstack([pos_rxn_fp, *neg_rxn_fps]) # significantly slower! 
-                #     phase_rxn_fps.append(this_rxn_fps)
+                        this_rxn_fps = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
+                        # phase_rxn_fps[i] = sparse.hstack([pos_rxn_fp, *neg_rxn_fps]) # significantly slower! 
+                        phase_rxn_fps.append(this_rxn_fps)
                     
                     # if (i % args.split_every == 0 and i > 0) or (i == len(processed_rxn_smis) - 1):
                     #     logging.info(f'Checkpointing {i}')
@@ -367,66 +368,67 @@ def main(args):
                     #     sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}_{i}.npz", phase_rxn_fps_checkpoint)
                     #     phase_rxn_fps = [] # reset to empty list
 
-            else: # do not assume pos_rxn_smi is inside
-                def rxn_fp_helper_test(rxn, i):
-                    rxn_smis = rxn[1:] 
+            else: # for valid/test, we cannot assume pos_rxn_smi is inside
+                if args.parallelize:
+                    def rxn_fp_helper_test(rxn, i):
+                        rxn_smis = rxn[1:] 
 
-                    rxn_fps = []
-                    for rxn_smi in rxn_smis:
-                        try:
-                            rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(rxn_smi, fp_type, radius, fp_size, dtype)
-                            rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type) # log=True (take log(x+1) of rct & prodfps)
-                            rxn_fps.append(rxn_fp)
-                        except Exception as e:
-                            logging.info(f'Error {e} at index {i}')
-                            continue 
+                        rxn_fps = []
+                        for rxn_smi in rxn_smis:
+                            try:
+                                rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(rxn_smi, fp_type, radius, fp_size, dtype)
+                                rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type) # log=True (take log(x+1) of rct & prodfps)
+                                rxn_fps.append(rxn_fp)
+                            except Exception as e:
+                                logging.info(f'Error {e} at index {i}')
+                                continue 
 
-                    if len(rxn_fps) < maxk:
-                        if rxn_type == 'sep' or rxn_type == 'hybrid':
-                            dummy_fp = np.zeros((1, fp_size * 2))
-                        elif rxn_type == 'hybrid_all':
-                            dummy_fp = np.zeros((1, fp_size * 3))
-                        else: # diff 
-                            dummy_fp = np.zeros((1, fp_size))
-                        rxn_fps.extend([dummy_fp] * (maxk - len(rxn_fps)))
+                        if len(rxn_fps) < maxk:
+                            if rxn_type == 'sep' or rxn_type == 'hybrid':
+                                dummy_fp = np.zeros((1, fp_size * 2))
+                            elif rxn_type == 'hybrid_all':
+                                dummy_fp = np.zeros((1, fp_size * 3))
+                            else: # diff 
+                                dummy_fp = np.zeros((1, fp_size))
+                            rxn_fps.extend([dummy_fp] * (maxk - len(rxn_fps)))
 
-                    this_rxn_fps = sparse.hstack(rxn_fps)
-                    return this_rxn_fps
+                        this_rxn_fps = sparse.hstack(rxn_fps)
+                        return this_rxn_fps
 
-                num_cores = len(os.sched_getaffinity(0))
-                logging.info(f'Using {num_cores}')
-                with tqdm_joblib(tqdm(desc="Generating rxn fps", total=len(processed_rxn_smis))) as progress_bar:
-                    phase_rxn_fps = Parallel(n_jobs=num_cores)(
-                                        delayed(rxn_fp_helper_test)(
-                                            rxn, i,
-                                        ) for i, rxn in enumerate(processed_rxn_smis)
-                                    )
-                
-                # unparallelized version
-                # for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
-                #     rxn_smis = rxn[1:] 
+                    num_cores = len(os.sched_getaffinity(0))
+                    logging.info(f'Using {num_cores} cores')
+                    with tqdm_joblib(tqdm(desc="Generating rxn fps", total=len(processed_rxn_smis))) as progress_bar:
+                        phase_rxn_fps = Parallel(n_jobs=num_cores)(
+                                            delayed(rxn_fp_helper_test)(
+                                                rxn, i,
+                                            ) for i, rxn in enumerate(processed_rxn_smis)
+                                        )
+                else:
+                    # unparallelized version
+                    for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
+                        rxn_smis = rxn[1:] 
 
-                #     rxn_fps = []
-                #     for rxn_smi in rxn_smis:
-                #         try:
-                #             rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
-                #             rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type) # log=True (take log(x+1) of rct & prodfps)
-                #             rxn_fps.append(rxn_fp)
-                #         except Exception as e:
-                #             logging.info(f'Error {e} at index {i}')
-                #             continue 
+                        rxn_fps = []
+                        for rxn_smi in rxn_smis:
+                            try:
+                                rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
+                                rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type) # log=True (take log(x+1) of rct & prodfps)
+                                rxn_fps.append(rxn_fp)
+                            except Exception as e:
+                                logging.info(f'Error {e} at index {i}')
+                                continue 
 
-                #     if len(rxn_fps) < maxk:
-                #         if rxn_type == 'sep' or rxn_type == 'hybrid':
-                #             dummy_fp = np.zeros((1, fp_size * 2))
-                #         elif rxn_type == 'hybrid_all':
-                #             dummy_fp = np.zeros((1, fp_size * 3))
-                #         else: # diff 
-                #             dummy_fp = np.zeros((1, fp_size))
-                #         rxn_fps.extend([dummy_fp] * (maxk - len(rxn_fps)))
+                        if len(rxn_fps) < maxk:
+                            if rxn_type == 'sep' or rxn_type == 'hybrid':
+                                dummy_fp = np.zeros((1, fp_size * 2))
+                            elif rxn_type == 'hybrid_all':
+                                dummy_fp = np.zeros((1, fp_size * 3))
+                            else: # diff 
+                                dummy_fp = np.zeros((1, fp_size))
+                            rxn_fps.extend([dummy_fp] * (maxk - len(rxn_fps)))
 
-                #     this_rxn_fps = sparse.hstack(rxn_fps)
-                #     phase_rxn_fps.append(this_rxn_fps)
+                        this_rxn_fps = sparse.hstack(rxn_fps)
+                        phase_rxn_fps.append(this_rxn_fps)
 
             phase_rxn_fps = sparse.vstack(phase_rxn_fps)
             sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}.npz", phase_rxn_fps)

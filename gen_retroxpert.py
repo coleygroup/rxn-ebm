@@ -64,7 +64,8 @@ def process_train_helper(row, phase_topk):
     p_smi = row["product"]
     r_smi_true_split = row["target"].split('.')
     r_smi_true_split.sort()
-    r_smi_true = '.'.join(r_smi_true_split)
+    r_smi_true = Chem.MolToSmiles(Chem.MolFromSmiles(row["target"]), True)
+    # r_smi_true = '.'.join(r_smi_true_split)
     this_row = [f"{r_smi_true}>>{p_smi}", p_smi, r_smi_true] # orig_rxn_smi
     predictions = []
     for j in range(1, phase_topk + 1): # go through columns for proposed precursors
@@ -83,7 +84,8 @@ def process_train_helper(row, phase_topk):
     seen = [] # remove duplicate predictions
     for pred in predictions:
         if pred not in seen:
-            seen.append(pred)
+            seen.append(Chem.MolToSmiles(Chem.MolFromSmiles(pred), True))
+            # seen.append(pred)
         else:
             dup_count += 1
 
@@ -91,7 +93,7 @@ def process_train_helper(row, phase_topk):
     for i, pred in enumerate(seen):
         pred_split = pred.split('.')
         pred_split.sort()
-        if pred_split == r_smi_true_split:
+        if pred_split == r_smi_true_split or pred == r_smi_true:
             true_rank = i # rank is 0-indexed
             break
 
@@ -109,7 +111,8 @@ def process_test_helper(row, phase_topk):
     p_smi = row["product"]
     r_smi_true_split = row["target"].split('.')
     r_smi_true_split.sort()
-    r_smi_true = '.'.join(r_smi_true_split)
+    r_smi_true = Chem.MolToSmiles(Chem.MolFromSmiles(row["target"]), True)
+    # r_smi_true = '.'.join(r_smi_true_split)
     this_row = [f"{r_smi_true}>>{p_smi}", p_smi, r_smi_true] # orig_rxn_smi
     true_rank, found = 9999, False
     predictions = []
@@ -126,7 +129,8 @@ def process_test_helper(row, phase_topk):
                     cand_split.sort()
                     if cand_split == r_smi_true_split:
                         if not found: # cannot set true_rank here bcos later when we remove duplicates it can change if those dups are before the correct prediction (i.e. true_rank will decrease)
-                            predictions.append('.'.join(cand_split)) # add to list of predictions
+                            # predictions.append('.'.join(cand_split)) # add to list of predictions
+                            predictions.append(Chem.MolToSmiles(cand_, True))
                             found = True # to avoid searching for true pred once found
                         else:
                             continue
@@ -138,14 +142,16 @@ def process_test_helper(row, phase_topk):
     seen = [] # remove duplicate predictions
     for pred in predictions:
         if pred not in seen:
-            seen.append(pred)
+            seen.append(Chem.MolToSmiles(Chem.MolFromSmiles(pred), True))
+            # seen.append(pred)
         else:
             dup_count += 1
 
     if found:
         for i, pred in enumerate(seen):
-            pred_split = pred.split('.') # sorted already
-            if pred_split == r_smi_true_split:
+            pred_split = pred.split('.')
+            pred_split.sort()
+            if pred_split == r_smi_true_split or pred == r_smi_true:
                 true_rank = i # rank is 0-indexed
                 break
     this_row.append(true_rank)
@@ -187,7 +193,7 @@ def process_csv(
                 if parallelize:
                     num_cores = len(os.sched_getaffinity(0))
                     logging.info(f'Parallelizing over {num_cores} cores')
-                    with tqdm_joblib(tqdm(desc="Generating rxn fps", total=csv_length)) as progress_bar:
+                    with tqdm_joblib(tqdm(desc="Processing predictions", total=csv_length)) as progress_bar:
                         results = Parallel(n_jobs=num_cores)(
                                         delayed(process_train_helper)(row, phase_topk) for row in csv_reader
                                     )
@@ -205,7 +211,7 @@ def process_csv(
                 if parallelize:
                     num_cores = len(os.sched_getaffinity(0)) # multiprocessing.cpu_count()
                     logging.info(f'Parallelizing over {num_cores} cores')
-                    with tqdm_joblib(tqdm(desc="Generating rxn fps", total=csv_length)) as progress_bar:
+                    with tqdm_joblib(tqdm(desc="Processing predictions", total=csv_length)) as progress_bar:
                         results = Parallel(n_jobs=num_cores)(
                                         delayed(process_test_helper)(row, phase_topk) for row in csv_reader
                                     )
@@ -293,12 +299,12 @@ if __name__ == '__main__':
 
     RDLogger.DisableLog("rdApp.warning")
 
-    os.makedirs("./logs", exist_ok=True)
+    os.makedirs("./logs/gen_retroxpert/", exist_ok=True)
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
 
     logger = logging.getLogger()
     logger.setLevel(logging.INFO) 
-    fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
+    fh = logging.FileHandler(f"./logs/gen_retroxpert/{args.log_file}.{dt}")
     fh.setLevel(logging.INFO)
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(logging.INFO)
