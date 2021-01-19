@@ -312,7 +312,7 @@ def main_dist(
     else:
         if args.do_test:
             logging.info("Start testing")
-            if args.do_compute_graph_feat and experiment.train_loader is not None and not self.test_on_train:
+            if args.do_compute_graph_feat and experiment.train_loader is not None and not args.test_on_train:
                 del experiment.train_loader # free up memory
                 gc.collect()
                 torch.cuda.empty_cache()
