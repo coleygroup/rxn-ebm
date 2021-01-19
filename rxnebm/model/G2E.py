@@ -763,8 +763,11 @@ class G2ECross(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
+                                        preembed=True if args.preembed_size is not None else False,
+                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
+                                        encoder_activation=args.encoder_activation,
                                         atom_pool_type=args.atom_pool_type)
 
         self.h_size = args.encoder_hidden_size
@@ -873,8 +876,11 @@ class G2E_projBoth(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
+                                        preembed=True if args.preembed_size is not None else False,
+                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
+                                        encoder_activation=args.encoder_activation,
                                         atom_pool_type=args.atom_pool_type)
         
         proj_activation = model_utils.get_activation_function(args.proj_activation)
@@ -1152,8 +1158,11 @@ class G2E_sep_FFout(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
+                                        preembed=True if args.preembed_size is not None else False,
+                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
+                                        encoder_activation=args.encoder_activation,
                                         atom_pool_type=args.atom_pool_type)
         
         self.encoder_r = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
@@ -1161,8 +1170,11 @@ class G2E_sep_FFout(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
+                                        preembed=True if args.preembed_size is not None else False,
+                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
+                                        encoder_activation=args.encoder_activation,
                                         atom_pool_type=args.atom_pool_type)
 
         out_activation = model_utils.get_activation_function(args.out_activation)

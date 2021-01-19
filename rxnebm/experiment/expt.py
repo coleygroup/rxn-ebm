@@ -36,7 +36,7 @@ class Experiment:
 
     Parameters
     ----------
-    representation : str ['fingerprint']
+    representation : str ['fingerprint', 'smiles']
         which representation to use. affects which version of AugmentedData & ReactionDataset gets called.
         if not using 'fingerprint', cannot use Bit Augmentor. 
 
@@ -47,7 +47,7 @@ class Experiment:
 
     def __init__(
         self,
-        args,
+        args: argparse.Namespace,
         model: nn.Module,
         model_name: str,
         model_args: dict,
@@ -227,7 +227,14 @@ class Experiment:
 
         if saved_optimizer is None:
             raise ValueError("load_checkpoint requires saved_optimizer!")
+        for state in saved_optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.cuda(self.gpu)
         self.optimizer = saved_optimizer  # load optimizer w/ state dict from checkpoint
+        if self.args.new_lr is not None:
+            for g in self.optimizer.param_groups:
+                g['lr'] = self.args.new_lr
         if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
             if self.args.lr_scheduler_criteria == 'acc':
@@ -330,6 +337,7 @@ class Experiment:
         self.stats_filename = (
             self.checkpoint_folder / f"{self.model_name}_{self.expt_name}_stats.pkl"
         )
+
     def _init_fp_dataloaders(
         self,
         precomp_file_prefix: str,
@@ -508,7 +516,7 @@ class Experiment:
         if onthefly and self.args.do_compute_graph_feat: # don't load test data yet, to save memory
             self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
             self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
-            self.test_loader, self.test_size = None, None
+            self.test_loader, self.test_size = None, None # self._get_smi_dl(phase="test", shuffle=False)
         elif onthefly:
             self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
             self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
@@ -546,11 +554,12 @@ class Experiment:
                     \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f} \
                     \n"
                     logging.info(message)
-                    try:
-                        message += f'{self.expt_name}'
-                        send_message(message)
-                    except Exception as e:
-                        pass
+                    if self.rank == 0 or self.rank is None:
+                        try:
+                            message += f'{self.expt_name}'
+                            send_message(message)
+                        except Exception as e:
+                            pass
                     self.stats["early_stop_epoch"] = current_epoch
                     self.to_break = 1  # will break loop
                 else:
@@ -749,12 +758,15 @@ class Experiment:
                                 if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                     try:
                                         for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                            if j % (self.val_size // 5) == random.randint(0, 5) or j % (self.val_size // 3) in [0, 1, 2, 3]:  # peek at a random sample of current batch to monitor training progress
+                                            if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
                                                 rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
                                                 rxn_true_rank = batch_true_ranks_array[rxn_idx]
                                                 rxn_pred_rank = batch_preds[rxn_idx, 0].item()
                                                 rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
                                                 rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+                                                rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+                                                rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+                                                rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
 
                                                 rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
                                                 rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
@@ -763,12 +775,15 @@ class Experiment:
                                                 rxn_orig_prec = rxn_cand_precs[0]
                                                 rxn_orig_prec2 = rxn_cand_precs[1]
                                                 rxn_orig_prec3 = rxn_cand_precs[2]
-                                                logging.info(f'\ntrue product:                          \t\t\t{rxn_true_prod}')
-                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_true_energy:.2f}):  \t\t{rxn_pred_prec}')
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_pred_energy:.2f}):  \t\t{rxn_true_prec}')
-                                                logging.info(f'orig precursor (rank 0):                \t\t\t{rxn_orig_prec}\n')
-                                                logging.info(f'orig precursor (rank 1):                \t\t\t{rxn_orig_prec2}\n')
-                                                logging.info(f'orig precursor (rank 2):                \t\t\t{rxn_orig_prec3}\n')
+                                                logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+                                                if rxn_true_energy == 'NaN':
+                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t{rxn_true_prec}')
+                                                else:
+                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -893,7 +908,7 @@ class Experiment:
         self.model.eval()
         test_loss, test_correct_preds = 0, defaultdict(int)
         if self.test_loader is None: # running G2E
-            self.test_loader, self.test_size = self._get_smi_dl(phase="test", shuffle=False)
+            self.test_loader, self.test_size, _ = self._get_smi_dl(phase="test", shuffle=False)
         test_loader = tqdm(self.test_loader, desc='testing...')
         with torch.no_grad():
             epoch_test_size = 0
@@ -952,6 +967,9 @@ class Experiment:
                                             rxn_pred_rank = batch_preds[rxn_idx, 0].item()
                                             rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
                                             rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+                                            rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+                                            rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+                                            rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
 
                                             rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
                                             rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
@@ -960,12 +978,15 @@ class Experiment:
                                             rxn_orig_prec = rxn_cand_precs[0]
                                             rxn_orig_prec2 = rxn_cand_precs[1]
                                             rxn_orig_prec3 = rxn_cand_precs[2]
-                                            logging.info(f'\ntrue product:                          \t\t\t{rxn_true_prod}')
-                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_true_energy:.2f}):  \t\t{rxn_pred_prec}')
-                                            logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_pred_energy:.2f}):  \t\t{rxn_true_prec}')
-                                            logging.info(f'orig precursor (rank 0):                \t\t\t{rxn_orig_prec}\n')
-                                            logging.info(f'orig precursor (rank 1):                \t\t\t{rxn_orig_prec2}\n')
-                                            logging.info(f'orig precursor (rank 2):                \t\t\t{rxn_orig_prec3}\n')
+                                            logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+                                            if rxn_true_energy == 'NaN':
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t{rxn_true_prec}')
+                                            else:
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
                                             break
                                 except Exception as e:
                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -1183,12 +1204,15 @@ class Experiment:
                                 if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                     try:
                                         for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                            if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) in random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
+                                            if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
                                                 rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
                                                 rxn_true_rank = batch_true_ranks_array[rxn_idx]
                                                 rxn_pred_rank = batch_preds[rxn_idx, 0].item()
                                                 rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
                                                 rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+                                                rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+                                                rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+                                                rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
 
                                                 rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
                                                 rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
@@ -1197,12 +1221,15 @@ class Experiment:
                                                 rxn_orig_prec = rxn_cand_precs[0]
                                                 rxn_orig_prec2 = rxn_cand_precs[1]
                                                 rxn_orig_prec3 = rxn_cand_precs[2]
-                                                logging.info(f'\ntrue product:                          \t\t\t{rxn_true_prod}')
-                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_true_energy:.2f}):  \t\t{rxn_pred_prec}')
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_pred_energy:.2f}):  \t\t{rxn_true_prec}')
-                                                logging.info(f'orig precursor (rank 0):                \t\t\t{rxn_orig_prec}\n')
-                                                logging.info(f'orig precursor (rank 1):                \t\t\t{rxn_orig_prec2}\n')
-                                                logging.info(f'orig precursor (rank 2):                \t\t\t{rxn_orig_prec3}\n')
+                                                logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+                                                if rxn_true_energy == 'NaN':
+                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t{rxn_true_prec}')
+                                                else:
+                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -1414,20 +1441,32 @@ class Experiment:
                             if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                 try:
                                     for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                        if j % (self.test_size // 5) == random.randint(0, 6) or j % (self.test_size // 3) in [0, 1, 2, 3]:  # peek at a random sample of current batch to monitor training progress
-                                            sample_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                            sample_true_rank = batch_true_ranks_array[sample_idx]
-                                            sample_pred_rank = batch_preds[sample_idx, 0].item()
-                                            sample_true_prod = self.proposals_data['test'][batch_idx[sample_idx], 0]
-                                            sample_true_prec = self.proposals_data['test'][batch_idx[sample_idx], 1] 
+                                        if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
+                                            rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                            rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                            rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                            rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                            rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+                                            rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+                                            rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+                                            rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
 
-                                            sample_cand_precs = self.proposals_data['test'][batch_idx[sample_idx], 3:] 
-                                            sample_pred_prec = sample_cand_precs[batch_preds[sample_idx]]
-                                            sample_orig_prec = sample_cand_precs[0]
-                                            logging.info(f'\ntrue product:                {sample_true_prod}')
-                                            logging.info(f'pred precursor (rank {sample_pred_rank}):     {sample_pred_prec}')
-                                            logging.info(f'true precursor (rank {sample_true_rank}):     {sample_true_prec}')
-                                            logging.info(f'orig precursor (rank 0):     {sample_orig_prec}\n')
+                                            rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
+                                            rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
+                                            rxn_cand_precs = self.proposals_data['test'][batch_idx[rxn_idx], 3:]
+                                            rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                            rxn_orig_prec = rxn_cand_precs[0]
+                                            rxn_orig_prec2 = rxn_cand_precs[1]
+                                            rxn_orig_prec3 = rxn_cand_precs[2]
+                                            logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+                                            if rxn_true_energy == 'NaN':
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t{rxn_true_prec}')
+                                            else:
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
                                             break
                                 except Exception as e:
                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -1495,8 +1534,16 @@ class Experiment:
                 send_message(message)
             except Exception as e:
                 pass
-
             torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
+
+    def get_energies_and_loss_distributed(
+        self,
+        phase: str = "test",
+        save_energies: Optional[bool] = True,
+        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+    ) -> Tuple[Tensor, float]:
+        raise NotImplementedError('Please reload the best checkpoint and run expt.get_energies_and_loss() on a single GPU')
 
     def get_energies_and_loss(
         self,
@@ -1614,20 +1661,12 @@ class Experiment:
             self.stats["train_loss_nodropout"] = loss
             self.energies[phase] = energies_combined
             return energies_combined, loss
-            
-    def get_energies_and_loss_distributed(
-        self,
-        phase: str = "test",
-        save_energies: Optional[bool] = True,
-        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
-        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
-    ) -> Tuple[Tensor, float]:
-        raise NotImplementedError('Please reload the best checkpoint and run expt.get_energies_and_loss() on a single GPU')
 
     def get_topk_acc(
         self,
         phase: str = "test",
-        k: Optional[int] = 1, 
+        k: int = 1,
+        message: Optional[str] = "",
     ) -> Tensor:
         """
         Computes top-k accuracy of trained model in classifying feasible vs infeasible chemical rxns
@@ -1650,7 +1689,6 @@ class Experiment:
 
         Also see: self.get_energies_and_loss()
         """
-        message = f"{self.expt_name}\n"
         if self.args.do_finetune and phase != 'train':
             if phase not in self.energies:
                 energies, loss, true_ranks = self.get_energies_and_loss(phase=phase)
@@ -1681,14 +1719,13 @@ class Experiment:
                 self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
-                logging.info(f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%") 
+                this_topk_message = f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%"
+                logging.info(this_topk_message)
+                message += this_topk_message + '\n'
             else:
                 logging.info(f'{k} out of range for dimension 1 on ({phase})')
-        try:
-            send_message(message)
-        except Exception as e:
-            pass
-
+        return message
+        
 # def accuracy(output, target, topk=(1,)):
 # """Computes the accuracy over the k top predictions for the specified values of k"""
 # with torch.no_grad():

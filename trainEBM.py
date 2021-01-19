@@ -1,5 +1,6 @@
 import argparse
 import logging
+import traceback
 import os
 import sys
 import random
@@ -10,6 +11,7 @@ import torch.multiprocessing as mp
 import gc
 gc.enable() 
 
+from functools import partial
 from datetime import datetime, date
 from rdkit import RDLogger
 from typing import Optional, Dict, List, Union
@@ -22,6 +24,12 @@ from rxnebm.model.S2E_args import S2E_args
 
 torch.backends.cudnn.benchmark = True
 
+try:
+    send_message = partial(expt_utils.send_message, 
+                       chat_id=os.environ['CHAT_ID'], 
+                       bot_token=os.environ['BOT_TOKEN'])
+except Exception as e:
+    pass
 
 def parse_args():
     parser = argparse.ArgumentParser("trainEBM.py")
@@ -240,10 +248,10 @@ def main_dist(
         debug=True,
         vocab=vocab,
     )
-
+    diverged = False
     if not args.do_not_train and args.do_pretrain:
         logging.info("Start pretraining")
-        experiment.train_distributed()
+        diverged, last_LR, last_epoch = experiment.train_distributed()
 
     if not args.do_not_train and args.do_finetune:
         assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
@@ -251,6 +259,21 @@ def main_dist(
         diverged, last_LR, last_epoch = experiment.train_distributed()
 
     if diverged: # reload checkpoint w/ halved LR
+        del experiment.model, experiment.train_loader, experiment.val_loader, experiment.test_loader
+        del experiment
+        torch.cuda.empty_cache()
+
+        try: # to fix logger double/triple printing issue 
+            while logger.handlers:
+                logger.handlers.pop()
+        except:
+            pass
+        try:
+            logger.removeHandler(fh)
+            logger.removeHandler(sh)
+        except:
+            pass
+
         args.new_lr = last_LR * 0.4
         args.old_expt_name = args.expt_name
         args.expt_name += '_reload'
@@ -262,24 +285,14 @@ def main_dist(
         args.port %= 65535
 
         if gpu == 0:
-            try: # to fix logger double/triple printing issue 
-                while logger.handlers:
-                    logger.handlers.pop()
-            except Exception as e:
-                print(e)
-            try:
-                logger.removeHandler(fh)
-                logger.removeHandler(sh)
-            except Exception as e:
-                print(e)
-            
             try:
                 main(args)
-            except Exception as e: 
+            except Exception as e:
                 # something went wrong in reloading checkpoint to resume training w/ reduced LR. 
                 # most likely, it means model diverged during the first epoch, so there is no stats file & checkpoint to reload from
-                # in which case, it's fine, just let the exception run and quit the program
-                print(e)
+                # in which case, it's fine, just continue
+                tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                print("".join(tb_str))
 
             # just in case, reload that missed checkpoint & check
             if args.do_get_energies_and_acc:
@@ -302,6 +315,7 @@ def main_dist(
             if args.do_compute_graph_feat and experiment.train_loader is not None and not self.test_on_train:
                 del experiment.train_loader # free up memory
                 gc.collect()
+                torch.cuda.empty_cache()
             experiment.test_distributed()
 
         if args.do_get_energies_and_acc and gpu == 0:
@@ -310,6 +324,7 @@ def main_dist(
             args.old_expt_name = args.expt_name
             args.date_trained = str(args.checkpoint_folder)[-10:]
             args.load_checkpoint = True
+            args.load_epoch = None # to load best checkpoint
             args.do_test = True
             args.do_not_train = True
             args.test_on_train = True
@@ -473,10 +488,10 @@ def main(args):
             vocab=vocab,
             gpu=None, # not doing DDP
         )
-
+        diverged = False
         if not args.do_not_train and args.do_pretrain:
             logging.info("Start pretraining")
-            experiment.train()
+            diverged, last_LR, last_epoch = experiment.train()
 
         if not args.do_not_train and args.do_finetune:
             assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
@@ -516,6 +531,7 @@ def main(args):
                 if not args.test_on_train:
                     del experiment.train_loader # free up memory
                     gc.collect()
+                    torch.cuda.empty_cache()
                 logging.info("Start testing")
                 experiment.test()
 
@@ -523,13 +539,19 @@ def main(args):
                 phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
                 for phase in phases_to_eval:
                     experiment.get_energies_and_loss(
-                        phase=phase, save_energies=True, path_to_energies=args.path_to_energies)
+                        phase=phase, save_energies=True, path_to_energies=args.path_to_energies
+                    )
 
                 # just print accuracies to compare experiments
-                for phase in phases_to_eval:  
+                for phase in phases_to_eval:
                     logging.info(f"\nGetting {phase} accuracies")
+                    message = f"{self.expt_name}\n"
                     for k in [1, 3, 5, 10, 20, 50]:
-                        experiment.get_topk_acc(phase=phase, k=k)
+                        message = experiment.get_topk_acc(phase=phase, k=k, message=message)
+                    try:
+                        send_message(message)
+                    except Exception as e:
+                        pass
 
                 # full accuracies
                 for phase in phases_to_eval:
@@ -543,6 +565,6 @@ if __name__ == "__main__":
     # logger setup
     RDLogger.DisableLog("rdApp.warning")
     os.makedirs("./logs", exist_ok=True)
-    if not args.ddp: # if doing ddp training, must spawn logger inside each child process
+    if not args.ddp: # if doing ddp training, must spawn logger inside just 1 child process (rank == 0)
         setup_logger(args)
     main(args)
