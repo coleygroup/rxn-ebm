@@ -55,7 +55,7 @@ def parse_args():
                         type=str, nargs='+', default=['train', 'valid', 'test'])
 
     parser.add_argument("--beam_size", help="Beam size", type=int, default=200)
-    parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=50)
+    parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=200)
     parser.add_argument("--maxk", help="How many top-k proposals to generate and put in valid/test (not guaranteed)", type=int, default=200)
     return parser.parse_args()
 
@@ -83,9 +83,9 @@ def process_train_helper(row, phase_topk):
 
     seen = [] # remove duplicate predictions
     for pred in predictions:
+        pred = Chem.MolToSmiles(Chem.MolFromSmiles(pred), True)
         if pred not in seen:
-            seen.append(Chem.MolToSmiles(Chem.MolFromSmiles(pred), True))
-            # seen.append(pred)
+            seen.append(pred)
         else:
             dup_count += 1
 
@@ -141,9 +141,9 @@ def process_test_helper(row, phase_topk):
 
     seen = [] # remove duplicate predictions
     for pred in predictions:
+        pred = Chem.MolToSmiles(Chem.MolFromSmiles(pred), True)
         if pred not in seen:
-            seen.append(Chem.MolToSmiles(Chem.MolFromSmiles(pred), True))
-            # seen.append(pred)
+            seen.append(pred)
         else:
             dup_count += 1
 

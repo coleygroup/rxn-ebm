@@ -158,14 +158,18 @@ def compile_into_csv(
             prod_mol = Chem.MolFromSmiles(prod_smi)
             [atom.ClearProp('molAtomMapNumber') for atom in prod_mol.GetAtoms()]
             prod_smi_nomap = Chem.MolToSmiles(prod_mol, True)
+            # Sometimes stereochem takes another canonicalization...(more for reactants, but just in case)
+            prod_smi_nomap = Chem.MolToSmiles(Chem.MolFromSmiles(prod_smi_nomap), True)
             prod_smiles_phase.append(prod_smi_nomap)
             prod_smiles_mapped_phase.append(prod_smi)
             
             # value for each prod_smi is a dict, where key = 'reactants' retrieves the predicted precursors
             precursors = proposals_phase[prod_smi]['reactants']
-            # remove duplicate predictions 
+            
+            # remove duplicate predictions
             seen = []
             for prec in precursors:
+                prec = Chem.MolToSmiles(Chem.MolFromSmiles(prec), True) # canonicalize
                 if prec not in seen:
                     seen.append(prec)
                 else:
@@ -350,7 +354,7 @@ def parse_args():
     parser.add_argument("--input_file_prefix", help="input file prefix of atom-mapped rxn smiles", type=str,
                         default="50k_clean_rxnsmi_noreagent_allmapped")
     parser.add_argument("--output_folder", help="output folder", type=str)
-    parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="COLAB")
+    parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="LOCAL")
 
     parser.add_argument("--propose", help='Whether to generate proposals (or just compile)', action="store_true")
     parser.add_argument("--train", help="Whether to generate and/or compile train preds", action="store_true")
@@ -362,18 +366,19 @@ def parse_args():
                         type=int, default=4000)
 
     parser.add_argument("--merge_chunks", help="Whether to merge already computed chunks", action="store_true")
-    parser.add_argument("--phase_to_merge", help="Phase to merge chunks of (only supports phase at a time)", type=str)
+    parser.add_argument("--phase_to_merge", help="Phase to merge chunks of (only supports phase at a time)", 
+                        type=str, default='train')
     parser.add_argument("--chunk_start_idxs", help="Start idxs of computed chunks, separate by commas e.g. 0,10000,20000", 
                         type=str, default='0,15000,30000')
     parser.add_argument("--chunk_end_idxs", help="End idxs of computed chunks, separate by commas, for 'None'\
                         just type a comma not followed by any number e.g. 10000,20000,", type=str, default='15000,30000,')
     
-    parser.add_argument("--compile", help="Whether to compile proposed precursor SMILES (& corresponding rxn_smiles data) into CSV file", 
+    parser.add_argument("--compile", help="Whether to compile proposed precursor SMILES (& rxn_smiles data) into CSV file", 
                         action='store_true')
 
-    parser.add_argument("--beam_size", help="Beam size", type=int, default=50)
-    parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=50)
-    parser.add_argument("--maxk", help="How many top-k proposals to generate and put in valid/test (not guaranteed)", type=int, default=100)
+    parser.add_argument("--beam_size", help="Beam size", type=int, default=200)
+    parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=200)
+    parser.add_argument("--maxk", help="How many top-k proposals to generate and put in valid/test (not guaranteed)", type=int, default=200)
     return parser.parse_args()
 
 

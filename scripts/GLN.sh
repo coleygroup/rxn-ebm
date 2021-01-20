@@ -1,4 +1,4 @@
-# python gen_gln.py \
+# python3 gen_gln.py \
 #     --propose \
 #     --train \
 #     --valid \
@@ -8,7 +8,7 @@
 #     --maxk=50 \
 #     --location=LOCAL
 
-# python gen_gln.py \
+# python3 gen_gln.py \
 #         --merge_chunks \
 #         --phase_to_merge=train \
 #         --topk=200 \
@@ -16,7 +16,7 @@
 #         --beam_size=200 \
 #         --location=LOCAL \
 
-python gen_gln.py \
+python3 gen_gln.py \
         --compile \
         --train \
         --valid \
