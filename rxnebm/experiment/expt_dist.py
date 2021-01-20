@@ -327,7 +327,7 @@ class Experiment:
             logging.info('Not using any LR Scheduler!')
             self.lr_scheduler = None 
 
-        self.begin_epoch = 0 
+        self.begin_epoch = 0 # if start training from scratch (not the case for resuming from checkpoint) 
         self.stats = {
             "train_args": self.train_args,
             "model_args": self.model_args,

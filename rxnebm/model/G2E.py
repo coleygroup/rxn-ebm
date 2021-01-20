@@ -339,6 +339,11 @@ class MPNEncoder(nn.Module):
                         nn.Linear(self.input_size, self.preembed_size),
                     )
                 rnn_input_size = self.preembed_size
+            elif isinstance(self.preembed_size, list) and len(self.preembed_size) == 1:
+                self.W_emb = nn.Sequential(
+                        nn.Linear(self.input_size, self.preembed_size[0]),
+                    )
+                rnn_input_size = self.preembed_size[0]
             elif isinstance(self.preembed_size, list) and len(self.preembed_size) == 2:
                 self.W_emb = nn.Sequential(
                         nn.Linear(self.input_size, self.preembed_size[0]),

@@ -279,10 +279,12 @@ def main_dist(
         args.expt_name += '_reload'
         args.date_trained = str(args.checkpoint_folder)[-10:]
         args.load_checkpoint = True
-        args.epochs -= last_epoch + 1 # need to add 1 bcos epochs are 0-indexed
-        args.load_epoch = last_epoch - 2 # reload from 2 epochs before, just to be safe
-        args.port += 1
-        args.port %= 65535
+        if begin_epoch is None:
+            begin_epoch = 0
+        args.epochs -= last_epoch - begin_epoch + 1
+        args.load_epoch = last_epoch - 2 # reload from 2 epochs before (1 epoch before = the epoch that diverged)
+        args.port += 1 # change port to avoid TCP error
+        args.port %= 65535 # to make sure it's still < 65535
 
         if gpu == 0:
             try:
@@ -304,10 +306,14 @@ def main_dist(
                 args.do_test = True
                 args.do_not_train = True
                 args.test_on_train = False # don't eval on train to save some time
-                args.load_epoch = str(last_epoch - 1)
+                args.load_epoch = last_epoch - 1
 
                 setup_logger(args)
-                main(args)
+                try:
+                    main(args)
+                except Exception as e:
+                    tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                    print("".join(tb_str))
 
     else:
         if args.do_test:
@@ -331,7 +337,11 @@ def main_dist(
             args.random_seed += 100 # just to get more diverse random examples of predictions, doesn't affect anything else
 
             logging.info(f'Reloading expt: {args.expt_name}')
-            main(args)
+            try:
+                main(args)
+            except Exception as e:
+                tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                print("".join(tb_str))
 
 def main(args):
     model_utils.seed_everything(args.random_seed) # seed before even initializing model
@@ -391,9 +401,9 @@ def main(args):
         model = saved_model
         model_args = saved_stats["model_args"]
         if args.load_epoch is not None:
-            begin_epoch = args.load_epoch + 1
+            begin_epoch = int(args.load_epoch) + 1
         else:
-            begin_epoch = saved_stats["best_epoch"] + 1
+            begin_epoch = int(saved_stats["best_epoch"]) + 1
 
         if args.vocab_file is not None:
             vocab = expt_utils.load_or_create_vocab(args)
@@ -545,7 +555,7 @@ def main(args):
                 # just print accuracies to compare experiments
                 for phase in phases_to_eval:
                     logging.info(f"\nGetting {phase} accuracies")
-                    message = f"{self.expt_name}\n"
+                    message = f"{args.expt_name}\n"
                     for k in [1, 3, 5, 10, 20, 50]:
                         message = experiment.get_topk_acc(phase=phase, k=k, message=message)
                     try:
