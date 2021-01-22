@@ -169,6 +169,7 @@ def parse_args():
     parser.add_argument("--drop_last",
                         help="Whether to drop last minibatch in train/valid/test dataloader",
                         action="store_true")
+    parser.add_argument("--pos_weight", help="pos weight for BCEWithLogitsLoss (mixture model)", type=float, default=1)
     # model params, TODO: add S2E args here
     # G2E/FF args
     parser.add_argument("--encoder_hidden_size", help="MPN/FFN encoder_hidden_size(s)", type=int, nargs='+', default=256)

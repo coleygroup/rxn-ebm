@@ -109,6 +109,11 @@ class Experiment:
         self.model_name = model_name
         self.model_args = model_args
         self.dataparallel = dataparallel # affects how checkpoint is saved & how weights should be loaded
+        
+        self.criterion = torch.nn.BCEWithLogitsLoss(
+                    reduction='sum',
+                    pos_weight=torch.Tensor([self.args.pos_weight]).to(self.device)
+                )
 
         if saved_optimizer is not None:
             self.optimizer_name = str(self.args.optimizer).split(' ')[0]
@@ -145,6 +150,7 @@ class Experiment:
         self.test_accs = []
         
         self.preds = {}
+        self.labels = {}
 
     def __repr__(self):
         return f"Experiment name: {self.expt_name}"
@@ -455,11 +461,7 @@ class Experiment:
         """
         self.model.zero_grad()
         preds = self.model(batch)                               # N x K x 3
-        loss = torch.nn.BCEWithLogitsLoss(
-                    reduction='sum'
-                )(
-                preds, labels
-            )
+        loss = self.criterion(preds, labels)
         if backprop:            
             self.optimizer.zero_grad()
             loss.backward()
@@ -536,7 +538,7 @@ class Experiment:
                                     prod_preds = batch_preds[prod_idx]
                                     prod_labels = batch_labels[prod_idx]
                                     logging.info(f'\nproduct SMILES:\t\t{prod_smi}')
-                                    logging.info(f'GLN:\t\tlogits = {prod_preds_logits[0].item():+.4f}, hard = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
+                                    logging.info(f'GLN:\t\t\t\tlogits = {prod_preds_logits[0].item():+.4f}, hard = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
                                     logging.info(f'Retrosim:\t\tlogits = {prod_preds_logits[1].item():+.4f}, hard = {prod_preds[1].item():.0f}, label = {prod_labels[1]:.0f}')
                                     logging.info(f'RetroXpert:\t\tlogits = {prod_preds_logits[2].item():+.4f}, hard = {prod_preds[2].item():.0f}, label = {prod_labels[2]:.0f}')
                                     break
@@ -589,12 +591,12 @@ class Experiment:
                 \nval loss: {self.val_losses[-1]: .4f}, val acc: {self.val_accs[-1]:.4f}, \
                 \n"
             logging.info(message)
-            try:
-                message += f'{self.expt_name}'
-                send_message(message)
-            except Exception as e:
-                logging.info(e)
-                logging.info("Don't worry about this - just a small hack to send messages to Telegram")
+            # try:
+            #     message += f'{self.expt_name}'
+            #     send_message(message)
+            # except Exception as e:
+            #     logging.info(e)
+            #     logging.info("Don't worry about this - just a small hack to send messages to Telegram")
             if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
                 logging.info('Stopping training as learning rate has dropped below 1e-6')
                 break 
@@ -633,7 +635,7 @@ class Experiment:
                                 prod_preds = batch_preds[prod_idx]
                                 prod_labels = batch_labels[prod_idx]
                                 logging.info(f'\nproduct SMILES:\t\t{prod_smi}')
-                                logging.info(f'GLN:\t\tlogits = {prod_preds_logits[0].item():+.4f}, hard = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
+                                logging.info(f'GLN:\t\t\t\tlogits = {prod_preds_logits[0].item():+.4f}, hard = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
                                 logging.info(f'Retrosim:\t\tlogits = {prod_preds_logits[1].item():+.4f}, hard = {prod_preds[1].item():.0f}, label = {prod_labels[1]:.0f}')
                                 logging.info(f'RetroXpert:\t\tlogits = {prod_preds_logits[2].item():+.4f}, hard = {prod_preds[2].item():.0f}, label = {prod_labels[2]:.0f}')
                                 break
@@ -706,11 +708,9 @@ class Experiment:
                 batch_data = batch[0].to(self.device)
                 batch_labels = batch[1].to(self.device)
                 labels_combined.append(batch_labels)
-                labels_combined = torch.cat(labels_combined, dim=0).squeeze(dim=-1).cpu()
                 
                 preds = self.model(batch_data)
                 preds_combined.append(preds)
-                preds_combined = torch.cat(preds_combined, dim=0).squeeze(dim=-1).cpu() 
 
                 loss = torch.nn.BCEWithLogitsLoss(reduction='sum')(
                     preds, batch_labels
@@ -718,6 +718,8 @@ class Experiment:
                 epoch_data_size += preds.shape[0]
                 total_loss += loss
             
+            labels_combined = torch.cat(labels_combined, dim=0).cpu()
+            preds_combined = torch.cat(preds_combined, dim=0).cpu()
             total_loss /= epoch_data_size
             logging.info(f"\nLoss on {phase} : {total_loss:.4f}")
 
@@ -734,6 +736,7 @@ class Experiment:
         if phase == 'train':
             self.stats["train_loss_nodropout"] = total_loss
         self.preds[phase] = preds_combined
+        self.labels[phase] = labels_combined
         return preds_combined, total_loss, labels_combined
 
     def get_acc(
@@ -743,9 +746,13 @@ class Experiment:
         if phase not in self.preds:
             pred_logits, loss, labels = self.get_preds_and_loss(phase=phase)
             self.preds[phase] = pred_logits
+            self.labels[phase] = labels_combined
             if phase == 'train':
                 self.stats["train_loss_nodropout"] = loss
-        
+        else:
+            pred_logits = self.preds[phase]
+            labels = self.labels[phase]
+
         pred_hard = torch.sigmoid(pred_logits)
         # bcos we have 3 models TODO: split into 3
         accuracy = (torch.sum(torch.eq(pred_hard, labels)).item() // 3) / labels.shape[0] * 100
