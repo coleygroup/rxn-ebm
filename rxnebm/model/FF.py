@@ -200,3 +200,68 @@ class FeedforwardTriple3indiv3prod1cos(nn.Module):
                                         diff_embedding * prod_embedding, similarity], dim=-1) 
 
         return self.output_layer(combined_embedding).squeeze(dim=-1)                                        # N x K 
+
+
+class FeedforwardMixture(nn.Module): 
+    """
+    Takes a product fingerprint as input and predicts whether each of the
+    N retrosynthesis models ('Mixture of Experts') could successfully predict
+    the ground truth precursors within some top-K predictions (e.g. K = 200)
+    
+    Examples of such experts include: GLN, Retrosim & RetroXpert
+
+    hidden_sizes : List[int]
+        list of hidden layer sizes for the encoder, from layer 0 onwards 
+        e.g. [1024, 512, 256] = layer 0 has 1024 neurons, layer 1 has 512 neurons etc.
+    """
+
+    def __init__(self, args):
+        super().__init__()
+        self.model_repr = "FeedforwardMixture"
+        self.encoder_prod = self.build_layers(
+            args.encoder_dropout, args.encoder_activation, args.encoder_hidden_size, args.prodfp_size
+        )
+
+        self.output_layer = self.build_layers(
+            args.out_dropout, args.out_activation, args.out_hidden_sizes, args.encoder_hidden_size[-1],
+            output=True
+        )
+        model_utils.initialize_weights(self)
+
+    def build(self):
+      pass 
+
+    def build_layers(
+        self,
+        dropout: float,
+        activation: str,
+        hidden_sizes: List[int],
+        input_dim: int,
+        output: bool = False
+    ):
+        num_layers = len(hidden_sizes)
+        activation = model_utils.get_activation_function(activation)
+        ffn = [
+                nn.Linear(input_dim, hidden_sizes[0])
+            ]
+        for i, layer in enumerate(range(num_layers - 1)):
+            ffn.extend(
+                [
+                    activation,
+                    nn.Dropout(dropout),
+                    nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]),
+                ]
+                )
+        if output:
+            ffn.extend(
+                [
+                    activation,
+                    nn.Dropout(dropout),
+                    nn.Linear(hidden_sizes[-1], 3), # output dim = 3
+                ]
+                )
+        return nn.Sequential(*ffn)
+
+    def forward(self, batch: Tensor) -> Tensor:
+        prod_embedding = self.encoder_prod(batch)                                   # N x embed_dim (hidden_sizes_encoder[-1])
+        return self.output_layer(prod_embedding).squeeze(dim=1)                     # N x 1 x 3 => N x 3

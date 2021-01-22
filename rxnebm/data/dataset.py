@@ -439,8 +439,7 @@ class ReactionDatasetFingerprints(Dataset):
 
     NOTE: ReactionDatasetFingerprints assumes that rxn_fp already exists,
     unless onthefly = True, in which case, an already initialised augmentor object must be passed.
-    Otherwise, a RuntimeError is raised and training is interrupted.
-    TODO: viz_neg: visualise cosine negatives (trace index back to CosineAugmentor & 50k_rxnsmi)
+    Otherwise, a RuntimeError is raised and training is interrupted
 
     Parameters
     ----------
@@ -886,6 +885,58 @@ class ReactionDatasetSMILES(Dataset):
     def __len__(self):
         return len(self._rxn_smiles_with_negatives)
 
+class MixtureDatasetFingerprints(Dataset):
+    """
+    Dataset class for fingerprint representation of products for predicting which Retro model ('expert')
+    could successfully predict the ground truth precursor for each product SMILES
+    """
+
+    def __init__(
+        self,
+        prodfps_filename: str,
+        labels_filename: str,
+        root: Optional[str] = None,
+    ):
+        if root is None:
+            root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
+        else:
+            root = Path(root)
+        if (root / prodfps_filename).exists():
+            logging.info("Loading pre-computed product fingerprints...")
+            self.data = sparse.load_npz(root / prodfps_filename)
+            self.data = self.data.tocsr()
+        else:
+            raise RuntimeError(
+                f"Could not find precomputed product fingerprints at "
+                f"{root / prodfps_filename}"
+            )
+
+        if (root / labels_filename).exists():
+            logging.info("Loading labels...")
+            self.labels = np.load(root / labels_filename)
+        else:
+            raise RuntimeError(
+                f"Could not find labels at "
+                f"{root / labels_filename}"
+            )
+
+    def __getitem__(self, idx: Union[int, Tensor]) -> Tuple[Tensor, Tensor, Union[int, List]]:
+        """Returns tuple of product fingerprint and index of prod_smi (in CSV file)
+        """
+        # return idx for retrieving product SMILES & labels from CSV file
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        prod_fps = torch.as_tensor(
+            self.data[idx].toarray()
+        )
+        labels = torch.as_tensor(
+            self.labels[idx]
+        )
+        return prod_fps.float(), labels.float(), idx
+
+    def __len__(self):
+        return self.data.shape[0]
 
 # if __name__ == "__main__":
     # augmentations = {

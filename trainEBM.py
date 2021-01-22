@@ -17,7 +17,7 @@ from rdkit import RDLogger
 from typing import Optional, Dict, List, Union
 
 from rxnebm.data import dataset
-from rxnebm.experiment import expt, expt_dist, expt_utils
+from rxnebm.experiment import expt, expt_dist, expt_mixture, expt_utils
 from rxnebm.model import FF, G2E, S2E, model_utils
 from rxnebm.model.FF_args import FF_args
 from rxnebm.model.S2E_args import S2E_args
@@ -38,6 +38,7 @@ def parse_args():
     parser.add_argument("--do_not_train", help="do not do any training? (to just test/get energies)", action="store_true")
     parser.add_argument("--do_pretrain", help="whether to pretrain (vs. finetune)", action="store_true")
     parser.add_argument("--do_finetune", help="whether to finetune (vs. pretrain)", action="store_true")
+    parser.add_argument("--do_train_mixture", help="whether training mixture model", action="store_true")
     parser.add_argument("--do_test", help="whether to test after training", action="store_true")
     parser.add_argument("--do_get_energies_and_acc", help="whether to test after training", action="store_true")
     parser.add_argument("--do_compute_graph_feat", help="whether to compute graph features", action="store_true")
@@ -89,6 +90,12 @@ def parse_args():
     parser.add_argument("--cache_suffix",
                         help="additional suffix for G2E cache files",
                         type=str, default=None)
+    parser.add_argument("--prodfps_file_prefix",
+                        help="npz file of product fingerprints",
+                        type=str)
+    parser.add_argument("--labels_file_prefix",
+                        help="npy file of labels for mixture of experts",
+                        type=str)
     # fingerprint params
     parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
     parser.add_argument("--rctfp_size", help="reactant fp size", type=int, default=16384)
@@ -145,7 +152,7 @@ def parse_args():
                         type=int, default=-1)
     parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") # type=bool, default=True) 
     parser.add_argument("--early_stop_criteria",
-                        help="criteria for early stopping ['loss', 'top1_acc', 'top5_acc', 'top10_acc', 'top50_acc']",
+                        help="criteria for early stopping ['loss', 'acc', top1_acc', 'top5_acc', 'top10_acc', 'top50_acc']",
                         type=str, default='top1_acc')
     parser.add_argument("--early_stop_patience",
                         help="num. of epochs tolerated without improvement in criteria before early stop",
@@ -417,6 +424,8 @@ def main(args):
             logging.info(f"Not loading from checkpoint, creating model {args.model_name}")
         if args.model_name == "FeedforwardEBM" or args.model_name == "FeedforwardTriple3indiv3prod1cos":
             model = FF.FeedforwardTriple3indiv3prod1cos(args)
+        elif args.model_name == "FeedforwardMixture":
+            model = FF.FeedforwardMixture(args)
 
         elif args.model_name == "GraphEBM":                 # Graph to energy
             model = G2E.G2E(args)
@@ -488,21 +497,38 @@ def main(args):
             dataparallel = False
 
         logging.info("Setting up experiment")
-        experiment = expt.Experiment(
-            args=args,
-            model=model,
-            model_name=args.model_name,
-            model_args=model_args,
-            augmentations=augmentations,
-            onthefly=args.onthefly,
-            load_checkpoint=args.load_checkpoint,
-            saved_optimizer=saved_optimizer,
-            saved_stats=saved_stats,
-            begin_epoch=begin_epoch,
-            debug=True,
-            vocab=vocab,
-            gpu=None, # not doing DDP
-        )
+        if args.do_train_mixture:
+            experiment = expt_mixture.Experiment(
+                args=args,
+                model=model,
+                model_name=args.model_name,
+                model_args=model_args,
+                augmentations=None,
+                onthefly=False,
+                load_checkpoint=args.load_checkpoint,
+                saved_optimizer=saved_optimizer,
+                saved_stats=saved_stats,
+                begin_epoch=begin_epoch,
+                debug=True,
+                vocab=None,
+                gpu=None, # not doing DDP
+            )
+        else:
+            experiment = expt.Experiment(
+                args=args,
+                model=model,
+                model_name=args.model_name,
+                model_args=model_args,
+                augmentations=augmentations,
+                onthefly=args.onthefly,
+                load_checkpoint=args.load_checkpoint,
+                saved_optimizer=saved_optimizer,
+                saved_stats=saved_stats,
+                begin_epoch=begin_epoch,
+                debug=True,
+                vocab=vocab,
+                gpu=None, # not doing DDP
+            )
         diverged = False
         if not args.do_not_train and args.do_pretrain:
             logging.info("Start pretraining")
@@ -512,6 +538,11 @@ def main(args):
             assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
             logging.info("Start finetuning")
             diverged, last_LR, last_epoch = experiment.train()
+        
+        if not args.do_not_train and args.do_train_mixture:
+            assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
+            logging.info("Start training mixture model")
+            experiment.train()
         
         if diverged:
             args.new_lr = last_LR * 0.4
@@ -550,7 +581,18 @@ def main(args):
                 logging.info("Start testing")
                 experiment.test()
 
-            if args.do_get_energies_and_acc:
+            if args.do_get_energies_and_acc and args.do_train_mixture:
+                phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
+                for phase in phases_to_eval:
+                    experiment.get_preds_and_loss(
+                        phase=phase, save_preds=True
+                    )
+
+                for phase in phases_to_eval:
+                    logging.info(f"\nGetting {phase} accuracies")
+                    experiment.get_acc(phase=phase)
+
+            elif args.do_get_energies_and_acc:
                 phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
                 for phase in phases_to_eval:
                     experiment.get_energies_and_loss(
