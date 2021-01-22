@@ -130,8 +130,7 @@ def merge_proposers(
                                             delayed(cano_prec_helper)(row, phase_topk, prefix) 
                                                 for row in csv_reader
                                         )
-                            all_rxn_prod_smi, all_rxn_precs, dup_count = zip(*results)
-                            all_rxn_prod_smi, all_rxn_precs, dup_count = list(all_rxn_prod_smi), list(all_rxn_precs), list(dup_count)
+                            all_rxn_prod_smi, all_rxn_precs, dup_count = map(list, zip(*results))
                             dup_count = sum(dup_count) / csv_length
                             for i, rxn_prod_smi in enumerate(all_rxn_prod_smi):
                                 proposals_phase_dict[proposer][rxn_prod_smi] = all_rxn_precs[i]

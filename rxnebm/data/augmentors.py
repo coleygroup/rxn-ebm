@@ -19,8 +19,6 @@ and one .npz file of just bit negatives, so that if we want to modify certain au
 e.g. start with just random & cosine --> include random, cosine & bit --> increase num_neg of bit etc.,
 separately stored .npz files will make it much easier.
 """
-
-
 def rcts_prod_fps_from_rxn_smi(
     rxn_smi: str, fp_type: str, smi_to_fp_dict: dict, mol_fps: sparse_fp
 ) -> Tuple[sparse_fp, sparse_fp]:
@@ -52,6 +50,9 @@ def rcts_prod_fps_from_rxn_smi_dist(
     We trade that memory for compute, since now we have to make each count mol fp on the fly
     But hopefully when multiprocessing w/ enough processes (say 32 or 64), 
     the parallelization should overall speed up the whole process
+
+    Indeed, this way is much, much faster than pre-computing molecular count_fps & assembling the rxn_fp
+    (even w/ multi-processing)
     '''
     prod_smi = rxn_smi.split(">>")[-1]
     prod_fp = smi_to_fp.mol_smi_to_count_fp(prod_smi, radius, fp_size, dtype)

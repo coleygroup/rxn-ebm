@@ -124,8 +124,10 @@ def main(args):
         proposals_file_prefix = f"retroxpert_{topk}top_{maxk}max_noGT" # do not change
     elif args.proposer == 'union':
         proposals_file_prefix = 'GLN_retrain_35topk_125maxk_retrosim_30topk_100maxk_retroxpert_35topk_75maxk_noGT' # hardcoded for now, TODO: make into arg
+    elif args.proposer == 'MT':
+        raise NotImplementedError
 
-    if args.proposer == 'GLN_retrain' or args.proposer == 'MT' or args.proposer == 'retroxpert' or args.proposer == 'retrosim': #TODO: fully implement MT 
+    if args.proposer == 'GLN_retrain' or args.proposer == 'retroxpert' or args.proposer == 'retrosim': #TODO: MT
         for phase in ['train', 'valid', 'test']:
             files = os.listdir(cleaned_data_root)
             if proposals_file_prefix not in files:
@@ -334,7 +336,7 @@ def main(args):
                     with tqdm_joblib(tqdm(desc="Generating rxn fps", total=len(processed_rxn_smis))) as progress_bar:
                         phase_rxn_fps = Parallel(n_jobs=num_cores)(
                                             delayed(rxn_fp_helper_train)(
-                                                rxn, i,
+                                                rxn, i
                                             ) for i, rxn in enumerate(processed_rxn_smis)
                                         )
                 else:
