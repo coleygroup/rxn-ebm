@@ -538,7 +538,7 @@ class Experiment:
                                     prod_preds = batch_preds[prod_idx]
                                     prod_labels = batch_labels[prod_idx]
                                     logging.info(f'\nproduct SMILES:\t\t{prod_smi}')
-                                    logging.info(f'GLN:\t\t\t\tlogits = {prod_preds_logits[0].item():+.4f}, hard = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
+                                    logging.info(f'GLN:\t\t\tlogits = {prod_preds_logits[0].item():+.4f}, hard = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
                                     logging.info(f'Retrosim:\t\tlogits = {prod_preds_logits[1].item():+.4f}, hard = {prod_preds[1].item():.0f}, label = {prod_labels[1]:.0f}')
                                     logging.info(f'RetroXpert:\t\tlogits = {prod_preds_logits[2].item():+.4f}, hard = {prod_preds[2].item():.0f}, label = {prod_labels[2]:.0f}')
                                     break
@@ -567,10 +567,10 @@ class Experiment:
                     is_best = True
             
             if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
-                if self.rank == 0 and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                if (self.rank == 0 or self.rank is None) and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
                     self._checkpoint_model_and_opt(current_epoch=epoch)
             else: # for G2E/S2E, models are small, is ok to save regularly
-                if self.rank == 0 and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                if (self.rank == 0 or self.rank is None) and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
                     self._checkpoint_model_and_opt(current_epoch=epoch)
 
             self._update_stats()
@@ -635,7 +635,7 @@ class Experiment:
                                 prod_preds = batch_preds[prod_idx]
                                 prod_labels = batch_labels[prod_idx]
                                 logging.info(f'\nproduct SMILES:\t\t{prod_smi}')
-                                logging.info(f'GLN:\t\t\t\tlogits = {prod_preds_logits[0].item():+.4f}, hard = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
+                                logging.info(f'GLN:\t\t\tlogits = {prod_preds_logits[0].item():+.4f}, hard = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
                                 logging.info(f'Retrosim:\t\tlogits = {prod_preds_logits[1].item():+.4f}, hard = {prod_preds[1].item():.0f}, label = {prod_labels[1]:.0f}')
                                 logging.info(f'RetroXpert:\t\tlogits = {prod_preds_logits[2].item():+.4f}, hard = {prod_preds[2].item():.0f}, label = {prod_labels[2]:.0f}')
                                 break
@@ -762,7 +762,7 @@ class Experiment:
 
         message = f"Accuracy ({phase}): {100 * accuracy:.3f}%"
         logging.info(message)
-        message += f'\nLoss on {phase}: {loss:.4f}\n{self.expt_name}'
+        message += f'\n{self.expt_name}'
         try:
             send_message(message)
         except:
