@@ -775,15 +775,15 @@ class Experiment:
                                                 rxn_orig_prec = rxn_cand_precs[0]
                                                 rxn_orig_prec2 = rxn_cand_precs[1]
                                                 rxn_orig_prec3 = rxn_cand_precs[2]
-                                                logging.info(f'\ntrue product:                          \t\t\t\t\t\t{rxn_true_prod}')
-                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t\t{rxn_pred_prec}')
+                                                logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
                                                 if rxn_true_energy == 'NaN':
                                                     logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
                                                 else:
-                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t\t{rxn_true_prec}')
-                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t\t{rxn_orig_prec}')
-                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t\t{rxn_orig_prec2}')
-                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t\t{rxn_orig_prec3}\n')
+                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -978,15 +978,15 @@ class Experiment:
                                             rxn_orig_prec = rxn_cand_precs[0]
                                             rxn_orig_prec2 = rxn_cand_precs[1]
                                             rxn_orig_prec3 = rxn_cand_precs[2]
-                                            logging.info(f'\ntrue product:                          \t\t\t\t\t\t{rxn_true_prod}')
-                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t\t{rxn_pred_prec}')
+                                            logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
                                             if rxn_true_energy == 'NaN':
                                                 logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
                                             else:
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t\t{rxn_true_prec}')
-                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t\t{rxn_orig_prec}')
-                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t\t{rxn_orig_prec2}')
-                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t\t{rxn_orig_prec3}\n')
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
                                             break
                                 except Exception as e:
                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -1221,15 +1221,15 @@ class Experiment:
                                                 rxn_orig_prec = rxn_cand_precs[0]
                                                 rxn_orig_prec2 = rxn_cand_precs[1]
                                                 rxn_orig_prec3 = rxn_cand_precs[2]
-                                                logging.info(f'\ntrue product:                          \t\t\t\t\t\t{rxn_true_prod}')
-                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t\t{rxn_pred_prec}')
+                                                logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
                                                 if rxn_true_energy == 'NaN':
                                                     logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
                                                 else:
-                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t\t{rxn_true_prec}')
-                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t\t{rxn_orig_prec}')
-                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t\t{rxn_orig_prec2}')
-                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t\t{rxn_orig_prec3}\n')
+                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -1458,15 +1458,15 @@ class Experiment:
                                             rxn_orig_prec = rxn_cand_precs[0]
                                             rxn_orig_prec2 = rxn_cand_precs[1]
                                             rxn_orig_prec3 = rxn_cand_precs[2]
-                                            logging.info(f'\ntrue product:                          \t\t\t\t\t\t{rxn_true_prod}')
-                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t\t{rxn_pred_prec}')
+                                            logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
                                             if rxn_true_energy == 'NaN':
                                                 logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
                                             else:
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t\t{rxn_true_prec}')
-                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t\t{rxn_orig_prec}')
-                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t\t{rxn_orig_prec2}')
-                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t\t{rxn_orig_prec3}\n')
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
                                             break
                                 except Exception as e:
                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)

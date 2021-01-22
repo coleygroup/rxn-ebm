@@ -22,6 +22,27 @@ from rxnebm.proposer.Retrosim_modified.retrosim.utils.draw import (
 from rxnebm.proposer.Retrosim_modified.retrosim.utils.generate_retro_templates import \
     process_an_example
 
+import joblib
+import contextlib
+@contextlib.contextmanager
+def tqdm_joblib(tqdm_object):
+    # https://stackoverflow.com/questions/24983493/tracking-progress-of-joblib-parallel-execution
+    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
+    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
+        def __call__(self, *args, **kwargs):
+            tqdm_object.update(n=self.batch_size)
+            return super().__call__(*args, **kwargs)
+
+    old_batch_callback = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_batch_callback
+        tqdm_object.close()  
 
 # wrappers for multiprocessing
 def mol_from_smiles(smiles):
@@ -35,6 +56,15 @@ def mol_to_smiles(mol, isomericSmiles=True):
 def similarity_metric(fp, list_fps):
     result = DataStructs.BulkTanimotoSimilarity(fp, list_fps)
     return result
+
+def rdchiralreactant_dist(smi):
+    return rdchiralReactants(smi)
+
+def rdchiralreaction_dist(template):
+    return rdchiralReaction(template)
+
+def rdchiralrun_dist(rxn, rct, combine_enantiomers):
+    return rdchiralRun(rxn, rct, combine_enantiomers=combine_enantiomers)
 
 class Retrosim:
     ''' TODO: test & valid files should be passed in as arguments into self.propose_all(), not initialised with Retrosim object! 
@@ -75,18 +105,18 @@ class Retrosim:
                 input_data_folder: Optional[Union[str, bytes, os.PathLike]] = None,
                 input_data_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped',
                 output_folder: Optional[Union[str, bytes, os.PathLike]] = None,
-                parallelize: Optional[bool] = False):    
+                parallelize: Optional[bool] = True):    
         self.topk = topk
         self.max_prec = max_prec
 
         if similarity_type == 'Tanimoto':
-            self.similarity_metric = DataStructs.BulkTanimotoSimilarity 
+            self.similarity_metric = lambda x, y: DataStructs.BulkTanimotoSimilarity(x, y)
         elif similarity_type == 'Dice':
-            self.similarity_metric = DataStructs.BulkDiceSimilarity
+            self.similarity_metric = lambda x, y: DataStructs.BulkDiceSimilarity(x, y)
         elif similarity_type == 'TverskyA': # weighted towards punishing only A
-            self.similarity_metric = DataStructs.BulkTverskySimilarity(x, y, 1.5, 1.0)
+            self.similarity_metric = lambda x, y: DataStructs.BulkTverskySimilarity(x, y, 1.5, 1.0)
         elif similarity_type == 'TverskyB': # weighted towards punishing only B
-            self.similarity_metric = DDataStructs.BulkTverskySimilarity(x, y, 1.0, 1.5)
+            self.similarity_metric = lambda x, y: DataStructs.BulkTverskySimilarity(x, y, 1.0, 1.5)
         else:
             raise ValueError('Unknown similarity type')
 
@@ -144,7 +174,8 @@ class Retrosim:
                 prod_mol = Chem.MolFromSmiles(prod_smi)
                 [atom.ClearProp('molAtomMapNumber') for atom in prod_mol.GetAtoms()]
                 prod_smi_remove_atom_map = Chem.MolToSmiles(prod_mol, True)
-                
+                prod_smi_remove_atom_map = Chem.MolToSmiles(Chem.MolFromSmiles(prod_smi_remove_atom_map), True)
+
                 all_prod_smiles.append(prod_smi_remove_atom_map)
                 phase_prod_smis.append(prod_smi_remove_atom_map)
                 
@@ -227,6 +258,7 @@ class Retrosim:
                 prod_mol = Chem.MolFromSmiles(prod_smi)
                 [atom.ClearProp('molAtomMapNumber') for atom in prod_mol.GetAtoms()]
                 prod_smi_remove_atom_map = Chem.MolToSmiles(prod_mol, True)
+                prod_smi_remove_atom_map = Chem.MolToSmiles(Chem.MolFromSmiles(prod_smi_remove_atom_map), True)
                 
                 all_prod_smiles.append(prod_smi_remove_atom_map)
                 phase_prod_smis.append(prod_smi_remove_atom_map)
@@ -257,7 +289,7 @@ class Retrosim:
                     topk: int = 200, 
                     max_prec: int = 200) -> List[str]:        
         ex = mol_from_smiles(prod_smiles)
-        rct = rdchiralReactants(prod_smiles)
+        rct = rdchiralreactant_dist(prod_smiles)
         fp = self.getfp(prod_smiles)
         
         sims = self.similarity_metric(fp, [fp_ for fp_ in self.datasub['prod_fp']])
@@ -277,9 +309,9 @@ class Retrosim:
                 rcts_ref_fp = self.getfp(self.datasub['rxn_smiles'][jx].split('>')[0])
                 self.jx_cache[jx] = (template, rcts_ref_fp)
                 
-            rxn = rdchiralReaction(template)
+            rxn = rdchiralreaction_dist(template)
             try:
-                outcomes = rdchiralRun(rxn, rct, combine_enantiomers=False)
+                outcomes = rdchiralrun_dist(rxn, rct, combine_enantiomers=False)
             except Exception as e:
                 print(e)
                 outcomes = []
@@ -314,13 +346,13 @@ class Retrosim:
         ''' iterates through all product smiles in dataset (self.all_prod_smiles) 
         and proposes precursors for them based on self.max_prec and self.topk
 
-        Sets self.all_proposed_smiles upon successful execution 
+        Sets self.all_proposed_smiles upon successful execution
         '''
         if (self.output_folder / 
             f'retrosim_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle'
             ).exists(): # file already exists
             with open(self.output_folder / 
-                f'retrosim_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle'
+                f'retrosim_proposed_smiles_{self.topk}maxtest_{self.max_prec}maxprec.pickle', 'rb'
                 ) as handle:
                 self.all_proposed_smiles = pickle.load(handle)
             self._compile_into_csv() 
@@ -335,7 +367,8 @@ class Retrosim:
                     num_workers = os.cpu_count()
                 print(f"Parallelizing over {num_workers} cores")
                 results = {} 
-                output_dicts = Parallel(n_jobs=num_workers, verbose=5)(
+                with tqdm_joblib(tqdm(desc="Generating Retrosim's Proposals", total=len(self.all_prod_smiles))) as progress_bar:
+                    output_dicts = Parallel(n_jobs=num_workers)(
                         delayed(self.propose_one_helper)(
                                 prod_smi, results, self.topk, self.max_prec
                             ) 
@@ -379,22 +412,36 @@ class Retrosim:
                 self.all_proposed_smiles = pickle.load(handle)
         
         proposed_precursors = {}
+        self.phases = ['train', 'valid', 'test']
         for phase in self.phases:
+            dup_count = 0
             phase_proposed_precursors = []
-            for rxn_smi in self.clean_50k_remove_atom_map[phase]:     
+            for rxn_smi in self.clean_50k_remove_atom_map[phase]:
                 prod_smi = rxn_smi.split('>>')[-1]
                 
                 precursors = self.all_proposed_smiles[prod_smi]
+
+                # check for duplicates - but by design, retrosim shouldn't make any duplicate proposal
+                seen = []
+                for prec in precursors: # no need to canonicalize bcos retrosim already canonicalized
+                    if prec not in seen:
+                        seen.append(prec)
+                    else:
+                        dup_count += 1
+
                 if len(precursors) < self.topk:
                     precursors.extend(['9999'] * (self.topk - len(precursors)))
         
                 phase_proposed_precursors.append(precursors)
-                
             proposed_precursors[phase] = phase_proposed_precursors
+            dup_count /= len(self.clean_50k_remove_atom_map[phase])
+            print(f'Avg # dups per product for {phase}: {dup_count}') # should be 0
         self.proposed_precursors = proposed_precursors
         print('Compiled proposed_precursors by rxn_smi!')
 
-        self._calc_accs()
+        self.ranks, self.accs = self._calc_accs()
+        # repeat accuracy calculation after removing ground truth predictions
+        _, _ = self._calc_accs()
 
         combined = {}
         for phase in self.phases:
@@ -404,7 +451,7 @@ class Retrosim:
                 self.prod_smiles[phase],
                 self.rcts_smiles[phase],
                 self.ranks[phase],
-                proposed_precursors[phase], 
+                proposed_precursors[phase],
             ):
                 result = []
                 result.extend([rxn_smi, prod_smi, rcts_smi, rank_of_true_precursor])
@@ -414,18 +461,18 @@ class Retrosim:
             combined[phase] = zipped
         print('Zipped all info for each rxn_smi into a list for dataframe creation!')
 
-        processed_dataframes = {} 
+        processed_dataframes = {}
         for phase in self.phases:
             temp_dataframe = pd.DataFrame(
                 data={
                     'zipped': combined[phase]
                 }
-            )    
+            )
             
             phase_dataframe = pd.DataFrame(
                 temp_dataframe['zipped'].to_list(),
                 index=temp_dataframe.index
-            ) 
+            )
             if phase == 'train': # true precursor has been removed from the proposals, so whatever is left are negatives
                 proposed_col_names = [f'neg_precursor_{i}' for i in range(1, self.topk+1)]
             else: # validation/testing, we don't assume true precursor is present & we also do not remove them if present
@@ -447,8 +494,8 @@ class Retrosim:
     
     def _calc_accs(self):
         '''
-        Sets: 
-            self.ranks, self.accs 
+        Returns:
+            ranks, accs
         '''
         ranks = {}
         for phase in self.phases:  
@@ -469,7 +516,8 @@ class Retrosim:
                             break
 
                     if not found:
-                        phase_ranks.append(9999)    
+                        phase_ranks.append(9999)
+                    self.proposed_precursors[phase][idx] = all_proposed_precursors
             else:
                 for idx in tqdm(range(len(self.clean_50k[phase])), desc=phase):
                     true_precursors = self.rcts_smiles[phase][idx]
@@ -484,7 +532,8 @@ class Retrosim:
                             break
 
                     if not found:
-                        phase_ranks.append(9999) 
+                        phase_ranks.append(9999)
+                    self.proposed_precursors[phase][idx] = all_proposed_precursors
             ranks[phase] = phase_ranks
             
         accs = {}
@@ -498,8 +547,7 @@ class Retrosim:
             print('\n')
             accs[phase] = phase_accs
 
-        self.ranks = ranks
-        self.accs = accs
+        return ranks, accs
 
     def analyse_proposed(self):
         if self.all_proposed_smiles is None:

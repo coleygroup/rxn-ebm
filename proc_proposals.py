@@ -114,11 +114,16 @@ def main(args):
         output_file_prefix = args.output_file_prefix
 
     if args.proposer == 'retrosim':
-        proposals_file_prefix = f"retrosim_{topk}maxtest_{max_prec}maxprec" # do not change
+        # proposals_file_prefix = f"retrosim_{topk}maxtest_{max_prec}maxprec" # do not change
+        proposals_file_prefix = f"retrosim_{topk}maxtest_{max_prec}maxprec_noGT" # do not change
     elif args.proposer == 'GLN_retrain':
-        proposals_file_prefix = f"GLN_retrain_{topk}topk_{maxk}maxk_{beam_size}beam" # do not change
+        # proposals_file_prefix = f"GLN_retrain_{topk}topk_{maxk}maxk_{beam_size}beam" # do not change
+        proposals_file_prefix = f"GLN_retrain_{topk}topk_{maxk}maxk_noGT" # do not change
     elif args.proposer == 'retroxpert':
-        proposals_file_prefix = f"retroxpert_{topk}top_{maxk}max_{beam_size}beam" # do not change
+        # proposals_file_prefix = f"retroxpert_{topk}top_{maxk}max_{beam_size}beam" # do not change
+        proposals_file_prefix = f"retroxpert_{topk}top_{maxk}max_noGT" # do not change
+    elif args.proposer == 'union':
+        proposals_file_prefix = 'GLN_retrain_35topk_125maxk_retrosim_30topk_100maxk_retroxpert_35topk_75maxk_noGT' # hardcoded for now, TODO: make into arg
 
     if args.proposer == 'GLN_retrain' or args.proposer == 'MT' or args.proposer == 'retroxpert' or args.proposer == 'retrosim': #TODO: fully implement MT 
         for phase in ['train', 'valid', 'test']:
@@ -126,7 +131,8 @@ def main(args):
             if proposals_file_prefix not in files:
                 topk_pass, maxk_pass = False, False
                 for filename in files:
-                    if args.proposer in filename and f'{beam_size}beam_train.csv' in filename and not '.csv.' in filename: 
+                    if args.proposer in filename and f'noGT_train.csv' in filename and not '.csv.' in filename:
+                    # if args.proposer in filename and f'{beam_size}beam_train.csv' in filename and not '.csv.' in filename: 
                         for kwarg in filename.split('_'): # split into ['GLN', '200topk', '200maxk', '200beam', 'valid.csv']
                             if 'topk' in kwarg:
                                 if int(kwarg.strip('topk')) >= topk: 
@@ -141,7 +147,9 @@ def main(args):
             logging.info(f"finding proposals CSV file at : {cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv'}")
             if not (cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv').exists():
                 raise RuntimeError(f'Could not find proposals CSV file by {args.proposer}! Please run gen_gln.py or gen_mt.py')
-
+    
+    elif args.proposer == 'union':
+        pass
     else:
         raise ValueError(f'Unrecognized proposer {args.proposer}')
 
@@ -288,7 +296,6 @@ def main(args):
             #         logging.info('Saved count_mol_fps and mol_smi_to_fp!')
             #     except Exception as e:
             #         logging.info(f'{e}')
-                    
     
             phase_rxn_fps = [] # sparse.csr_matrix((len(proposals_file_prefix), fp_size)) # init big output sparse matrix
             if phase == 'train':
@@ -317,7 +324,7 @@ def main(args):
                                 dummy_fp = np.zeros((1, fp_size * 3))
                             else: # diff 
                                 dummy_fp = np.zeros((1, fp_size))
-                            neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps))) 
+                            neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps)))
 
                         this_rxn_fps = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
                         return this_rxn_fps
@@ -356,7 +363,7 @@ def main(args):
                                 dummy_fp = np.zeros((1, fp_size * 3))
                             else: # diff 
                                 dummy_fp = np.zeros((1, fp_size))
-                            neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps))) 
+                            neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps)))
 
                         this_rxn_fps = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
                         # phase_rxn_fps[i] = sparse.hstack([pos_rxn_fp, *neg_rxn_fps]) # significantly slower! 
@@ -432,7 +439,7 @@ def main(args):
 
             phase_rxn_fps = sparse.vstack(phase_rxn_fps)
             sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}.npz", phase_rxn_fps)
-            del phase_rxn_fps 
+            del phase_rxn_fps
         
         else:
             raise ValueError(f'{representation} not supported!')

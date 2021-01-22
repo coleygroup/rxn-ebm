@@ -108,6 +108,8 @@ def parse_args():
     parser.add_argument("--max_seq_len", help="max sequence length for smiles representation", type=int, default=256)
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
+    parser.add_argument("--milestone_lr", help="Epochs for MultiStepLR", type=int, nargs='+')
+    parser.add_argument("--milestone_gamma", help="Gamma for MultiStepLR", type=float, default=0.4)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
     parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < --lr_floor", 
                         action="store_true", default=False)
@@ -138,6 +140,9 @@ def parse_args():
     parser.add_argument("--lr_scheduler_last_batch",
                         help="num. of batches to offset / has been computed (OneCycleLR)",
                         type=int, default=-1)
+    parser.add_argument("--lr_scheduler_last_epoch",
+                        help="last epoch, only applicable when reloading an existing checkpoint (MultiStepLR)",
+                        type=int, default=-1)
     parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") # type=bool, default=True) 
     parser.add_argument("--early_stop_criteria",
                         help="criteria for early stopping ['loss', 'top1_acc', 'top5_acc', 'top10_acc', 'top50_acc']",
@@ -160,7 +165,7 @@ def parse_args():
     # model params, TODO: add S2E args here
     # G2E/FF args
     parser.add_argument("--encoder_hidden_size", help="MPN/FFN encoder_hidden_size(s)", type=int, nargs='+', default=256)
-    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size(s)", type=int, nargs='+', default=256)
+    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size(s)", type=int, nargs='+')
     parser.add_argument("--encoder_depth", help="MPN encoder_depth", type=int, default=3)
     parser.add_argument("--encoder_dropout", help="MPN/FFN encoder dropout", type=float, default=0.05)
     parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="PReLU")

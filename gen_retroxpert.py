@@ -61,12 +61,13 @@ def parse_args():
 
 def process_train_helper(row, phase_topk):
     dup_count = 0
-    p_smi = row["product"]
+    p_smi = Chem.MolToSmiles(Chem.MolFromSmiles(row["product"]), True)
     r_smi_true_split = row["target"].split('.')
     r_smi_true_split.sort()
-    r_smi_true = Chem.MolToSmiles(Chem.MolFromSmiles(row["target"]), True)
-    # r_smi_true = '.'.join(r_smi_true_split)
-    this_row = [f"{r_smi_true}>>{p_smi}", p_smi, r_smi_true] # orig_rxn_smi
+    r_smi_true_cano = Chem.MolToSmiles(Chem.MolFromSmiles(row["target"]), True)
+    r_smi_true_cano2 = Chem.MolToSmiles(Chem.MolFromSmiles(r_smi_true_cano), True)
+    r_smi_true = row['target']
+    this_row = [f"{r_smi_true_cano2}>>{p_smi}", p_smi, r_smi_true_cano2] # orig_rxn_smi
     predictions = []
     for j in range(1, phase_topk + 1): # go through columns for proposed precursors
         cand = row[f"canonical_prediction_{j}"]
@@ -75,7 +76,7 @@ def process_train_helper(row, phase_topk):
         else:
             try:
                 cand_ = Chem.MolFromSmiles(cand)
-                if cand_ is not None and cand_.GetNumAtoms() > cand.count('.') + 1: 
+                if cand_ is not None and cand_.GetNumAtoms() > cand.count('.') + 1:
                     # https://github.com/rdkit/rdkit/issues/2289 --> explicit valence for N exceeds 3 etc.
                     predictions.append(Chem.MolToSmiles(cand_, True))
             except:
@@ -93,8 +94,30 @@ def process_train_helper(row, phase_topk):
     for i, pred in enumerate(seen):
         pred_split = pred.split('.')
         pred_split.sort()
-        if pred_split == r_smi_true_split or pred == r_smi_true:
+        if pred_split == r_smi_true_split or pred in [r_smi_true_cano, r_smi_true_cano2, r_smi_true]:
             true_rank = i # rank is 0-indexed
+            seen.pop(i) # remove ground truth reactant for train
+            break
+    # repeat again in case there were multiple GT predictions that differently satisfy one of the 3 conditions
+    for j, pred in enumerate(seen):
+        pred_split = pred.split('.')
+        pred_split.sort()
+        if pred_split == r_smi_true_split or pred in [r_smi_true_cano, r_smi_true_cano2, r_smi_true]:
+            seen.pop(j) # remove ground truth reactant for train!!!
+            break
+    # keep filtering
+    for j, pred in enumerate(seen):
+        pred_split = pred.split('.')
+        pred_split.sort()
+        if pred_split == r_smi_true_split or pred in [r_smi_true_cano, r_smi_true_cano2, r_smi_true]:
+            seen.pop(j) # remove ground truth reactant for train!!!
+            break
+    # keep filtering
+    for j, pred in enumerate(seen):
+        pred_split = pred.split('.')
+        pred_split.sort()
+        if pred_split == r_smi_true_split or pred in [r_smi_true_cano, r_smi_true_cano2, r_smi_true]:
+            seen.pop(j) # remove ground truth reactant for train!!!
             break
 
     this_row.append(true_rank)
@@ -108,12 +131,13 @@ def process_train_helper(row, phase_topk):
 
 def process_test_helper(row, phase_topk):
     dup_count = 0
-    p_smi = row["product"]
+    p_smi = Chem.MolToSmiles(Chem.MolFromSmiles(row["product"]), True)
     r_smi_true_split = row["target"].split('.')
     r_smi_true_split.sort()
-    r_smi_true = Chem.MolToSmiles(Chem.MolFromSmiles(row["target"]), True)
-    # r_smi_true = '.'.join(r_smi_true_split)
-    this_row = [f"{r_smi_true}>>{p_smi}", p_smi, r_smi_true] # orig_rxn_smi
+    r_smi_true_cano = Chem.MolToSmiles(Chem.MolFromSmiles(row["target"]), True)
+    r_smi_true_cano2 = Chem.MolToSmiles(Chem.MolFromSmiles(r_smi_true_cano), True)
+    r_smi_true = row['target']
+    this_row = [f"{r_smi_true_cano}>>{p_smi}", p_smi, r_smi_true_cano] # orig_rxn_smi
     true_rank, found = 9999, False
     predictions = []
     for j in range(1, phase_topk + 1): # go through columns for proposed precursors
@@ -123,13 +147,12 @@ def process_test_helper(row, phase_topk):
         else:
             try:
                 cand_ = Chem.MolFromSmiles(cand)
-                if cand_ is not None and cand_.GetNumAtoms() > cand.count('.') + 1: 
+                if cand_ is not None and cand_.GetNumAtoms() > cand.count('.') + 1:
                     # https://github.com/rdkit/rdkit/issues/2289
                     cand_split = cand.split('.')
                     cand_split.sort()
-                    if cand_split == r_smi_true_split:
+                    if cand_split == r_smi_true_split or cand in [r_smi_true_cano, r_smi_true_cano2, r_smi_true]:
                         if not found: # cannot set true_rank here bcos later when we remove duplicates it can change if those dups are before the correct prediction (i.e. true_rank will decrease)
-                            # predictions.append('.'.join(cand_split)) # add to list of predictions
                             predictions.append(Chem.MolToSmiles(cand_, True))
                             found = True # to avoid searching for true pred once found
                         else:
@@ -151,7 +174,7 @@ def process_test_helper(row, phase_topk):
         for i, pred in enumerate(seen):
             pred_split = pred.split('.')
             pred_split.sort()
-            if pred_split == r_smi_true_split or pred == r_smi_true:
+            if pred_split == r_smi_true_split or pred in [r_smi_true_cano, r_smi_true_cano2, r_smi_true]:
                 true_rank = i # rank is 0-indexed
                 break
     this_row.append(true_rank)

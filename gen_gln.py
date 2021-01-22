@@ -168,8 +168,8 @@ def compile_into_csv(
             
             # remove duplicate predictions
             seen = []
-            for prec in precursors:
-                prec = Chem.MolToSmiles(Chem.MolFromSmiles(prec), True) # canonicalize
+            for prec in precursors: # canonicalize all predictions
+                prec = Chem.MolToSmiles(Chem.MolFromSmiles(prec), True)
                 if prec not in seen:
                     seen.append(prec)
                 else:
@@ -178,7 +178,7 @@ def compile_into_csv(
             if len(seen) < phase_topk:
                 seen.extend(['9999'] * (phase_topk - len(seen)))
             else:
-                seen = seen[ : phase_topk]
+                seen = seen[:phase_topk]
             proposed_precs_phase.append(seen)
             proposed_precs_phase_withdups.append(precursors)
 
@@ -187,19 +187,36 @@ def compile_into_csv(
             [atom.ClearProp('molAtomMapNumber') for atom in rcts_mol.GetAtoms()]
             rcts_smi_nomap = Chem.MolToSmiles(rcts_mol, True)
             # Sometimes stereochem takes another canonicalization...
-            rcts_smi_nomap = Chem.MolToSmiles(Chem.MolFromSmiles(rcts_smi_nomap), True) 
+            rcts_smi_nomap = Chem.MolToSmiles(Chem.MolFromSmiles(rcts_smi_nomap), True)
             rcts_smiles_phase.append(rcts_smi_nomap)
         dup_count /= len(clean_rxnsmi_phase)
         logging.info(f'Avg # dups per product: {dup_count}')
-        # logging.info(f'len(precursors): {len(precursors)}')
 
-        ranks_dict = calc_accs( 
+        logging.info('\nCalculating ranks before removing duplicates')
+        _ = calc_accs( 
             [phase],
             clean_rxnsmi_phase,
             rcts_smiles_phase,
             proposed_precs_phase_withdups,
-        )
+        ) # just to calculate accuracy
+
+        logging.info('\nCalculating ranks after removing duplicates')
+        ranks_dict = calc_accs(
+                    [phase],
+                    clean_rxnsmi_phase,
+                    rcts_smiles_phase,
+                    proposed_precs_phase
+                )
         ranks_phase = ranks_dict[phase]
+        # if training data: remove ground truth prediction from proposals
+        if phase == 'train':
+            logging.info('\n(For training only) Double checking accuracy after removing ground truth predictions')
+            _ = calc_accs(
+                    [phase],
+                    clean_rxnsmi_phase,
+                    rcts_smiles_phase,
+                    proposed_precs_phase
+                )
 
         analyse_proposed(
             prod_smiles_phase,
@@ -214,7 +231,7 @@ def compile_into_csv(
             prod_smiles_phase,
             rcts_smiles_phase,
             ranks_phase,
-            proposed_precs_phase, 
+            proposed_precs_phase,
         ):
             result = []
             result.extend([rxn_smi, prod_smi, rcts_smi, rank_of_true_precursor])
@@ -228,16 +245,12 @@ def compile_into_csv(
             data={
                 'zipped': combined[phase]
             }
-        )    
-        # logging.info('temp_dataframe shape')
-        # logging.info(f'{temp_dataframe.shape}')
+        )
         
         phase_dataframe = pd.DataFrame(
             temp_dataframe['zipped'].to_list(),
             index=temp_dataframe.index
-        ) 
-        # logging.info('phase_dataframe shape')
-        # logging.info(f'{phase_dataframe.shape}')
+        )
         
         if phase == 'train': # true precursor has been removed from the proposals, so whatever is left are negatives
             proposed_col_names = [f'neg_precursor_{i}' for i in range(1, phase_topk + 1)]

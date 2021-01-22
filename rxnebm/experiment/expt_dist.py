@@ -235,6 +235,15 @@ class Experiment:
         if self.args.new_lr is not None:
             for g in self.optimizer.param_groups:
                 g['lr'] = self.args.new_lr
+        if self.args.milestone_lr is not None:
+            self.milestone = model_utils.get_lr_scheduler('MultiStepLR')(
+                                        optimizer=self.optimizer,
+                                        milestones=self.args.milestone_lr,
+                                        gamma=self.args.milestone_gamma,
+                                        last_epoch=self.args.lr_scheduler_last_epoch,
+                                        )
+        else:
+            self.milestone = None
         if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
             if self.args.lr_scheduler_criteria == 'acc':
@@ -290,7 +299,16 @@ class Experiment:
 
     def _init_optimizer_and_stats(self): 
         logging.info("Initialising optimizer & stats...")
-        self.optimizer = model_utils.get_optimizer(self.optimizer_name)(self.model.parameters(), lr=self.learning_rate) 
+        self.optimizer = model_utils.get_optimizer(self.optimizer_name)(self.model.parameters(), lr=self.learning_rate)
+        if self.args.milestone_lr is not None:
+            self.milestone = model_utils.get_lr_scheduler('MultiStepLR')(
+                                        optimizer=self.optimizer,
+                                        milestones=self.args.milestone_lr,
+                                        gamma=self.args.milestone_gamma,
+                                        last_epoch=-1, # fresh experiment, so always start from the default -1
+                                        )
+        else:
+            self.milestone = None
         if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
             if self.args.lr_scheduler_criteria == 'acc':
@@ -686,7 +704,7 @@ class Experiment:
                 dist.all_reduce(train_batch_size, dist.ReduceOp.SUM)
                 train_batch_size = train_batch_size.item()
                 epoch_train_size += train_batch_size
-                
+
                 if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
                     self.lr_scheduler.step(epoch + i / self.train_size - self.args.lr_scheduler_epoch_offset)
                 elif self.lr_scheduler_name == 'OneCycleLR':
@@ -805,15 +823,15 @@ class Experiment:
                                                 rxn_orig_prec = rxn_cand_precs[0]
                                                 rxn_orig_prec2 = rxn_cand_precs[1]
                                                 rxn_orig_prec3 = rxn_cand_precs[2]
-                                                logging.info(f'\ntrue product:                          \t\t\t\t\t\t{rxn_true_prod}')
-                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t\t{rxn_pred_prec}')
+                                                logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
                                                 if rxn_true_energy == 'NaN':
                                                     logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
                                                 else:
-                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t\t{rxn_true_prec}')
-                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t\t{rxn_orig_prec}')
-                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t\t{rxn_orig_prec2}')
-                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t\t{rxn_orig_prec3}\n')
+                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
                                                 break
                                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -899,6 +917,9 @@ class Experiment:
                     self.lr_scheduler.step(self.val_topk_accs[1][-1])
                 logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
 
+            if self.milestone is not None:
+                self.milestone.step(epoch)
+            
             if 3 in self.train_topk_accs:
                 epoch_top3_train_acc = self.train_topk_accs[3][-1]
                 epoch_top3_val_acc = self.val_topk_accs[3][-1]
@@ -1042,15 +1063,15 @@ class Experiment:
                                             rxn_orig_prec = rxn_cand_precs[0]
                                             rxn_orig_prec2 = rxn_cand_precs[1]
                                             rxn_orig_prec3 = rxn_cand_precs[2]
-                                            logging.info(f'\ntrue product:                          \t\t\t\t\t\t{rxn_true_prod}')
-                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t\t{rxn_pred_prec}')
+                                            logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
                                             if rxn_true_energy == 'NaN':
                                                 logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
                                             else:
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t\t{rxn_true_prec}')
-                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t\t{rxn_orig_prec}')
-                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t\t{rxn_orig_prec2}')
-                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t\t{rxn_orig_prec3}\n')
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
                                             break
                                 except Exception as e:
                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)

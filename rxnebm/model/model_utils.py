@@ -99,6 +99,8 @@ def get_lr_scheduler(scheduler: str) -> nn.Module:
         return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
     elif scheduler == 'OneCycleLR':
         return torch.optim.lr_scheduler.OneCycleLR
+    elif scheduler == 'MultiStepLR':
+        return torch.optim.lr_scheduler.MultiStepLR
     else:
         raise ValueError(f'Scheduler "{scheduler}" not supported.')
 
