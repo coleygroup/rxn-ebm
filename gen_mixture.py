@@ -88,10 +88,10 @@ def main(args):
                 this_rxn_predicted = []
                 for proposer in proposers:
                     proposer_true_rank = proposals_phase_dict[prod_smi_nomap][proposer]
-                    if proposer_true_rank != 9999:
-                        this_rxn_predicted.append(1) # yes, was predicted
+                    if proposer_true_rank == 0:
+                        this_rxn_predicted.append(1) # yes, was predicted as top-1
                     else:
-                        this_rxn_predicted.append(0) # no, was not predicted
+                        this_rxn_predicted.append(0) # no, was not predicted as top-1
 
                 return prod_fp, this_rxn_predicted, prod_smi_nomap
 
@@ -124,10 +124,10 @@ def main(args):
                 this_rxn_predicted = []
                 for proposer in args.proposers:
                     proposer_true_rank = proposals_phase_dict[prod_smi_nomap][proposer]
-                    if proposer_true_rank != 9999:
-                        this_rxn_predicted.append(1) # yes, was predicted
+                    if proposer_true_rank == 0:
+                        this_rxn_predicted.append(1) # yes, was predicted as top-1
                     else:
-                        this_rxn_predicted.append(0) # no, was not predicted
+                        this_rxn_predicted.append(0) # no, was not predicted as top-1
                 all_rxn_predicted.append(this_rxn_predicted)
 
         # these are the labels for supervision, 3 separate binary labels

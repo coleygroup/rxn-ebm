@@ -16,7 +16,8 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm 
+from tqdm import tqdm
+from sklearn.metrics import roc_auc_score
 
 from rxnebm.data import dataset, dataset_utils
 from rxnebm.experiment import expt_utils
@@ -29,6 +30,11 @@ try:
                        bot_token=os.environ['BOT_TOKEN'])
 except Exception as e:
     pass
+
+def list_factory(): 
+    # equivalent to defaultdict(lambda: list)
+    # bcos python can't pickle lambda functions
+    return []
 
 class Experiment:
     def __init__(
@@ -87,10 +93,7 @@ class Experiment:
         self.expt_name = args.expt_name
         self.augmentations = None
         self.representation = args.representation
-        # if self.representation != 'fingerprint' and 'bit' in augmentations:
-        #     raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
         logging.info(f"\nInitialising experiment: {self.expt_name}")
-        # logging.info(f"Augmentations: {self.augmentations}")
 
         if gpu is not None: # doing DistributedDataParallel training
             rank = args.nr * args.gpus + gpu
@@ -145,10 +148,13 @@ class Experiment:
 
         self.train_losses = []
         self.val_losses = []
-        self.train_accs = []
-        self.val_accs = []
-        self.test_accs = []
-        
+        self.train_accs = defaultdict(list_factory)
+        self.train_accs_mean = []
+        self.train_aucs_mean = []
+        self.val_accs = defaultdict(list_factory)
+        self.val_accs_mean = []
+        self.val_aucs_mean = []
+
         self.preds = {}
         self.labels = {}
 
@@ -380,8 +386,10 @@ class Experiment:
                 if self.early_stop_patience <= self.wait:
                     logging.info(
                         f"\nEarly stopped at the end of epoch: {current_epoch}, \
-                    \ntrain loss: {self.train_losses[-1]:.4f}, train acc: {self.train_accs[-1]:.4f}, \
-                    \nval loss: {self.val_losses[-1]:.4f}, val acc: {self.val_accs[-1]:.4f} \
+                    \ntrain loss: {self.train_losses[-1]:.4f}, train acc (mean): {self.train_accs_mean[-1]:.4f}, \
+                    \ntrain auc (mean): {self.train_aucs_mean[-1]:.4f}, \
+                    \nval loss: {self.val_losses[-1]: .4f}, val acc (mean): {self.val_accs_mean[-1]:.4f}, \
+                    \nval auc (mean): {self.val_aucs_mean[-1]:.4f} \
                     ")
                     self.stats["early_stop_epoch"] = current_epoch
                     self.to_break = 1  # will break loop
@@ -394,11 +402,13 @@ class Experiment:
                 self.min_val_loss = min(self.min_val_loss, self.val_losses[-1])
 
         elif self.early_stop_criteria == 'acc':
-            if self.max_val_acc - self.val_accs[-1] > self.early_stop_min_delta:
+            if self.max_val_acc - self.val_accs_mean[-1] > self.early_stop_min_delta:
                 if self.early_stop_patience <= self.wait:
                     message = f"\nEarly stopped at the end of epoch: {current_epoch}, \
-                    \ntrain loss: {self.train_losses[-1]:.4f}, train acc: {self.train_accs[-1]:.4f}, \
-                    \nval loss: {self.val_losses[-1]:.4f}, val acc: {self.val_accs[-1]:.4f} \
+                    \ntrain loss: {self.train_losses[-1]:.4f}, train acc (mean): {self.train_accs_mean[-1]:.4f}, \
+                    \ntrain auc (mean): {self.train_aucs_mean[-1]:.4f}, \
+                    \nval loss: {self.val_losses[-1]: .4f}, val acc (mean): {self.val_accs_mean[-1]:.4f}, \
+                    \nval auc (mean): {self.val_aucs_mean[-1]:.4f} \
                     \n"
                     logging.info(message)
                     if self.rank == 0 or self.rank is None:
@@ -417,7 +427,7 @@ class Experiment:
                         \n')
             else:
                 self.wait = 0
-                self.max_val_acc = max(self.max_val_acc, self.val_accs[-1])
+                self.max_val_acc = max(self.max_val_acc, self.val_accs_mean[-1])
 
     def _update_stats(self):
         self.stats["train_time"] = (
@@ -426,10 +436,14 @@ class Experiment:
         self.start = time.time()
         # a list with one value for each epoch
         self.stats["train_losses"] = self.train_losses 
-        self.stats["train_accs"] = self.train_accs 
+        self.stats["train_accs"] = self.train_accs
+        self.stats["train_accs_mean"] = self.train_accs_mean
+        self.stats["train_aucs_mean"] = self.train_aucs_mean
 
-        self.stats["val_losses"] = self.val_losses 
-        self.stats["val_accs"] = self.val_accs 
+        self.stats["val_losses"] = self.val_losses
+        self.stats["val_accs"] = self.val_accs
+        self.stats["val_accs_mean"] = self.val_accs_mean
+        self.stats["val_aucs_mean"] = self.val_aucs_mean
 
         self.stats["min_val_loss"] = self.min_val_loss
         self.stats["max_val_acc"] = self.max_val_acc
@@ -460,8 +474,8 @@ class Experiment:
         Does backprop if training 
         """
         self.model.zero_grad()
-        preds = self.model(batch)                               # N x K x 3
-        loss = self.criterion(preds, labels)
+        output = self.model(batch)              # N x 3
+        loss = self.criterion(output, labels)
         if backprop:            
             self.optimizer.zero_grad()
             loss.backward()
@@ -470,15 +484,15 @@ class Experiment:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.args.grad_clip)
 
             self.optimizer.step()
-        return loss.item(), preds.detach()
+        return loss.item(), output.detach()
  
     def train(self):
         self.start = time.time()
         self.to_break = 0
         for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
             self.model.train()
-            train_loss, train_correct_preds = 0, 0
-            epoch_train_size = 0
+            train_loss, train_correct_preds, train_aucs = 0, defaultdict(int), defaultdict(int)
+            epoch_train_size, epoch_train_size_auc = 0, 0
             train_loader = tqdm(self.train_loader, desc='training...')
             for i, batch in enumerate(train_loader):
                 batch_data = batch[0].to(self.device)
@@ -490,29 +504,53 @@ class Experiment:
                 train_loss += batch_loss
                 train_batch_size = batch_preds_logits.shape[0]
                 epoch_train_size += train_batch_size
+                epoch_train_size_auc += train_batch_size
 
                 if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
                     self.lr_scheduler.step(epoch + i / self.train_size - self.args.lr_scheduler_epoch_offset)
                 elif self.lr_scheduler_name == 'OneCycleLR':
                     self.lr_scheduler.step()
                 
-                batch_preds = torch.sigmoid(batch_preds_logits)
-                batch_correct_preds = torch.sum(torch.eq(batch_preds, batch_labels)).item() / 3 # bcos we have 3 models TODO: split into 3
-                train_correct_preds += batch_correct_preds
-                running_acc = train_correct_preds / epoch_train_size
+                batch_pred_probs = torch.sigmoid(batch_preds_logits)
+                for j in range(batch_labels.shape[-1]): # calc statistics for each model (default = 3)
+                    batch_correct_preds = torch.sum(
+                                    torch.eq(
+                                (batch_pred_probs[:, j] > 0.5).float(), batch_labels[:, j]
+                            )
+                        ).item()
+                    train_correct_preds[j] += batch_correct_preds
+                    try:
+                        train_aucs[j] += roc_auc_score(
+                                            batch_labels[:, j].flatten().tolist(), 
+                                            batch_pred_probs[:, j].flatten().tolist()
+                                        ) * train_batch_size
+                    except:
+                        epoch_train_size_auc -= train_batch_size
+                    if j == 0:
+                        run_acc_GLN = train_correct_preds[j] / epoch_train_size
+                    elif j == 1:
+                        run_acc_retrosim = train_correct_preds[j] / epoch_train_size
+                    elif j == 2:
+                        run_acc_retroxpert = train_correct_preds[j] / epoch_train_size
 
-                train_loader.set_description(f"training...loss={train_loss/epoch_train_size:.4f}, acc={running_acc:.4f}")
+                train_loader.set_description(f"training...loss={train_loss/epoch_train_size:.4f}, acc_GLN={run_acc_GLN:.4f}, acc_sim={run_acc_retrosim:.4f}, acc_Xpert={run_acc_retroxpert:.4f}")
                 train_loader.refresh()
             
-            self.train_accs.append(train_correct_preds / epoch_train_size)
+            train_acc_mean, train_auc_mean = 0, 0
+            for j in range(batch_labels.shape[-1]): 
+                self.train_accs[j].append(train_correct_preds[j] / epoch_train_size)
+                train_acc_mean += self.train_accs[j][-1] / batch_labels.shape[-1]
+                train_auc_mean += (train_aucs[j] / epoch_train_size_auc) / batch_labels.shape[-1]
+            self.train_accs_mean.append(train_acc_mean)
+            self.train_aucs_mean.append(train_auc_mean)
             self.train_losses.append(train_loss / epoch_train_size)
 
             # validation
             self.model.eval()
             with torch.no_grad(): 
-                val_loss, val_correct_preds = 0, 0
+                val_loss, val_correct_preds, val_aucs = 0, defaultdict(int), defaultdict(int)
                 val_loader = tqdm(self.val_loader, desc='validating...')
-                epoch_val_size = 0
+                epoch_val_size, epoch_val_size_auc = 0, 0
                 for i, batch in enumerate(val_loader):
                     batch_data = batch[0].to(self.device)
                     batch_labels = batch[1].to(self.device)
@@ -521,11 +559,25 @@ class Experiment:
                     )
                     val_batch_size = batch_preds_logits.shape[0]
                     epoch_val_size += val_batch_size
+                    epoch_val_size_auc += val_batch_size
 
-                    batch_preds = torch.sigmoid(batch_preds_logits)
-                    batch_correct_preds = torch.sum(torch.eq(batch_preds, batch_labels)).item() / 3 # bcos we have 3 models #TODO: split into 3
-                    val_correct_preds += batch_correct_preds
-                    running_acc = val_correct_preds / epoch_val_size
+                    batch_pred_probs = torch.sigmoid(batch_preds_logits)
+                    for j in range(batch_labels.shape[-1]): # calc statistics for each model (default = 3)
+                        batch_correct_preds = torch.sum(torch.eq((batch_pred_probs[:, j] > 0.5).float(), batch_labels[:, j])).item()
+                        val_correct_preds[j] += batch_correct_preds
+                        try:
+                            val_aucs[j] += roc_auc_score(
+                                            batch_labels[:, j].flatten().tolist(), 
+                                            batch_pred_probs[:, j].flatten().tolist()
+                                        ) * val_batch_size
+                        except:
+                            epoch_val_size_auc -= val_batch_size # dont count current val_batch_size
+                        if j == 0:
+                            run_acc_GLN = val_correct_preds[j] / epoch_val_size
+                        elif j == 1:
+                            run_acc_retrosim = val_correct_preds[j] / epoch_val_size
+                        elif j == 2:
+                            run_acc_retroxpert = val_correct_preds[j] / epoch_val_size
                     
                     if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                         batch_idx = batch[2] # List
@@ -535,12 +587,12 @@ class Experiment:
                                     prod_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
                                     prod_smi = self.proposals_data['valid'][batch_idx[prod_idx], 0]
                                     prod_preds_logits = batch_preds_logits[prod_idx]
-                                    prod_preds = batch_preds[prod_idx]
+                                    prod_preds = batch_pred_probs[prod_idx]
                                     prod_labels = batch_labels[prod_idx]
                                     logging.info(f'\nproduct SMILES:\t\t{prod_smi}')
-                                    logging.info(f'GLN:\t\t\tlogits = {prod_preds_logits[0].item():+.4f}, hard = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
-                                    logging.info(f'Retrosim:\t\tlogits = {prod_preds_logits[1].item():+.4f}, hard = {prod_preds[1].item():.0f}, label = {prod_labels[1]:.0f}')
-                                    logging.info(f'RetroXpert:\t\tlogits = {prod_preds_logits[2].item():+.4f}, hard = {prod_preds[2].item():.0f}, label = {prod_labels[2]:.0f}')
+                                    logging.info(f'GLN:\t\t\tlogit = {prod_preds_logits[0].item():+.4f}, prob = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
+                                    logging.info(f'Retrosim:\t\tlogit = {prod_preds_logits[1].item():+.4f}, prob = {prod_preds[1].item():.0f}, label = {prod_labels[1]:.0f}')
+                                    logging.info(f'RetroXpert:\t\tlogit = {prod_preds_logits[2].item():+.4f}, prob = {prod_preds[2].item():.0f}, label = {prod_labels[2]:.0f}')
                                     break
                         except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                             tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -548,10 +600,16 @@ class Experiment:
                             logging.info('\nIndex out of range (last minibatch)')
 
                     val_loss += batch_loss
-                    val_loader.set_description(f"validating...loss={val_loss/epoch_val_size:.4f}, acc={running_acc:.4f}")
+                    val_loader.set_description(f"validating...loss={val_loss/epoch_val_size:.4f}, acc_GLN={run_acc_GLN:.4f}, acc_sim={run_acc_retrosim:.4f}, acc_Xpert={run_acc_retroxpert:.4f}")
                     val_loader.refresh()
                 
-                self.val_accs.append(val_correct_preds / epoch_val_size)
+                val_acc_mean, val_auc_mean = 0, 0
+                for j in range(batch_labels.shape[-1]): 
+                    self.val_accs[j].append(val_correct_preds[j] / epoch_val_size)
+                    val_acc_mean += self.val_accs[j][-1] / batch_labels.shape[-1]
+                    val_auc_mean += (val_aucs[j] / epoch_val_size_auc) / batch_labels.shape[-1]
+                self.val_accs_mean.append(val_acc_mean)
+                self.val_aucs_mean.append(val_auc_mean)
                 self.val_losses.append(val_loss / epoch_val_size)
 
             # track best_epoch to facilitate loading of best checkpoint
@@ -561,9 +619,9 @@ class Experiment:
                     self.min_val_loss = self.val_losses[-1]
                     is_best = True
             elif self.early_stop_criteria == 'acc':
-                if self.val_accs[-1] > self.max_val_acc:
+                if self.val_accs_mean[-1] > self.max_val_acc:
                     self.best_epoch = epoch
-                    self.max_val_acc = self.val_accs[-1]
+                    self.max_val_acc = self.val_accs_mean[-1]
                     is_best = True
             
             if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
@@ -582,13 +640,15 @@ class Experiment:
             if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one
                 if self.args.lr_scheduler_criteria == 'loss':
                     self.lr_scheduler.step(self.val_losses[-1])
-                elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
-                    self.lr_scheduler.step(self.val_accs[-1])
+                elif self.args.lr_scheduler_criteria == 'acc': # monitor mean acc for lr_scheduler 
+                    self.lr_scheduler.step(self.val_accs_mean[-1])
                 logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
 
             message = f"\nEnd of epoch: {epoch}, \
-                \ntrain loss: {self.train_losses[-1]:.4f}, train acc: {self.train_accs[-1]:.4f}, \
-                \nval loss: {self.val_losses[-1]: .4f}, val acc: {self.val_accs[-1]:.4f}, \
+                \ntrain loss: {self.train_losses[-1]:.4f}, train acc (mean): {self.train_accs_mean[-1]:.4f}, \
+                \ntrain auc (mean): {self.train_aucs_mean[-1]:.4f}, \
+                \nval loss: {self.val_losses[-1]: .4f}, val acc (mean): {self.val_accs_mean[-1]:.4f}, \
+                \nval auc (mean): {self.val_aucs_mean[-1]:.4f} \
                 \n"
             logging.info(message)
             # try:
@@ -606,10 +666,10 @@ class Experiment:
 
     def test(self, saved_stats: Optional[dict] = None):
         self.model.eval()
-        test_loss, test_correct_preds = 0, 0
+        test_loss, test_correct_preds, test_aucs = 0, defaultdict(int), defaultdict(int)
         test_loader = tqdm(self.test_loader, desc='testing...')
         with torch.no_grad():
-            epoch_test_size = 0
+            epoch_test_size, epoch_test_size_auc = 0, 0
             for i, batch in enumerate(test_loader):
                 batch_data = batch[0].to(self.device)
                 batch_labels = batch[1].to(self.device)
@@ -618,11 +678,25 @@ class Experiment:
                 )
                 test_batch_size = batch_preds_logits.shape[0]
                 epoch_test_size += test_batch_size
+                epoch_test_size_auc += test_batch_size
 
-                batch_preds = torch.sigmoid(batch_preds_logits)
-                batch_correct_preds = torch.sum(torch.eq(batch_preds, batch_labels)).item() / 3 # bcos we have 3 models TODO: split into 3
-                test_correct_preds += batch_correct_preds
-                running_acc = test_correct_preds / epoch_test_size
+                batch_pred_probs = torch.sigmoid(batch_preds_logits)
+                for j in range(batch_labels.shape[-1]): # calc statistics for each model (default = 3)
+                    batch_correct_preds = torch.sum(torch.eq((batch_pred_probs[:, j] > 0.5).float(), batch_labels[:, j])).item()
+                    test_correct_preds[j] += batch_correct_preds
+                    try:
+                        test_aucs[j] += roc_auc_score(
+                                            batch_labels[:, j].flatten().tolist(), 
+                                            batch_pred_probs[:, j].flatten().tolist()
+                                        ) * test_batch_size
+                    except:
+                        epoch_test_size_auc -= test_batch_size
+                    if j == 0:
+                        run_acc_GLN = test_correct_preds[j] / epoch_test_size
+                    elif j == 1:
+                        run_acc_retrosim = test_correct_preds[j] / epoch_test_size
+                    elif j == 2:
+                        run_acc_retroxpert = test_correct_preds[j] / epoch_test_size                
 
                 if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                     batch_idx = batch[2] # List
@@ -632,12 +706,12 @@ class Experiment:
                                 prod_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
                                 prod_smi = self.proposals_data['test'][batch_idx[prod_idx], 0]
                                 prod_preds_logits = batch_preds_logits[prod_idx]
-                                prod_preds = batch_preds[prod_idx]
+                                prod_pred_probs = batch_pred_probs[prod_idx]
                                 prod_labels = batch_labels[prod_idx]
                                 logging.info(f'\nproduct SMILES:\t\t{prod_smi}')
-                                logging.info(f'GLN:\t\t\tlogits = {prod_preds_logits[0].item():+.4f}, hard = {prod_preds[0].item():.0f}, label = {prod_labels[0]:.0f}')
-                                logging.info(f'Retrosim:\t\tlogits = {prod_preds_logits[1].item():+.4f}, hard = {prod_preds[1].item():.0f}, label = {prod_labels[1]:.0f}')
-                                logging.info(f'RetroXpert:\t\tlogits = {prod_preds_logits[2].item():+.4f}, hard = {prod_preds[2].item():.0f}, label = {prod_labels[2]:.0f}')
+                                logging.info(f'GLN:\t\t\tlogit = {prod_preds_logits[0].item():+.4f}, prob = {prod_pred_probs[0].item():.0f}, label = {prod_labels[0]:.0f}')
+                                logging.info(f'Retrosim:\t\tlogit = {prod_preds_logits[1].item():+.4f}, prob = {prod_pred_probs[1].item():.0f}, label = {prod_labels[1]:.0f}')
+                                logging.info(f'RetroXpert:\t\tlogit = {prod_preds_logits[2].item():+.4f}, prob = {prod_pred_probs[2].item():.0f}, label = {prod_labels[2]:.0f}')
                                 break
                     except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
                         tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
@@ -645,7 +719,7 @@ class Experiment:
                         logging.info('\nIndex out of range (last minibatch)')
 
                 test_loss += batch_loss
-                test_loader.set_description(f"validating...loss={test_loss/epoch_test_size:.4f}, acc={running_acc:.4f}")
+                test_loader.set_description(f"validating...loss={test_loss/epoch_test_size:.4f} acc_GLN={run_acc_GLN:.4f}, acc_sim={run_acc_retrosim:.4f}, acc_Xpert={run_acc_retroxpert:.4f}")
                 test_loader.refresh()
                 
         if saved_stats:
@@ -655,12 +729,35 @@ class Experiment:
                 "self.stats only has 2 keys or less. If loading checkpoint, you need to provide load_stats!"
             )
 
-        self.stats["test_loss"] = test_loss / epoch_test_size # self.test_size 
+        self.stats["test_loss"] = test_loss / epoch_test_size
         logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
-        self.stats["test_acc"] = running_acc
+
+        mean_test_acc, mean_test_auc = 0, 0
+        for j in range(batch_labels.shape[-1]):
+            if j == 0:
+                self.stats["test_acc_GLN"] = test_correct_preds[j] / epoch_test_size
+                self.stats["test_auc_GLN"] = test_aucs[j] / epoch_test_size_auc
+            elif j == 1:
+                self.stats["test_acc_retrosim"] = test_correct_preds[j] / epoch_test_size
+                self.stats["test_auc_retrosim"] = test_aucs[j] / epoch_test_size_auc
+            elif j == 2:
+                self.stats["test_acc_retroxpert"] = test_correct_preds[j] / epoch_test_size
+                self.stats["test_auc_retroxpert"] = test_aucs[j] / epoch_test_size_auc
+            mean_test_acc += test_correct_preds[j] / batch_labels.shape[-1]
+            mean_test_auc += (test_aucs[j] / epoch_test_size_auc) / batch_labels.shape[-1]
+        self.stats["test_acc_mean"] = mean_test_acc
+        self.stats["test_auc_mean"] = mean_test_auc
+
         message = f"{self.expt_name}\n"
-        this_topk_message = f'Test acc: {100 * self.stats["test_acc"]:.3f}%, \
-                \ntest loss: {self.stats["test_loss"]:.4f} \
+        this_topk_message = f'Test acc (mean): {100 * self.stats["test_acc_mean"]:.3f}%, \
+                \nTest acc (GLN): {100 * self.stats["test_acc_GLN"]:.3f}%, \
+                \nTest acc (RetroSim): {100 * self.stats["test_acc_retrosim"]:.3f}%, \
+                \nTest acc (RetroXpert): {100 * self.stats["test_acc_retroxpert"]:.3f}%, \
+                \nTest auc (mean): {self.stats["test_auc_mean"]:.3f}, \
+                \nTest auc (GLN): {self.stats["test_auc_GLN"]:.3f}, \
+                \nTest auc (RetroSim): {self.stats["test_auc_retrosim"]:.3f}, \
+                \nTest auc (RetroXpert): {self.stats["test_auc_retroxpert"]:.3f}, \
+                \nTest loss: {self.stats["test_loss"]:.4f} \
                 \n'
         logging.info(this_topk_message)
         message += this_topk_message
@@ -704,7 +801,7 @@ class Experiment:
             preds_combined, labels_combined = [], []
             epoch_data_size = 0
             total_loss = 0
-            for batch in tqdm(dataloader, desc='getting raw logit outputs...'):
+            for batch in tqdm(dataloader, desc='getting raw outputs...'):
                 batch_data = batch[0].to(self.device)
                 batch_labels = batch[1].to(self.device)
                 labels_combined.append(batch_labels)
@@ -712,9 +809,7 @@ class Experiment:
                 preds = self.model(batch_data)
                 preds_combined.append(preds)
 
-                loss = torch.nn.BCEWithLogitsLoss(reduction='sum')(
-                    preds, batch_labels
-                )
+                loss = self.criterion(preds, batch_labels)
                 epoch_data_size += preds.shape[0]
                 total_loss += loss
             
@@ -730,11 +825,10 @@ class Experiment:
         if name_preds is None:
             name_preds = f"{self.model_name}_{self.expt_name}_preds_{phase}.pkl"
         if save_preds:
-            logging.info(f"Saving raw logit predictions at: {Path(path_to_preds / name_preds)}")
+            logging.info(f"Saving raw outputs at: {Path(path_to_preds / name_preds)}")
             torch.save(preds_combined, Path(path_to_preds / name_preds))
 
-        if phase == 'train':
-            self.stats["train_loss_nodropout"] = total_loss
+        self.stats[f"{phase}_loss_best"] = total_loss
         self.preds[phase] = preds_combined
         self.labels[phase] = labels_combined
         return preds_combined, total_loss, labels_combined
@@ -747,20 +841,43 @@ class Experiment:
             pred_logits, loss, labels = self.get_preds_and_loss(phase=phase)
             self.preds[phase] = pred_logits
             self.labels[phase] = labels_combined
-            if phase == 'train':
-                self.stats["train_loss_nodropout"] = loss
+            self.stats[f"{phase}_loss_best"] = loss
         else:
             pred_logits = self.preds[phase]
             labels = self.labels[phase]
 
-        pred_hard = torch.sigmoid(pred_logits)
-        # bcos we have 3 models TODO: split into 3
-        accuracy = (torch.sum(torch.eq(pred_hard, labels)).item() // 3) / labels.shape[0] * 100
+        pred_probs = torch.sigmoid(pred_logits)
+        mean_acc, mean_auc = 0, 0
+        for j in range(labels.shape[-1]):
+            acc = torch.sum(torch.eq((pred_probs[:, j] > 0.5).float(), labels[:, j])).item() / labels.shape[0]
+            auc = roc_auc_score(
+                        labels[:, j].flatten().tolist(), 
+                        pred_probs[:, j].flatten().tolist()
+                    )
+            mean_acc += acc / labels.shape[-1]
+            mean_auc += auc / labels.shape[-1]
+            if j == 0:
+                self.stats[f"{phase}_acc_GLN_best"] = acc
+                self.stats[f"{phase}_auc_GLN_best"] = auc
+            elif j == 1:
+                self.stats[f"{phase}_acc_retrosim_best"] = acc
+                self.stats[f"{phase}_auc_retrosim_best"] = auc
+            elif j == 2:
+                self.stats[f"{phase}_acc_retroxpert_best"] = acc
+                self.stats[f"{phase}_auc_retroxpert_best"] = auc
+        self.stats[f"{phase}_acc_mean_best"] = mean_acc
+        self.stats[f"{phase}_auc_mean_best"] = mean_auc
 
-        self.stats[f"{phase}_acc_nodropout"] = accuracy
         torch.save(self.stats, self.stats_filename)
-
-        message = f"Accuracy ({phase}): {100 * accuracy:.3f}%"
+        
+        message = f"Accuracy (mean, {phase}): {100 * mean_acc:.3f}%, \
+                \nAccuracy (GLN, {phase}): {100 * self.stats[f'{phase}_acc_GLN_best']:.3f}%, \
+                \nAccuracy (RetroSim, {phase}): {100 * self.stats[f'{phase}_acc_retrosim_best']:.3f}%, \
+                \nAccuracy (RetroXpert, {phase}): {100 * self.stats[f'{phase}_acc_retroxpert_best']:.3f}%, \
+                \nAUC (mean, {phase}): {self.stats[f'{phase}_auc_mean_best']:.3f}, \
+                \nAUC (GLN, {phase}): {self.stats[f'{phase}_auc_GLN_best']:.3f}, \
+                \nAUC (RetroSim, {phase}): {self.stats[f'{phase}_auc_retrosim_best']:.3f}, \
+                \nAUC (RetroXpert, {phase}): {self.stats[f'{phase}_auc_retroxpert_best']:.3f},"
         logging.info(message)
         message += f'\n{self.expt_name}'
         try:

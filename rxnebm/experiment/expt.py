@@ -637,7 +637,6 @@ class Experiment:
     def train(self):
         self.start = time.time()  # timeit.default_timer()
         self.to_break = 0
-        self.current_lr = self.learning_rate # initialize lr tracker
         for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
             self.model.train()
             train_loss, train_correct_preds = 0, defaultdict(int)
@@ -698,8 +697,8 @@ class Experiment:
                 train_loader.refresh()
             
             for k in self.k_to_calc:     
-                self.train_topk_accs[k].append(train_correct_preds[k] / epoch_train_size) # self.train_size ) 
-            self.train_losses.append(train_loss / epoch_train_size) # self.train_size)
+                self.train_topk_accs[k].append(train_correct_preds[k] / epoch_train_size) 
+            self.train_losses.append(train_loss / epoch_train_size)
 
             # validation
             self.model.eval()
@@ -1653,13 +1652,12 @@ class Experiment:
             logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
             torch.save(energies_combined, Path(path_to_energies / name_energies))
 
+        self.stats[f"{phase}_loss_best"] = loss
+        self.energies[phase] = energies_combined
         if self.args.do_finetune and phase != 'train':
-            self.energies[phase] = energies_combined
             self.true_ranks[phase] = true_ranks.unsqueeze(dim=-1)
             return energies_combined, loss, true_ranks
         else:
-            self.stats["train_loss_nodropout"] = loss
-            self.energies[phase] = energies_combined
             return energies_combined, loss
 
     def get_topk_acc(
@@ -1696,7 +1694,7 @@ class Experiment:
                 pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
                 topk_accuracy = torch.where(pred_labels == self.true_ranks[phase])[0].shape[0] / pred_labels.shape[0]
 
-                self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
+                self.stats[f"{phase}_top{k}_acc_best"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
                 this_topk_message = f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%"
@@ -1709,14 +1707,13 @@ class Experiment:
             if phase not in self.energies:
                 energies, loss = self.get_energies_and_loss(phase=phase)
                 self.energies[phase] = energies
-                if phase == 'train':
-                    self.stats["train_loss_nodropout"] = loss
+                self.stats[f"{phase}_loss_best"] = loss
             
             if self.energies[phase].shape[1] >= k: 
                 pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
                 topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0] 
 
-                self.stats[f"{phase}_top{k}_acc_nodropout"] = topk_accuracy
+                self.stats[f"{phase}_top{k}_acc_best"] = topk_accuracy
                 torch.save(self.stats, self.stats_filename)
 
                 this_topk_message = f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%"
