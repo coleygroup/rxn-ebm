@@ -387,7 +387,6 @@ class Experiment:
                     logging.info(
                         f"\nEarly stopped at the end of epoch: {current_epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, train acc (mean): {self.train_accs_mean[-1]:.4f}, \
-                    \ntrain auc (mean): {self.train_aucs_mean[-1]:.4f}, \
                     \nval loss: {self.val_losses[-1]: .4f}, val acc (mean): {self.val_accs_mean[-1]:.4f}, \
                     \nval auc (mean): {self.val_aucs_mean[-1]:.4f} \
                     ")
@@ -403,10 +402,10 @@ class Experiment:
 
         elif self.early_stop_criteria == 'acc':
             if self.max_val_acc - self.val_accs_mean[-1] > self.early_stop_min_delta:
+                #                     \ntrain auc (mean): {self.train_aucs_mean[-1]:.4f}, \
                 if self.early_stop_patience <= self.wait:
                     message = f"\nEarly stopped at the end of epoch: {current_epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, train acc (mean): {self.train_accs_mean[-1]:.4f}, \
-                    \ntrain auc (mean): {self.train_aucs_mean[-1]:.4f}, \
                     \nval loss: {self.val_losses[-1]: .4f}, val acc (mean): {self.val_accs_mean[-1]:.4f}, \
                     \nval auc (mean): {self.val_aucs_mean[-1]:.4f} \
                     \n"
@@ -519,13 +518,13 @@ class Experiment:
                             )
                         ).item()
                     train_correct_preds[j] += batch_correct_preds
-                    try:
-                        train_aucs[j] += roc_auc_score(
-                                            batch_labels[:, j].flatten().tolist(), 
-                                            batch_pred_probs[:, j].flatten().tolist()
-                                        ) * train_batch_size
-                    except:
-                        epoch_train_size_auc -= train_batch_size
+                    # try:
+                    #     train_aucs[j] += roc_auc_score(
+                    #                         batch_labels[:, j].flatten().tolist(), 
+                    #                         batch_pred_probs[:, j].flatten().tolist()
+                    #                     ) * train_batch_size
+                    # except:
+                    #     epoch_train_size_auc -= train_batch_size
                     if j == 0:
                         run_acc_GLN = train_correct_preds[j] / epoch_train_size
                     elif j == 1:
@@ -540,9 +539,9 @@ class Experiment:
             for j in range(batch_labels.shape[-1]): 
                 self.train_accs[j].append(train_correct_preds[j] / epoch_train_size)
                 train_acc_mean += self.train_accs[j][-1] / batch_labels.shape[-1]
-                train_auc_mean += (train_aucs[j] / epoch_train_size_auc) / batch_labels.shape[-1]
+                # train_auc_mean += (train_aucs[j] / epoch_train_size_auc) / batch_labels.shape[-1]
             self.train_accs_mean.append(train_acc_mean)
-            self.train_aucs_mean.append(train_auc_mean)
+            # self.train_aucs_mean.append(train_auc_mean)
             self.train_losses.append(train_loss / epoch_train_size)
 
             # validation
@@ -643,10 +642,10 @@ class Experiment:
                 elif self.args.lr_scheduler_criteria == 'acc': # monitor mean acc for lr_scheduler 
                     self.lr_scheduler.step(self.val_accs_mean[-1])
                 logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
-
+            
+            # \ntrain auc (mean): {self.train_aucs_mean[-1]:.4f}, \
             message = f"\nEnd of epoch: {epoch}, \
                 \ntrain loss: {self.train_losses[-1]:.4f}, train acc (mean): {self.train_accs_mean[-1]:.4f}, \
-                \ntrain auc (mean): {self.train_aucs_mean[-1]:.4f}, \
                 \nval loss: {self.val_losses[-1]: .4f}, val acc (mean): {self.val_accs_mean[-1]:.4f}, \
                 \nval auc (mean): {self.val_aucs_mean[-1]:.4f} \
                 \n"
@@ -743,7 +742,7 @@ class Experiment:
             elif j == 2:
                 self.stats["test_acc_retroxpert"] = test_correct_preds[j] / epoch_test_size
                 self.stats["test_auc_retroxpert"] = test_aucs[j] / epoch_test_size_auc
-            mean_test_acc += test_correct_preds[j] / batch_labels.shape[-1]
+            mean_test_acc += (test_correct_preds[j] / epoch_test_size) / batch_labels.shape[-1]
             mean_test_auc += (test_aucs[j] / epoch_test_size_auc) / batch_labels.shape[-1]
         self.stats["test_acc_mean"] = mean_test_acc
         self.stats["test_auc_mean"] = mean_test_auc
