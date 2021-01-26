@@ -202,8 +202,8 @@ def merge_proposers(
 
             elif input_mode == 'csv':
                 for proposer in proposers:
-                    if proposer == 'GLN_retrain' or proposer == 'retrosim' or proposer == 'retroxpert':
-                        curr_precs = proposals_phase_dict[proposer][prod_smi_nomap] #[prod_smi_map]['reactants']
+                    if proposer in ['GLN_retrain', 'retrosim', 'retroxpert', 'union']:
+                        curr_precs = proposals_phase_dict[proposer][prod_smi_nomap]
                     elif proposer == 'MT':
                         raise NotImplementedError
 
@@ -229,29 +229,28 @@ def merge_proposers(
         logging.info(f'Avg # dups per product: {dup_count}')
 
         logging.info('\nCalculating ranks before removing duplicates')
-        _ = calc_accs( 
-            [phase],
+        _, _ = calc_accs( 
+            phase,
             clean_rxnsmi_phase,
             rcts_smiles_phase,
             proposed_precs_phase_withdups,
         ) # just to calculate accuracy
 
         logging.info('\nCalculating ranks after removing duplicates')
-        ranks_dict = calc_accs( 
-                    [phase],
+        ranks_phase, processed_precs_phase = calc_accs( 
+                    phase,
                     clean_rxnsmi_phase,
                     rcts_smiles_phase,
                     proposed_precs_phase
                 )
-        ranks_phase = ranks_dict[phase]
 
         if phase == 'train':
             logging.info('\nDouble checking train accuracy (should be 0%) by this stage')
-            _ = calc_accs( 
-                    [phase],
+            _, _ = calc_accs( 
+                    phase,
                     clean_rxnsmi_phase,
                     rcts_smiles_phase,
-                    proposed_precs_phase
+                    processed_precs_phase # proposed_precs_phase
                 )
 
         analyse_proposed(
@@ -267,7 +266,7 @@ def merge_proposers(
             prod_smiles_phase,
             rcts_smiles_phase,
             ranks_phase,
-            proposed_precs_phase, 
+            processed_precs_phase, 
         ):
             result = []
             result.extend([rxn_smi, prod_smi, rcts_smi, rank_of_true_precursor])
@@ -309,63 +308,65 @@ def merge_proposers(
     return
 
 def calc_accs( 
-        phases : List[str],
+        phase : str,
         clean_rxnsmi_phase : List[str],
         rcts_smiles_phase : List[str],
         proposed_precs_phase : List[str],
     ) -> Dict[str, List[int]]:
-    ranks = {} 
-    for phase in phases: 
-        phase_ranks = []
-        if phase == 'train':
-            for idx in tqdm(range(len(clean_rxnsmi_phase))):
-                true_precursors = rcts_smiles_phase[idx]
-                all_proposed_precursors = proposed_precs_phase[idx]
+    phase_ranks = []
+    processed_precs = []
+    if phase == 'train':
+        for idx in tqdm(range(len(clean_rxnsmi_phase))):
+            true_precursors = rcts_smiles_phase[idx]
+            all_proposed_precursors = proposed_precs_phase[idx]
 
-                found = False
-                for rank, proposal in enumerate(all_proposed_precursors): # ranks are 0-indexed 
-                    if true_precursors == proposal:
-                        phase_ranks.append(rank)
-                        # remove true precursor from proposals 
-                        all_proposed_precursors.pop(rank) 
-                        all_proposed_precursors.append('9999')
-                        found = True
-                        break
+            found = False
+            for rank, proposal in enumerate(all_proposed_precursors): # ranks are 0-indexed 
+                if true_precursors == proposal:
+                    phase_ranks.append(rank)
+                    # remove true precursor from proposals 
+                    all_proposed_precursors.pop(rank) 
+                    all_proposed_precursors.append('9999')
+                    found = True
+                    break
 
-                if not found:
-                    phase_ranks.append(9999)    
-        else:
-            for idx in tqdm(range(len(clean_rxnsmi_phase))):
-                true_precursors = rcts_smiles_phase[idx]
-                all_proposed_precursors = proposed_precs_phase[idx]
+            if not found:
+                phase_ranks.append(9999)
 
-                found = False
-                for rank, proposal in enumerate(all_proposed_precursors): # ranks are 0-indexed  
-                    if true_precursors == proposal:
-                        phase_ranks.append(rank) 
-                        # do not pop true precursor from proposals! 
-                        found = True
-                        break
+            processed_precs.append(all_proposed_precursors)
+    else:
+        for idx in tqdm(range(len(clean_rxnsmi_phase))):
+            true_precursors = rcts_smiles_phase[idx]
+            all_proposed_precursors = proposed_precs_phase[idx]
 
-                if not found:
-                    phase_ranks.append(9999) 
-        ranks[phase] = phase_ranks
+            found = False
+            for rank, proposal in enumerate(all_proposed_precursors): # ranks are 0-indexed  
+                if true_precursors == proposal:
+                    phase_ranks.append(rank) 
+                    # do not pop true precursor from proposals! 
+                    found = True
+                    break
 
-        logging.info('\n')
-        for n in [1, 2, 3, 5, 10, 20, 50, 100, 150, 200, 225, 250, 300]:
-            total = float(len(ranks[phase]))
-            acc = sum([r+1 <= n for r in ranks[phase]]) / total
-            logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
-        logging.info('\n')
+            if not found:
+                phase_ranks.append(9999)
 
-        # more detailed
-        for n in [1] + list(range(5, 301, 5)):
-            total = float(len(ranks[phase]))
-            acc = sum([r+1 <= n for r in ranks[phase]]) / total
-            logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
-        logging.info('\n')
+            processed_precs.append(all_proposed_precursors)
 
-    return ranks # dictionary 
+    logging.info('\n')
+    for n in [1, 2, 3, 5, 10, 20, 50, 100, 150, 200, 225, 250, 300]:
+        total = float(len(phase_ranks))
+        acc = sum([r+1 <= n for r in phase_ranks]) / total
+        logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
+    logging.info('\n')
+
+    # more detailed, for debugging
+    for n in [1] + list(range(5, 301, 5)):
+        total = float(len(phase_ranks))
+        acc = sum([r+1 <= n for r in phase_ranks]) / total
+        logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
+    logging.info('\n')
+
+    return phase_ranks, processed_precs
 
 
 def analyse_proposed(
