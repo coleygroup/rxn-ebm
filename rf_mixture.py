@@ -2,6 +2,7 @@ import logging
 import argparse
 import os
 import sys
+import random
 import pandas as pd
 import numpy as np
 from datetime import date, datetime
@@ -33,6 +34,7 @@ def parse_args():
     parser.add_argument("--train_single", help="Train RF model on a single experiment", action='store_true')
     parser.add_argument("--train_optuna", help="Train RF model with Optuna for args.trials times", action='store_true')
     parser.add_argument("--n_trials", help="No. of trials for hyperparameter optimization w/ Optuna", type=int, default=40)
+    parser.add_argument("--display", help="Display a few examples of predictions & labels", action="store_true")
     # files
     parser.add_argument("--log_file", help="log_file", type=str, default="rf_mixture")
     parser.add_argument("--prodfps_file_prefix",
@@ -140,6 +142,7 @@ def objective(trial, optuna=True, args=None, best_params=None):
     rf_multi.fit(prodfps_train, labels_train)
 
     if best_params is not None or (args is not None and args.checkpoint):
+        logging.info('Dumping model')
         dump(rf_multi, args.checkpoint_folder / f'{args.expt_name}_best.joblib')
 
     # predict & evaluate
@@ -157,8 +160,9 @@ def objective(trial, optuna=True, args=None, best_params=None):
     preds_train = (probs_train > 0.5).astype(float)         # [N, 3] np array of float 0. or 1.
 
     if best_params is not None or (args is not None and args.checkpoint):
-        np.save(probs_test, args.checkpoint_folder / f'{args.expt_name}_best_probs_test.npy')
-        np.save(probs_train, args.checkpoint_folder / f'{args.expt_name}_best_probs_train.npy')
+        logging.info('Dumping probs for test & train')
+        np.save(args.checkpoint_folder / f'{args.expt_name}_best_probs_test.npy', probs_test)
+        np.save(args.checkpoint_folder / f'{args.expt_name}_best_probs_train.npy', probs_train)
 
     models = ['GLN', 'RetroSim', 'RetroXpert']
     accs_test, accs_train = {}, {}
@@ -230,8 +234,20 @@ def objective(trial, optuna=True, args=None, best_params=None):
                 \nTrain loss mean: {mean_logloss_train:.4f} \
                 \n')
     
+    if best_params is not None or (args is not None and args.display):
+        csv_test = pd.read_csv(data_root / f"{proposals_csv_file_prefix}_test.csv", index_col=None, dtype='str').values
+        prod_idxs = random.sample(list(range(labels_test.shape[0])), k=10)
+        for idx in prod_idxs:
+            prod_smi = csv_test[idx, 0]
+            prod_probs = probs_test[idx]                    # (3,)
+            prod_preds = (prod_probs > 0.5).astype(float)   # (3,)
+            prod_labels = labels_test[idx]                  # (3,)
+            logging.info(f'\nproduct SMILES:\t\t{prod_smi}')
+            logging.info(f'GLN:\t\t\tprob = {prod_probs[0]:.4f}, pred = {prod_preds[0]:.0f}, label = {prod_labels[0]:.0f}')
+            logging.info(f'Retrosim:\t\tprob = {prod_probs[1]:.4f}, pred = {prod_preds[1]:.0f}, label = {prod_labels[1]:.0f}')
+            logging.info(f'RetroXpert:\t\tprob = {prod_probs[2]:.4f}, pred = {prod_preds[2]:.0f}, label = {prod_labels[2]:.0f}')
+
     return -mean_auc_prc_test # for Bayesian Optimization
-    # TODO: randomly sample 5-10 prod_smi from test CSV & log preds & labels
 
 if __name__ == '__main__':
     args = parse_args()
@@ -252,10 +268,14 @@ if __name__ == '__main__':
 
     logging.info(f'Running: {args.expt_name}')
     logging.info(args)
+
+    # "global" variables
     verbose = args.verbose
     prodfps_file_prefix = args.prodfps_file_prefix
     labels_file_prefix = args.labels_file_prefix
+    proposals_csv_file_prefix = args.proposals_csv_file_prefix
     random_seed = args.random_seed
+
     if args.train_single:
         _ = objective(None, False, args, None)
     elif args.train_optuna:
