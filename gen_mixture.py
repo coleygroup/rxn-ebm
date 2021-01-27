@@ -1,7 +1,7 @@
 import csv
 import pickle 
 import sys
-import logging 
+import logging
 import argparse
 import os
 from datetime import datetime
@@ -198,7 +198,7 @@ def parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
-    args = parse_args() 
+    args = parse_args()
 
     RDLogger.DisableLog("rdApp.warning")
 
