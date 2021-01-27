@@ -909,6 +909,11 @@ class Experiment:
         if self.test_loader is None: # running G2E
             self.test_loader, self.test_size, _ = self._get_smi_dl(phase="test", shuffle=False)
         test_loader = tqdm(self.test_loader, desc='testing...')
+        self.k_to_test = [1, 2, 3, 5, 10, 20, 50]
+        for i in reversed(range(len(self.k_to_test))):
+            # reversed so that removing that k won't affect current i wrt future k
+            if self.k_to_test[i] > self.args.minibatch_eval:
+                self.k_to_test.pop(i)
         with torch.no_grad():
             epoch_test_size = 0
             for i, batch in enumerate(test_loader):
@@ -949,7 +954,7 @@ class Experiment:
                     ]
                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
 
-                    for k in [1, 2, 3, 5, 10, 20, 50]:
+                    for k in self.k_to_test:
                         # index with lowest energy is what the model deems to be the most feasible rxn
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
                         batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
@@ -1001,7 +1006,7 @@ class Experiment:
                     batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
 
                     # calculate top-k acc assuming true index is 0 (for pre-training step)
-                    for k in [1, 2, 3, 5, 10, 20, 50]:
+                    for k in self.k_to_test:
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
                         batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
                         test_correct_preds[k] += batch_correct_preds
@@ -1020,7 +1025,7 @@ class Experiment:
                 test_loader.set_description(f"testing...loss={test_loss / epoch_test_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
                 test_loader.refresh()
                 
-            for k in [1, 2, 3, 5, 10, 20, 50]:
+            for k in self.k_to_test:
                 self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size # self.test_size
 
         if saved_stats:
@@ -1034,7 +1039,7 @@ class Experiment:
         logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
         self.stats["test_topk_accs"] = self.test_topk_accs
         message = f"{self.expt_name}\n"
-        for k in [1, 2, 3, 5, 10, 20, 50]:
+        for k in self.k_to_test:
             this_topk_message = f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%'
             logging.info(this_topk_message)
             message += this_topk_message + '\n'
@@ -1383,6 +1388,11 @@ class Experiment:
             test_loader = tqdm(self.test_loader, desc='testing...')
         else:
             test_loader = self.test_loader
+        self.k_to_test = [1, 2, 3, 5, 10, 20, 50]
+        for i in reversed(range(len(self.k_to_test))): 
+            # reversed so that removing that k won't affect current i wrt future k
+            if self.k_to_test[i] > self.args.minibatch_eval:
+                self.k_to_test.pop(i)
         with torch.no_grad():
             epoch_test_size = 0
             for i, batch in enumerate(test_loader):
@@ -1426,7 +1436,7 @@ class Experiment:
                     ]
                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
 
-                    for k in [1, 2, 3, 5, 10, 20, 50]: # self.k_to_calc:
+                    for k in self.k_to_test:
                         # index with lowest energy is what the model deems to be the most feasible rxn
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
                         batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
@@ -1481,7 +1491,7 @@ class Experiment:
                     batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
 
                     # calculate top-k acc assuming true index is 0 (for pre-training step)
-                    for k in [1, 2, 3, 5, 10, 20, 50]:
+                    for k in self.k_to_test:
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
                         batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
                         batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
@@ -1510,7 +1520,7 @@ class Experiment:
                     test_loader.set_description(f"testing...loss={test_loss / test_batch_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
                     test_loader.refresh()
                 
-            for k in [1, 2, 3, 5, 10, 20, 50]: # self.k_to_calc:
+            for k in self.k_to_test:
                 self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size
 
         if saved_stats:
@@ -1525,7 +1535,7 @@ class Experiment:
         message = f"{self.expt_name}\n"
         if self.rank == 0:
             logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
-            for k in [1, 2, 3, 5, 10, 20, 50]:
+            for k in self.k_to_test:
                 this_topk_message = f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%'
                 logging.info(this_topk_message)
                 message += this_topk_message + '\n'
