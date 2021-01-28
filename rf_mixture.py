@@ -1,6 +1,7 @@
 import logging
 import argparse
 import os
+import re
 import sys
 import random
 import pandas as pd
@@ -54,7 +55,7 @@ def parse_args():
     parser.add_argument("--max_depth", help="Max depth of tree", type=int)
     parser.add_argument("--class_weight", help="Class weight ['balanced', 'balanced_subsample', None]", 
                         type=str)
-    parser.add_argument("--max_features", help="Max features to use ['auto', 'sqrt', 'log2', None]", 
+    parser.add_argument("--max_features", help="Max features to use ['auto', 'log2', None]", 
                         type=str, default='auto')
     parser.add_argument("--min_samples_split", help="Min samples needed to split a node", type=int, default=2)
     parser.add_argument("--min_samples_leaf", help="Min samples required at each leaf node", type=int, default=1)
@@ -95,9 +96,9 @@ def objective(trial, optuna=True, args=None, best_params=None):
     labels_test = np.load(data_root / f"{labels_file_prefix}_test.npy")
 
     if best_params is None and optuna:
-        n_estimators = trial.suggest_int('n_estimators', low=100, high=2000, step=100)
+        n_estimators = trial.suggest_int('n_estimators', low=100, high=3000, step=50)
         # Number of features to consider at every split
-        max_features = trial.suggest_categorical('max_features', ['auto', 'sqrt', 'log2', None])
+        max_features = trial.suggest_categorical('max_features', ['sqrt', 'log2']) # remove None bcos it is too slow
         # Maximum number of levels in tree
         max_depth = trial.suggest_int('max_depth', low=0, high=120, step=5)
         if max_depth == 0:
@@ -106,7 +107,7 @@ def objective(trial, optuna=True, args=None, best_params=None):
         min_samples_split = trial.suggest_int('min_samples_split', low=2, high=12)
         # Minimum number of samples required at each leaf node
         min_samples_leaf = trial.suggest_int('min_samples_leaf', low=1, high=5)
-        class_weight = trial.suggest_categorical('class_weight', ['balanced', 'balanced_subsample', None])
+        class_weight = trial.suggest_categorical('class_weight', ['balanced', 'balanced_subsample']) # remove None first
     elif best_params is None and not optuna:
         n_estimators = args.n_estimators
         max_features = args.max_features
@@ -127,6 +128,12 @@ def objective(trial, optuna=True, args=None, best_params=None):
         class_weight = best_params['class_weight']
 
     # setup model: RF => MultiOutput
+    logging.info("-------- Model params --------")
+    msg =   f"n_estimators: {n_estimators}, max_features: {max_features}, max_depth: {max_depth}, \
+            min_samples_split: {min_samples_split}, min_samples_leaf: {min_samples_leaf}, \
+            class_weight: {class_weight}, random_seed: {random_seed}"
+    logging.info(re.sub('\s+', ' ', msg).strip()) # remove multiple whitespaces like \n \t etc
+    start_time = datetime.now()
     rf = RandomForestClassifier(
                 n_estimators=n_estimators,
                 max_depth=max_depth,
@@ -140,6 +147,7 @@ def objective(trial, optuna=True, args=None, best_params=None):
             )
     rf_multi = MultiOutputClassifier(rf, n_jobs=-1)
     rf_multi.fit(prodfps_train, labels_train)
+    logging.info(f'Training time: {datetime.now() - start_time}')
 
     if best_params is not None or (args is not None and args.checkpoint):
         logging.info('Dumping model')
