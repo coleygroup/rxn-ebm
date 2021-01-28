@@ -36,6 +36,7 @@ def parse_args():
     parser.add_argument("--train_optuna", help="Train RF model with Optuna for args.trials times", action='store_true')
     parser.add_argument("--n_trials", help="No. of trials for hyperparameter optimization w/ Optuna", type=int, default=40)
     parser.add_argument("--display", help="Display a few examples of predictions & labels", action="store_true")
+    parser.add_argument("--debug", help="Display misc extra info", action="store_true")
     # files
     parser.add_argument("--log_file", help="log_file", type=str, default="rf_mixture")
     parser.add_argument("--prodfps_file_prefix",
@@ -128,7 +129,9 @@ def objective(trial, optuna=True, args=None, best_params=None):
         class_weight = best_params['class_weight']
 
     # setup model: RF => MultiOutput
-    logging.info("-------- Model params --------")
+    if trial is not None:
+        logging.info(f'Trial #{trial.number}')
+    logging.info(f"-------- Model params --------")
     msg =   f"n_estimators: {n_estimators}, max_features: {max_features}, max_depth: {max_depth}, \
             min_samples_split: {min_samples_split}, min_samples_leaf: {min_samples_leaf}, \
             class_weight: {class_weight}, random_seed: {random_seed}"
@@ -164,8 +167,13 @@ def objective(trial, optuna=True, args=None, best_params=None):
     probs_test = np.hstack(probs_hstack_test)
     probs_train = np.hstack(probs_hstack_train)
 
-    preds_test = (probs_test > 0.5).astype(float)           # [N, 3] np array of float 0. or 1.
-    preds_train = (probs_train > 0.5).astype(float)         # [N, 3] np array of float 0. or 1.
+    preds_test = (probs_test > 0.5).astype(int)           # [N, 3] np array of int 0 or 1
+    preds_train = (probs_train > 0.5).astype(int)         # [N, 3] np array of int 0 or 1
+
+    if args.debug:
+        GLN_exceeds = np.sum((probs_test[:, 0] > probs_test[:, 2]).astype(int))
+        perc = GLN_exceeds / probs_test.shape[0] * 100
+        logging.info(f'# rxn where prob by RF for GLN > RetroXpert: {GLN_exceeds} ({perc:.2f}%)')
 
     if best_params is not None or (args is not None and args.checkpoint):
         logging.info('Dumping probs for test & train')
