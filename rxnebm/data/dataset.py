@@ -2,24 +2,24 @@ import csv
 import json
 import logging
 import nmslib
-import numpy as np
 import os
-import numpy as np
-import pandas as pd
 import pickle
 import scipy
 import time
 import torch
+import numpy as np
+import pandas as pd
+
 from concurrent.futures import ProcessPoolExecutor as Pool
 from pathlib import Path
-from rxnebm.data import augmentors
-from rxnebm.data.dataset_utils import get_features_per_graph, smi_tokenizer
-from rxnebm.model import model_utils
 from scipy import sparse
 from typing import List, Optional, Tuple, Union
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+from rxnebm.data import augmentors
+from rxnebm.data.dataset_utils import get_features_per_graph, smi_tokenizer
+from rxnebm.model import model_utils
 
 sparse_fp = scipy.sparse.csr_matrix
 Tensor = torch.Tensor

@@ -23,7 +23,7 @@ urls_fns = [
     #  "50k_cosine_count.bin.dat"),
     ("https://drive.google.com/uc?id=1rZoCn70np-5dfRown0wtnM54Iq-XZ3xk",
      "50k_neg150_rad2_maxsize3_mutprodsmis.pickle"),
-    # pre-computed augmented data, for FeedforwardEBM
+    # pre-computed augmented data, for FeedforwardEBM (obsolete for now)
     # ("https://drive.google.com/uc?id=1kAuwfGv0s1OOo9be0NyNNhOekdWCwGLT",
     #  "50k_rdm_5_cos_5_bit_5_1_1_mut_10_train.npz"),
     # ("https://drive.google.com/uc?id=1BhcIeVsSSmRXpfCfTqsorUXWg_Tw5i7a",
@@ -31,26 +31,26 @@ urls_fns = [
     # ("https://drive.google.com/uc?id=13DwNxixNp_ylOTuA047mZSTgTCKL9WYm",
     #  "50k_rdm_5_cos_5_bit_5_1_1_mut_10_test.npz"),
     # retrosim CSV files
-    ("https://drive.google.com/uc?id=15Le31UeYosYXC7-9PXG2tu7jAP2lY2cY",
-     "retrosim_200maxtest_200maxprec_train.csv"),
-    ("https://drive.google.com/uc?id=1-QkcmuLXxAI-lRbUdZ5c0mYDevz0x47d",
-     "retrosim_200maxtest_200maxprec_valid.csv"),
-    ("https://drive.google.com/uc?id=1DQi_dXs2l8rrPae6zQdAWsKXvkSreTlg",
-     "retrosim_200maxtest_200maxprec_test.csv"),
-    # retrosim rxn fp files, for FeedforwardEBM
-    # ("https://drive.google.com/uc?id=1mBp6eBYr9InGf1bPdyM9wyJyuCUt_fdB",
-    #  "retrosim_rxn_fps_train.npz"),
-    # ("https://drive.google.com/uc?id=1KmKGfOSYs4HU5hpPGvvP5BaAj85iQKD4",
-    #  "retrosim_rxn_fps_valid.npz"),
-    # ("https://drive.google.com/uc?id=1JzbyLC74N8r3O6ULGC26t_hmFfLZ3FTe",
-    #  "retrosim_rxn_fps_test.npz")
-    # GLN CSV files # note these are outdated! use the GLN_retrain_cano files
-    # ("https://drive.google.com/uc?id=1MTyyZZH0lEy-P83IyNSRcvXGqCzdlnVA",
-    # "GLN_200topk_200maxk_200beam_test.csv"),
-    # ("https://drive.google.com/uc?id=1snuxs43NVavVtnyt600rHyX5hlc7X_IC",
-    # "GLN_200topk_200maxk_200beam_train.csv"),
-    # ("https://drive.google.com/uc?id=17zDvlXpBYAoOf8Qo3ujIPhg93NZu83-I",
-    # "GLN_200topk_200maxk_200beam_valid.csv"),
+    ("https://drive.google.com/uc?id=1OaHvZS85yxhbEfFzvfrVe-uVxGC0NoKL",
+     "retrosim_200topk_200maxk_noGT_train.csv"),
+    ("https://drive.google.com/uc?id=1XjCoZ7N7q-eI6MJPPk6w7FT9-5FvuJTL",
+     "retrosim_200topk_200maxk_noGT_valid.csv"),
+    ("https://drive.google.com/uc?id=1eUpPnTwwe3X9tinpx5xjvLgXAzPBTjcQ",
+     "retrosim_200topk_200maxk_noGT_test.csv"),
+    # GLN CSV files
+    ("https://drive.google.com/uc?id=15h4M0ZJDbSn9A3n9EuIoCHH2XfWrxi8P",
+    "GLN_200topk_200maxk_noGT_train.csv"),
+    ("https://drive.google.com/uc?id=1_KLldNX6Re6UuT68-IJleBXrpKYjf5q_",
+    "GLN_200topk_200maxk_noGT_valid.csv"),
+    ("https://drive.google.com/uc?id=1N_OwH3JZDfmvEzj0wi3TqxfI__IC9Yix",
+    "GLN_200topk_200maxk_noGT_test.csv"),
+    # retroxpert CSV files
+    ("https://drive.google.com/uc?id=1Z5QOMHrc1q6MiZw1ojqd7x7f2f0Ux41p",
+     "retroxpert_200topk_200maxk_noGT_train.csv"),
+    ("https://drive.google.com/uc?id=1R24cq3VTKCq9YA9j2u_99wkRziilcGSn",
+     "retroxpert_200topk_200maxk_noGT_valid.csv"),
+    ("https://drive.google.com/uc?id=1KXOTIbXFXdpSGSYUSAQ4NYyZdvBfo7kj",
+     "retroxpert_200topk_200maxk_noGT_test.csv"),
 
 ]
 output = "./rxnebm/data/cleaned_data/"
