@@ -59,7 +59,7 @@ def parse_args():
                         help='number of gpus per node')
     parser.add_argument('-nr', '--nr', default=0, type=int,
                         help='ranking within the nodes')
-    parser.add_argument("--port", type=int)
+    parser.add_argument("--port", type=int, default=random.randint(0, 65530))
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--mol_smi_filename", help="do not change", type=str,
@@ -105,6 +105,8 @@ def parse_args():
     parser.add_argument("--rxn_type", help="aggregation type", type=str, default="hybrid_all")
     parser.add_argument("--fp_type", help="fp type", type=str, default="count")
     # training params
+    parser.add_argument("--loss_type", help="type of EBM loss ['log', 'hinge']", type=str, default="log")
+    parser.add_argument("--loss_margin", help="margin for hinge loss", type=float, default=1)
     parser.add_argument("--batch_size", help="batch_size", type=int, default=128)
     parser.add_argument("--batch_size_eval", help="batch_size", type=int, default=128)
     parser.add_argument("--grad_clip", help="gradient clipping", type=float, default=5)

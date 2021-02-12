@@ -500,8 +500,8 @@ if __name__ == '__main__':
     logging.info(f'Processing {args.proposer} proposals into {args.fp_size}-dim {args.rxn_type} fingerprints\n')
     main(args)
 
-        # args.phase = 'train'
-        # args.split_idxs = [0, 10000, 20000, 30000, 39713]
-        # merge_chunks(args)
+    # args.phase = 'train'
+    # args.split_idxs = [0, 10000, 20000, 30000, 39713]
+    # merge_chunks(args)
 
     logging.info('Processing finished successfully')
