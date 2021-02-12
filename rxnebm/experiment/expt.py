@@ -775,7 +775,7 @@ class Experiment:
                             energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
 
                             diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin
-                            batch_loss = ((diff > 0) * diff).sum()
+                            batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
                     
                         for k in self.k_to_calc:
                             # index with lowest energy is what the model deems to be the most feasible rxn
@@ -829,7 +829,7 @@ class Experiment:
                         
                         elif self.args.loss_type == 'hinge':
                             diff = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:] + self.args.loss_margin
-                            batch_loss = ((diff > 0) * diff).sum()
+                            batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
 
                         # calculate top-k acc assuming true index is 0 (for pre-training step)
                         for k in self.k_to_calc:
@@ -1126,8 +1126,6 @@ class Experiment:
                 train_loader = self.train_loader
             dist.barrier()
             for i, batch in enumerate(train_loader):
-                # if i > 2:
-                #     break
                 batch_data = batch[0]
                 if not isinstance(batch_data, tuple):
                     batch_data = batch_data.cuda(non_blocking=True)
