@@ -652,6 +652,11 @@ class Experiment:
             epoch_train_size = 0
             train_loader = tqdm(self.train_loader, desc='training...')
             for i, batch in enumerate(train_loader):
+                if epoch < self.args.warmup_epochs:
+                    total_batches = self.train_size // self.args.batch_size
+                    lr = ((i / total_batches + epoch) / self.args.warmup_epochs) * self.args.learning_rate
+                    self.optimizer.param_groups[0]['lr'] = lr
+
                 batch_data = batch[0]
                 if not isinstance(batch_data, tuple):
                     batch_data = batch_data.to(self.device)
@@ -882,12 +887,15 @@ class Experiment:
                 if self.to_break:  # is it time to early stop?
                     break
 
-            if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one
-                if self.args.lr_scheduler_criteria == 'loss':
-                    self.lr_scheduler.step(self.val_losses[-1])
-                elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
-                    self.lr_scheduler.step(self.val_topk_accs[1][-1])
-                logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
+            if epoch >= self.args.warmup_epochs:
+                if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
+                    if self.args.lr_scheduler_criteria == 'loss':
+                        self.lr_scheduler.step(self.val_losses[-1])
+                    elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
+                        self.lr_scheduler.step(self.val_topk_accs[1][-1])
+                    logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
+            else:
+                logging.info(f'\nEpoch {epoch} out of warmup epochs: {self.args.warmup_epochs}')
 
             if 3 in self.train_topk_accs:
                 epoch_top3_train_acc = self.train_topk_accs[3][-1]

@@ -120,6 +120,8 @@ def parse_args():
     parser.add_argument("--milestone_lr", help="Epochs for MultiStepLR", type=int, nargs='+')
     parser.add_argument("--milestone_gamma", help="Gamma for MultiStepLR", type=float, default=0.4)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
+    parser.add_argument("--warmup_epochs", help="Num epochs to warm up LR (currently linearly) to given LR", 
+                        type=int, default=0)
     parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < --lr_floor", 
                         action="store_true", default=False)
     parser.add_argument("--lr_floor", help="LR below which training will stop", type=float, default=1e-7)

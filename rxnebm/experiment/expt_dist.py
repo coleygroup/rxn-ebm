@@ -677,6 +677,11 @@ class Experiment:
                 train_loader = self.train_loader
             dist.barrier()
             for i, batch in enumerate(train_loader):
+                if epoch < self.args.warmup_epochs:
+                    total_batches = self.train_size // self.args.batch_size
+                    lr = ((i / total_batches + epoch) / self.args.warmup_epochs) * self.args.learning_rate
+                    self.optimizer.param_groups[0]['lr'] = lr
+
                 batch_data = batch[0]
                 if not isinstance(batch_data, tuple):
                     batch_data = batch_data.cuda(non_blocking=True)
@@ -945,13 +950,16 @@ class Experiment:
                 self._check_earlystop(current_epoch=epoch)
                 if self.to_break:  # is it time to early stop?
                     break
-
-            if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
-                if self.args.lr_scheduler_criteria == 'loss':
-                    self.lr_scheduler.step(self.val_losses[-1])
-                elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
-                    self.lr_scheduler.step(self.val_topk_accs[1][-1])
-                logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
+            
+            if epoch >= self.args.warmup_epochs:
+                if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
+                    if self.args.lr_scheduler_criteria == 'loss':
+                        self.lr_scheduler.step(self.val_losses[-1])
+                    elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
+                        self.lr_scheduler.step(self.val_topk_accs[1][-1])
+                    logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
+            else:
+                logging.info(f'\nEpoch {epoch} out of warmup epochs: {self.args.warmup_epochs}')
 
             if self.milestone is not None:
                 self.milestone.step(epoch)
