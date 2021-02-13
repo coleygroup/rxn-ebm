@@ -821,7 +821,7 @@ class Experiment:
                             energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
 
                             diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin
-                            batch_loss = ((diff > 0) * diff).sum()
+                            batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
 
                         for k in self.k_to_calc:
                             # index with lowest energy is what the model deems to be the most feasible rxn
@@ -880,7 +880,7 @@ class Experiment:
 
                         elif self.args.loss_type == 'hinge':
                             diff = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:] + margin
-                            loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                            batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
 
                         # calculate top-k acc assuming true index is 0 (for pre-training step)
                         for k in self.k_to_calc:
@@ -1150,7 +1150,7 @@ class Experiment:
 
                     elif self.args.loss_type == 'hinge':
                         diff = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:] + margin
-                        loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                        batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
 
                     # calculate top-k acc assuming true index is 0 (for pre-training step)
                     for k in self.k_to_test:
@@ -1278,12 +1278,29 @@ class Experiment:
                     batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator)
-                    loss_numerator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
-                        batch_true_ranks_valid
-                    ]
-                    loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], :]
-                    batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
+                    if self.args.loss_type == 'log':
+                        loss_numerator = batch_energies[
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
+                            batch_true_ranks_valid
+                        ]
+                        loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], :]
+                        batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
+                    elif self.args.loss_type == 'hinge':
+                        energies_pos = batch_energies[
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                            batch_true_ranks_valid
+                        ]
+
+                        energies_valid = batch_energies[
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                            :
+                        ]
+                        columns = np.array(list(range(energies_valid.shape[1]))).reshape(-1, energies_valid.shape[1])
+                        mask = columns != batch_true_ranks_valid.reshape(-1, 1)
+                        energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
+
+                        diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin
+                        batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
                     loss += batch_loss
 
                     energies_combined.append(batch_energies) 
@@ -1311,7 +1328,11 @@ class Experiment:
 
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
 
-                loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
+                if self.args.loss_type == 'log':
+                    loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
+                elif self.args.loss_type == 'hinge':
+                    diff = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 1:] + self.args.loss_margin
+                    loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
                 loss /= epoch_data_size
             logging.info(f"\nLoss on {phase} : {loss:.4f}")
 
