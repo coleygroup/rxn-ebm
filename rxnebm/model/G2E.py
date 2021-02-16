@@ -979,6 +979,7 @@ class G2E_projBoth(nn.Module):
 
 class G2E_sep_projBoth_FFout(nn.Module): 
     # separate encoders, linear projections, then a final linear output layer (vs dot product)
+    # if no argument is provided for proj_hidden_sizes, there will be no projection
     def __init__(self, args):
         super().__init__()
         self.model_repr = "GraphEBM_sep_projBoth_FFout"
@@ -1015,17 +1016,24 @@ class G2E_sep_projBoth_FFout(nn.Module):
                                         atom_pool_type=args.atom_pool_type)
 
         proj_activation = model_utils.get_activation_function(args.proj_activation)
-        self.projection_r = self.build_projection(
-            proj_activation, args.proj_hidden_sizes, args.proj_dropout, args.encoder_hidden_size
-        )
-        self.projection_p = self.build_projection(
-            proj_activation, args.proj_hidden_sizes, args.proj_dropout, args.encoder_hidden_size
-        )
         out_activation = model_utils.get_activation_function(args.out_activation)
-        self.output = self.build_output(
-            out_activation, args.out_hidden_sizes, args.out_dropout,
-            args.proj_hidden_sizes[-1] * 4
-        )
+        if args.proj_hidden_sizes:
+            self.projection_r = self.build_projection(
+                proj_activation, args.proj_hidden_sizes, args.proj_dropout, args.encoder_hidden_size
+            )
+            self.projection_p = self.build_projection(
+                proj_activation, args.proj_hidden_sizes, args.proj_dropout, args.encoder_hidden_size
+            )
+            self.output = self.build_output(
+                out_activation, args.out_hidden_sizes, args.out_dropout,
+                args.proj_hidden_sizes[-1] * 4
+            )
+        else:
+            self.projection_r, self.projection_p = None, None
+            self.output = self.build_output(
+                out_activation, args.out_hidden_sizes, args.out_dropout,
+                args.encoder_hidden_size * 4
+            )            
 
         if args.do_finetune:
             logging.info("Setting self.reactant first to False for finetuning")
@@ -1130,145 +1138,20 @@ class G2E_sep_projBoth_FFout(nn.Module):
         batch_pooled_r_mols = torch.cat(batch_pooled_r_mols, 0)                 # [bsz, mini_bsz, h]
         batch_pooled_p_mols = torch.cat(batch_pooled_p_mols, 0)                 # [bsz, mini_bsz, h]
 
-        proj_r_mols = self.projection_r(
-                                    batch_pooled_r_mols
-                                )                                               # [bsz, mini_bsz, h] => [bsz, mini_bsz, d]
-        proj_p_mols = self.projection_p(
-                                    batch_pooled_p_mols
-                                )                                               # [bsz, mini_bsz, h] => [bsz, mini_bsz, d]
+        if self.projection_r and self.projection_p:
+            proj_r_mols = self.projection_r(
+                                        batch_pooled_r_mols
+                                    )                                               # [bsz, mini_bsz, h] => [bsz, mini_bsz, d]
+            proj_p_mols = self.projection_p(
+                                        batch_pooled_p_mols
+                                    )                                               # [bsz, mini_bsz, h] => [bsz, mini_bsz, d]
+        else:
+            proj_r_mols = batch_pooled_r_mols
+            proj_p_mols = batch_pooled_p_mols
 
         diff = proj_p_mols - proj_r_mols # torch.abs(proj_p_mols - proj_r_mols) # [bsz, mini_bsz, d]
         prod = proj_p_mols * proj_r_mols                                        # [bsz, mini_bsz, d]
 
         concat = torch.cat([proj_r_mols, proj_p_mols, diff, prod], dim=-1)      # [bsz, mini_bsz, d*4]
         energies = self.output(concat)                                          # [bsz, mini_bsz, 1]
-        return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]
-
-
-class G2E_sep_FFout(nn.Module): 
-    # separate encoders, then a final MLP to get the energy
-    def __init__(self, args):
-        super().__init__()
-        self.model_repr = "GraphEBM_sep_FFout"
-        self.args = args
-        self.mol_pool_type = args.mol_pool_type
-
-        if torch.cuda.is_available() and self.args.dataparallel:
-            self.num_devices = torch.cuda.device_count()
-        else:
-            self.num_devices = 1
-
-        self.encoder_p = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
-                                        n_bond_feat=BOND_FDIM,
-                                        rnn_type=args.encoder_rnn_type,
-                                        h_size=args.encoder_hidden_size,
-                                        h_size_inner=args.encoder_inner_hidden_size,
-                                        preembed=True if args.preembed_size is not None else False,
-                                        preembed_size=args.preembed_size,
-                                        depth=args.encoder_depth,
-                                        dropout=args.encoder_dropout,
-                                        encoder_activation=args.encoder_activation,
-                                        atom_pool_type=args.atom_pool_type)
-        
-        self.encoder_r = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
-                                        n_bond_feat=BOND_FDIM,
-                                        rnn_type=args.encoder_rnn_type,
-                                        h_size=args.encoder_hidden_size,
-                                        h_size_inner=args.encoder_inner_hidden_size,
-                                        preembed=True if args.preembed_size is not None else False,
-                                        preembed_size=args.preembed_size,
-                                        depth=args.encoder_depth,
-                                        dropout=args.encoder_dropout,
-                                        encoder_activation=args.encoder_activation,
-                                        atom_pool_type=args.atom_pool_type)
-
-        out_activation = model_utils.get_activation_function(args.out_activation)
-        self.output = self.build_output(
-            out_activation, args.out_hidden_sizes, args.out_dropout,
-            args.encoder_hidden_size * 4
-        )
-
-        if args.do_finetune:
-            logging.info("Setting self.reactant first to False for finetuning")
-            self.reactant_first = False
-        else:
-            logging.info("Setting self.reactant first to True for pretraining")
-            self.reactant_first = True
-        logging.info("Initializing weights")
-        model_utils.initialize_weights(self)
-    
-    def build_output(
-        self,
-        activation: nn.Module,
-        hidden_sizes: List[int],
-        dropout: float,
-        input_dim: int,
-    ):
-        num_layers = len(hidden_sizes)
-        ffn = [
-                nn.Linear(input_dim, hidden_sizes[0])
-            ]
-        for i, layer in enumerate(range(num_layers - 1)):
-            ffn.extend(
-                [
-                    activation,
-                    nn.Dropout(dropout),
-                    nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]),
-                ]
-                )
-        ffn.extend(
-            [
-                activation,
-                nn.Dropout(dropout),
-                nn.Linear(hidden_sizes[-1], 1),
-            ]
-        )
-        return nn.Sequential(*ffn)
-
-    def forward(self, batch, probs: Optional[torch.Tensor]=None):
-        """
-        batch: a N x K x 1 tensor of N training samples
-            each sample contains a positive rxn on the first column,
-            and K-1 negative rxns on all subsequent columns
-        """
-        graph_tensors, scopes, batch_size = batch
-        hatom_r, hmol_r = self.encoder_r(graph_tensors=graph_tensors,
-                                   scopes=scopes)
-        hatom_p, hmol_p = self.encoder_p(graph_tensors=graph_tensors,
-                                   scopes=scopes)
-
-        if self.mol_pool_type == "sum":
-            hmol_r = [torch.sum(h, dim=0, keepdim=True) for h in hmol_r]        # list of [n_molecules, h] => list of [1, h]
-            hmol_p = [torch.sum(h, dim=0, keepdim=True) for h in hmol_p]
-        elif self.mol_pool_type == "mean":
-            hmol_r = [torch.mean(h, dim=0, keepdim=True) for h in hmol_r]
-            hmol_p = [torch.mean(h, dim=0, keepdim=True) for h in hmol_p]
-        else:
-            raise NotImplementedError(f"Unsupported mol_pool_type {self.mol_pool_type}! "
-                                      f"Please use sum/mean")
-        batch_pooled_hmols = []
-    
-        mols_per_minibatch = len(hmol_r) // batch_size // self.num_devices  # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
-        for i in range(batch_size):
-            if self.reactant_first:                         # (1) r + mini_bsz p
-                r_hmol = hmol_r[i*mols_per_minibatch]                           # [1, h]
-                r_hmols = r_hmol.repeat(mols_per_minibatch - 1, 1)              # [mini_bsz, h]
-                p_hmols = hmol_p[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                p_hmols = torch.cat(p_hmols, 0)                                 # [mini_bsz, h]
-            else:
-                p_hmols = hmol_p[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
-                p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
-                r_hmols = hmol_r[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                r_hmols = torch.cat(r_hmols, 0)
-
-            diff = p_hmols - r_hmols # torch.abs(p_hmols - r_hmols)             # [mini_bsz, h]
-            prod = p_hmols * r_hmols                                            # [mini_bsz, h]
-
-            pooled_hmols = torch.cat([r_hmols, p_hmols, diff, prod], 1)         # [mini_bsz, h*4]
-            pooled_hmols = torch.unsqueeze(pooled_hmols, 0)                     # [1, mini_bsz, h*4]
-
-            batch_pooled_hmols.append(pooled_hmols)
-
-        batch_pooled_hmols = torch.cat(batch_pooled_hmols, 0)                   # [bsz, mini_bsz, h*4]
-        energies = self.output(batch_pooled_hmols)                              # [bsz, mini_bsz, 1]
         return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]

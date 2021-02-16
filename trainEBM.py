@@ -106,7 +106,8 @@ def parse_args():
     parser.add_argument("--fp_type", help="fp type", type=str, default="count")
     # training params
     parser.add_argument("--loss_type", help="type of EBM loss ['log', 'hinge']", type=str, default="log")
-    parser.add_argument("--loss_margin", help="margin for hinge loss", type=float, default=1)
+    parser.add_argument("--loss_margin", help="margin for hinge loss, provide multiple values for differential margin [top-2,top-3_to_5,top-5_to_10]etc.", 
+                        type=float, nargs='+', default=[1])
     parser.add_argument("--batch_size", help="batch_size", type=int, default=128)
     parser.add_argument("--batch_size_eval", help="batch_size", type=int, default=128)
     parser.add_argument("--grad_clip", help="gradient clipping", type=float, default=5)

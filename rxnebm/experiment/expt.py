@@ -8,7 +8,7 @@ import time
 from functools import partial
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union, List
 
 import pandas as pd
 import numpy as np
@@ -609,7 +609,7 @@ class Experiment:
 
     def _one_batch(
         self, batch: Tensor, mask: Tensor,
-        loss_type: str = 'log', margin: float = 1,
+        loss_type: str = 'log', margin: List[float] = [1],
         probs: Optional[Tensor] = None, backprop: bool = True):
         """
         Passes one batch of samples through model to get energies & loss
@@ -627,9 +627,13 @@ class Experiment:
             elif loss_type == 'hinge':
                 # two choices: 1, just choose most offending incorrect energy (using min I guess)
                 # 2, backprop energy diff of energies from all minibatch negatives (DOING NOW)
-                diff = energies[:, 0].unsqueeze(-1) - energies[:, 1:] + margin
-                loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
-                # loss = ((diff > 0) * diff).sum() # gives nan loss
+                if len(margin) == 1: # no differential margin
+                    diff = energies[:, 0].unsqueeze(-1) - energies[:, 1:] + margin[0]
+                elif len(margin) == 2: # top-1 vs top-2+
+                    diff_top1 = energies[:, 0].unsqueeze(-1) - energies[:, 1] + margin[0]
+                    diff_top2 = energies[:, 0].unsqueeze(-1) - energies[:, 2:] + margin[1]
+                    loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                    loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -779,8 +783,16 @@ class Experiment:
                             mask = columns != batch_true_ranks_valid.reshape(-1, 1)
                             energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
 
-                            diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin
-                            batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                            if len(self.args.loss_margin) == 1: # no differential margin
+                                diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
+                            elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                                diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
+                                diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
+                                batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                                batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+
+                            # diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin
+                            # batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
                     
                         for k in self.k_to_calc:
                             # index with lowest energy is what the model deems to be the most feasible rxn
@@ -833,8 +845,14 @@ class Experiment:
                             batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item()
                         
                         elif self.args.loss_type == 'hinge':
-                            diff = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:] + self.args.loss_margin
-                            batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                            if len(self.args.loss_margin) == 1: # no differential margin
+                                diff = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:] + self.args.loss_margin[0]
+                                batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                            elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                                diff_top1 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1] + self.args.loss_margin[0]
+                                diff_top2 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 2:] + self.args.loss_margin[1]
+                                batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                                batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
 
                         # calculate top-k acc assuming true index is 0 (for pre-training step)
                         for k in self.k_to_calc:
@@ -1014,9 +1032,14 @@ class Experiment:
                         columns = np.array(list(range(energies_valid.shape[1]))).reshape(-1, energies_valid.shape[1])
                         mask = columns != batch_true_ranks_valid.reshape(-1, 1)
                         energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
-                        
-                        diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin
-                        batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+
+                        if len(self.args.loss_margin) == 1: # no differential margin
+                            diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
+                        elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                            diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
+                            diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
+                            batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                            batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
 
                     for k in self.k_to_test:
                         # index with lowest energy is what the model deems to be the most feasible rxn
@@ -1067,11 +1090,17 @@ class Experiment:
 
                 else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
                     if self.args.loss_type == 'log':
-                        batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
-
+                        batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item()
+                    
                     elif self.args.loss_type == 'hinge':
-                        diff = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:] + margin
-                        loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                        if len(self.args.loss_margin) == 1: # no differential margin
+                            diff = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:] + self.args.loss_margin[0]
+                            batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                        elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                            diff_top1 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1] + self.args.loss_margin[0]
+                            diff_top2 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 2:] + self.args.loss_margin[1]
+                            batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                            batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
 
                     # calculate top-k acc assuming true index is 0 (for pre-training step)
                     for k in self.k_to_test:
@@ -1119,504 +1148,506 @@ class Experiment:
         torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
     def train_distributed(self):
-        torch.cuda.synchronize()
-        self.start = time.time()  # timeit.default_timer()
-        self.to_break = 0
-        self.val_sampler.set_epoch(0) # no need to change this throughout training
-        for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
-            self.train_sampler.set_epoch(epoch)
-            self.model.train()
-            train_loss, train_correct_preds = 0, defaultdict(int)
-            epoch_train_size = 0
-            if self.rank == 0:
-                train_loader = tqdm(self.train_loader, desc='training...')
-            else:
-                train_loader = self.train_loader
-            dist.barrier()
-            for i, batch in enumerate(train_loader):
-                batch_data = batch[0]
-                if not isinstance(batch_data, tuple):
-                    batch_data = batch_data.cuda(non_blocking=True)
-                if self.model_name == 'TransformerEBM':
-                    batch_data = (batch_data, 'train')
-                batch_mask = batch[1].cuda(non_blocking=True)
-                if self.args.prob_file_prefix:
-                    batch_probs = batch[3].cuda(non_blocking=True)
-                    batch_loss, batch_energies = self._one_batch(
-                        batch_data, batch_mask, batch_probs, backprop=True,
-                        loss_type=self.args.loss_type, margin=self.args.loss_margin
-                    )
-                else:
-                    batch_loss, batch_energies = self._one_batch(
-                        batch_data, batch_mask, backprop=True,
-                        loss_type=self.args.loss_type, margin=self.args.loss_margin
-                    )
-                batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
-                dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
-                batch_loss = batch_loss.item()
-                train_loss += batch_loss
+        raise NotImplementedError
+    #     torch.cuda.synchronize()
+    #     self.start = time.time()  # timeit.default_timer()
+    #     self.to_break = 0
+    #     self.val_sampler.set_epoch(0) # no need to change this throughout training
+    #     for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
+    #         self.train_sampler.set_epoch(epoch)
+    #         self.model.train()
+    #         train_loss, train_correct_preds = 0, defaultdict(int)
+    #         epoch_train_size = 0
+    #         if self.rank == 0:
+    #             train_loader = tqdm(self.train_loader, desc='training...')
+    #         else:
+    #             train_loader = self.train_loader
+    #         dist.barrier()
+    #         for i, batch in enumerate(train_loader):
+    #             batch_data = batch[0]
+    #             if not isinstance(batch_data, tuple):
+    #                 batch_data = batch_data.cuda(non_blocking=True)
+    #             if self.model_name == 'TransformerEBM':
+    #                 batch_data = (batch_data, 'train')
+    #             batch_mask = batch[1].cuda(non_blocking=True)
+    #             if self.args.prob_file_prefix:
+    #                 batch_probs = batch[3].cuda(non_blocking=True)
+    #                 batch_loss, batch_energies = self._one_batch(
+    #                     batch_data, batch_mask, batch_probs, backprop=True,
+    #                     loss_type=self.args.loss_type, margin=self.args.loss_margin
+    #                 )
+    #             else:
+    #                 batch_loss, batch_energies = self._one_batch(
+    #                     batch_data, batch_mask, backprop=True,
+    #                     loss_type=self.args.loss_type, margin=self.args.loss_margin
+    #                 )
+    #             batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
+    #             dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
+    #             batch_loss = batch_loss.item()
+    #             train_loss += batch_loss
 
-                if math.isnan(train_loss):
-                    raise ValueError('Training loss is nan')
-                    # if self.rank == 0:
-                    #     msg = 'Training loss is nan and training diverged! Reloading from best checkpoint w/ reduced LR'
-                    #     logging.info(msg)
-                    #     msg += f'\n{self.expt_name}'
-                    #     try:
-                    #         send_message(message)
-                    #     except Exception as e:
-                    #         logging.info(e)
-                    # return True, self.optimizer.param_groups[0]["lr"], epoch
+    #             if math.isnan(train_loss):
+    #                 raise ValueError('Training loss is nan')
+    #                 # if self.rank == 0:
+    #                 #     msg = 'Training loss is nan and training diverged! Reloading from best checkpoint w/ reduced LR'
+    #                 #     logging.info(msg)
+    #                 #     msg += f'\n{self.expt_name}'
+    #                 #     try:
+    #                 #         send_message(message)
+    #                 #     except Exception as e:
+    #                 #         logging.info(e)
+    #                 # return True, self.optimizer.param_groups[0]["lr"], epoch
 
-                train_batch_size = batch_energies.shape[0]
-                train_batch_size = torch.tensor([train_batch_size]).cuda(self.gpu, non_blocking=True)
-                dist.all_reduce(train_batch_size, dist.ReduceOp.SUM)
-                train_batch_size = train_batch_size.item()
-                epoch_train_size += train_batch_size
+    #             train_batch_size = batch_energies.shape[0]
+    #             train_batch_size = torch.tensor([train_batch_size]).cuda(self.gpu, non_blocking=True)
+    #             dist.all_reduce(train_batch_size, dist.ReduceOp.SUM)
+    #             train_batch_size = train_batch_size.item()
+    #             epoch_train_size += train_batch_size
                 
-                if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
-                    self.lr_scheduler.step(epoch + i / self.train_size - self.args.lr_scheduler_epoch_offset)
-                elif self.lr_scheduler_name == 'OneCycleLR':
-                    self.lr_scheduler.step()
+    #             if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
+    #                 self.lr_scheduler.step(epoch + i / self.train_size - self.args.lr_scheduler_epoch_offset)
+    #             elif self.lr_scheduler_name == 'OneCycleLR':
+    #                 self.lr_scheduler.step()
                     
-                for k in self.k_to_calc: # various top-k accuracies
-                    # index with lowest energy is what the model deems to be the most feasible rxn 
-                    batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
-                    # for training, true rxn is always at 0th-index 
-                    batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0]
-                    batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
-                    dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
-                    batch_correct_preds = batch_correct_preds.item()
+    #             for k in self.k_to_calc: # various top-k accuracies
+    #                 # index with lowest energy is what the model deems to be the most feasible rxn 
+    #                 batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
+    #                 # for training, true rxn is always at 0th-index 
+    #                 batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0]
+    #                 batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
+    #                 dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+    #                 batch_correct_preds = batch_correct_preds.item()
 
-                    train_correct_preds[k] += batch_correct_preds
-                    dist.barrier()
-                    if k == 1:
-                        running_top1_acc = train_correct_preds[k] / epoch_train_size
-                    elif k == 5:
-                        running_top5_acc = train_correct_preds[k] / epoch_train_size
-                    elif k == 10:
-                        running_top10_acc = train_correct_preds[k] / epoch_train_size
-                if 5 not in self.k_to_calc:
-                    running_top5_acc = np.nan
-                if 10 not in self.k_to_calc:
-                    running_top10_acc = np.nan
+    #                 train_correct_preds[k] += batch_correct_preds
+    #                 dist.barrier()
+    #                 if k == 1:
+    #                     running_top1_acc = train_correct_preds[k] / epoch_train_size
+    #                 elif k == 5:
+    #                     running_top5_acc = train_correct_preds[k] / epoch_train_size
+    #                 elif k == 10:
+    #                     running_top10_acc = train_correct_preds[k] / epoch_train_size
+    #             if 5 not in self.k_to_calc:
+    #                 running_top5_acc = np.nan
+    #             if 10 not in self.k_to_calc:
+    #                 running_top10_acc = np.nan
                 
-                if self.rank == 0:
-                    train_loader.set_description(f"training (epoch {epoch}): loss={train_loss/epoch_train_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
-                    train_loader.refresh()
+    #             if self.rank == 0:
+    #                 train_loader.set_description(f"training (epoch {epoch}): loss={train_loss/epoch_train_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
+    #                 train_loader.refresh()
             
-            for k in self.k_to_calc:
-                self.train_topk_accs[k].append(train_correct_preds[k] / epoch_train_size)
-            self.train_losses.append(train_loss / epoch_train_size)
-            dist.barrier()
+    #         for k in self.k_to_calc:
+    #             self.train_topk_accs[k].append(train_correct_preds[k] / epoch_train_size)
+    #         self.train_losses.append(train_loss / epoch_train_size)
+    #         dist.barrier()
 
-            # validation
-            self.model.eval()
-            with torch.no_grad():
-                val_loss, val_correct_preds = 0, defaultdict(int)
-                if self.rank == 0:
-                    val_loader = tqdm(self.val_loader, desc='validating...')
-                else:
-                    val_loader = self.val_loader
-                epoch_val_size = 0
-                for i, batch in enumerate(val_loader):
-                    # if i > 1:
-                    #     break
-                    batch_data = batch[0]
-                    if not isinstance(batch_data, tuple):
-                        batch_data = batch_data.cuda(non_blocking=True)
-                    if self.model_name == 'TransformerEBM':
-                        batch_data = (batch_data, 'valid')
-                    batch_mask = batch[1].cuda(non_blocking=True)
-                    if self.args.prob_file_prefix:
-                        batch_probs = batch[3].cuda(non_blocking=True)
-                        batch_energies = self._one_batch(
-                            batch_data, batch_mask, batch_probs, backprop=False,
-                            loss_type=self.args.loss_type, margin=self.args.loss_margin
-                        )
-                    else:
-                        batch_energies = self._one_batch(
-                            batch_data, batch_mask, backprop=False,
-                            loss_type=self.args.loss_type, margin=self.args.loss_margin
-                        )
-                    val_batch_size = batch_energies.shape[0]
-                    val_batch_size = torch.tensor([val_batch_size]).cuda(self.gpu, non_blocking=True)
-                    dist.all_reduce(val_batch_size, dist.ReduceOp.SUM)
-                    val_batch_size = val_batch_size.item()
-                    epoch_val_size += val_batch_size
+    #         # validation
+    #         self.model.eval()
+    #         with torch.no_grad():
+    #             val_loss, val_correct_preds = 0, defaultdict(int)
+    #             if self.rank == 0:
+    #                 val_loader = tqdm(self.val_loader, desc='validating...')
+    #             else:
+    #                 val_loader = self.val_loader
+    #             epoch_val_size = 0
+    #             for i, batch in enumerate(val_loader):
+    #                 # if i > 1:
+    #                 #     break
+    #                 batch_data = batch[0]
+    #                 if not isinstance(batch_data, tuple):
+    #                     batch_data = batch_data.cuda(non_blocking=True)
+    #                 if self.model_name == 'TransformerEBM':
+    #                     batch_data = (batch_data, 'valid')
+    #                 batch_mask = batch[1].cuda(non_blocking=True)
+    #                 if self.args.prob_file_prefix:
+    #                     batch_probs = batch[3].cuda(non_blocking=True)
+    #                     batch_energies = self._one_batch(
+    #                         batch_data, batch_mask, batch_probs, backprop=False,
+    #                         loss_type=self.args.loss_type, margin=self.args.loss_margin
+    #                     )
+    #                 else:
+    #                     batch_energies = self._one_batch(
+    #                         batch_data, batch_mask, backprop=False,
+    #                         loss_type=self.args.loss_type, margin=self.args.loss_margin
+    #                     )
+    #                 val_batch_size = batch_energies.shape[0]
+    #                 val_batch_size = torch.tensor([val_batch_size]).cuda(self.gpu, non_blocking=True)
+    #                 dist.all_reduce(val_batch_size, dist.ReduceOp.SUM)
+    #                 val_batch_size = val_batch_size.item()
+    #                 epoch_val_size += val_batch_size
 
-                    # for validation/test data, true rxn may not be present!
-                    # only provide for finetuning step on retro proposals
-                    if self.args.do_finetune:
-                        batch_idx = batch[2] # List
-                        batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
-                        batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
-                        batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                        # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
-                        # (bcos nothing in the numerator, loss is undefined)
-                        loss_numerator = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                            batch_true_ranks_valid
-                        ]
-                        loss_denominator = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                            :
-                        ]
-                        batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
+    #                 # for validation/test data, true rxn may not be present!
+    #                 # only provide for finetuning step on retro proposals
+    #                 if self.args.do_finetune:
+    #                     batch_idx = batch[2] # List
+    #                     batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
+    #                     batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
+    #                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+    #                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
+    #                     # (bcos nothing in the numerator, loss is undefined)
+    #                     loss_numerator = batch_energies[
+    #                         np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+    #                         batch_true_ranks_valid
+    #                     ]
+    #                     loss_denominator = batch_energies[
+    #                         np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+    #                         :
+    #                     ]
+    #                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
 
-                        for k in self.k_to_calc:
-                            # index with lowest energy is what the model deems to be the most feasible rxn
-                            batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
-                            batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
-                            batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
-                            dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
-                            batch_correct_preds = batch_correct_preds.item()
+    #                     for k in self.k_to_calc:
+    #                         # index with lowest energy is what the model deems to be the most feasible rxn
+    #                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
+    #                         batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+    #                         batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
+    #                         dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+    #                         batch_correct_preds = batch_correct_preds.item()
 
-                            val_correct_preds[k] += batch_correct_preds
-                            dist.barrier()
-                            if k == 1:
-                                running_top1_acc = val_correct_preds[k] / epoch_val_size
-                                if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                                    try:
-                                        for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                            if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
-                                                rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                                rxn_true_rank = batch_true_ranks_array[rxn_idx]
-                                                rxn_pred_rank = batch_preds[rxn_idx, 0].item()
-                                                rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
-                                                rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
-                                                rxn_orig_energy = batch_energies[rxn_idx, 0].item()
-                                                rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
-                                                rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
+    #                         val_correct_preds[k] += batch_correct_preds
+    #                         dist.barrier()
+    #                         if k == 1:
+    #                             running_top1_acc = val_correct_preds[k] / epoch_val_size
+    #                             if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+    #                                 try:
+    #                                     for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
+    #                                         if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
+    #                                             rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+    #                                             rxn_true_rank = batch_true_ranks_array[rxn_idx]
+    #                                             rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+    #                                             rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+    #                                             rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+    #                                             rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+    #                                             rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+    #                                             rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
 
-                                                rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
-                                                rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
-                                                rxn_cand_precs = self.proposals_data['valid'][batch_idx[rxn_idx], 3:]
-                                                rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
-                                                rxn_orig_prec = rxn_cand_precs[0]
-                                                rxn_orig_prec2 = rxn_cand_precs[1]
-                                                rxn_orig_prec3 = rxn_cand_precs[2]
-                                                logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
-                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
-                                                if rxn_true_energy == 'NaN':
-                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
-                                                else:
-                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
-                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
-                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
-                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
-                                                break
-                                    except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
-                                        tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                                        logging.info("".join(tb_str))
-                                        logging.info('\nIndex out of range (last minibatch)')
-                                dist.barrier()
-                            elif k == 5:
-                                running_top5_acc = val_correct_preds[k] / epoch_val_size
-                            elif k == 10:
-                                running_top10_acc = val_correct_preds[k] / epoch_val_size
-                    else:       # for pre-training step w/ synthetic data, 0-th index is the positive rxn
-                        batch_true_ranks = 0
-                        batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
+    #                                             rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
+    #                                             rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
+    #                                             rxn_cand_precs = self.proposals_data['valid'][batch_idx[rxn_idx], 3:]
+    #                                             rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+    #                                             rxn_orig_prec = rxn_cand_precs[0]
+    #                                             rxn_orig_prec2 = rxn_cand_precs[1]
+    #                                             rxn_orig_prec3 = rxn_cand_precs[2]
+    #                                             logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+    #                                             logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+    #                                             if rxn_true_energy == 'NaN':
+    #                                                 logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
+    #                                             else:
+    #                                                 logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+    #                                             logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+    #                                             logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+    #                                             logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
+    #                                             break
+    #                                 except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
+    #                                     tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+    #                                     logging.info("".join(tb_str))
+    #                                     logging.info('\nIndex out of range (last minibatch)')
+    #                             dist.barrier()
+    #                         elif k == 5:
+    #                             running_top5_acc = val_correct_preds[k] / epoch_val_size
+    #                         elif k == 10:
+    #                             running_top10_acc = val_correct_preds[k] / epoch_val_size
+    #                 else:       # for pre-training step w/ synthetic data, 0-th index is the positive rxn
+    #                     batch_true_ranks = 0
+    #                     batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
 
-                        # calculate top-k acc assuming true index is 0 (for pre-training step)
-                        for k in self.k_to_calc:
-                            batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
-                            batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
-                            batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
-                            dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
-                            batch_correct_preds = batch_correct_preds.item()
+    #                     # calculate top-k acc assuming true index is 0 (for pre-training step)
+    #                     for k in self.k_to_calc:
+    #                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
+    #                         batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
+    #                         batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
+    #                         dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+    #                         batch_correct_preds = batch_correct_preds.item()
                             
-                            val_correct_preds[k] += batch_correct_preds
-                            dist.barrier()
-                            if k == 1:
-                                running_top1_acc = val_correct_preds[k] / epoch_val_size
-                            elif k == 5:
-                                running_top5_acc = val_correct_preds[k] / epoch_val_size
-                            elif k == 10:
-                                running_top10_acc = val_correct_preds[k] / epoch_val_size
-                    if 5 not in self.k_to_calc:
-                        running_top5_acc = np.nan
-                    if 10 not in self.k_to_calc:
-                        running_top10_acc = np.nan
+    #                         val_correct_preds[k] += batch_correct_preds
+    #                         dist.barrier()
+    #                         if k == 1:
+    #                             running_top1_acc = val_correct_preds[k] / epoch_val_size
+    #                         elif k == 5:
+    #                             running_top5_acc = val_correct_preds[k] / epoch_val_size
+    #                         elif k == 10:
+    #                             running_top10_acc = val_correct_preds[k] / epoch_val_size
+    #                 if 5 not in self.k_to_calc:
+    #                     running_top5_acc = np.nan
+    #                 if 10 not in self.k_to_calc:
+    #                     running_top10_acc = np.nan
 
-                    batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
-                    dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
-                    batch_loss = batch_loss.item()
-                    val_loss += batch_loss
+    #                 batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
+    #                 dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
+    #                 batch_loss = batch_loss.item()
+    #                 val_loss += batch_loss
 
-                    if self.rank == 0:
-                        val_loader.set_description(f"validating (epoch {epoch}): loss={val_loss/epoch_val_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
-                        val_loader.refresh()
+    #                 if self.rank == 0:
+    #                     val_loader.set_description(f"validating (epoch {epoch}): loss={val_loss/epoch_val_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
+    #                     val_loader.refresh()
                 
-                for k in self.k_to_calc:
-                    self.val_topk_accs[k].append(val_correct_preds[k] / epoch_val_size)
-                self.val_losses.append(val_loss / epoch_val_size)
+    #             for k in self.k_to_calc:
+    #                 self.val_topk_accs[k].append(val_correct_preds[k] / epoch_val_size)
+    #             self.val_losses.append(val_loss / epoch_val_size)
 
-            is_best = False
-            # track best_epoch to facilitate loading of best checkpoint
-            if self.early_stop_criteria == 'loss':
-                if self.val_losses[-1] < self.min_val_loss:
-                    self.best_epoch = epoch
-                    self.min_val_loss = self.val_losses[-1]
-                    is_best = True
-            elif self.early_stop_criteria.split('_')[-1] == 'acc':
-                k = int(self.early_stop_criteria.split('_')[0][-1:])
-                val_acc_to_compare = self.val_topk_accs[k][-1]
-                if val_acc_to_compare > self.max_val_acc:
-                    self.best_epoch = epoch
-                    self.max_val_acc = val_acc_to_compare
-                    is_best = True
+    #         is_best = False
+    #         # track best_epoch to facilitate loading of best checkpoint
+    #         if self.early_stop_criteria == 'loss':
+    #             if self.val_losses[-1] < self.min_val_loss:
+    #                 self.best_epoch = epoch
+    #                 self.min_val_loss = self.val_losses[-1]
+    #                 is_best = True
+    #         elif self.early_stop_criteria.split('_')[-1] == 'acc':
+    #             k = int(self.early_stop_criteria.split('_')[0][-1:])
+    #             val_acc_to_compare = self.val_topk_accs[k][-1]
+    #             if val_acc_to_compare > self.max_val_acc:
+    #                 self.best_epoch = epoch
+    #                 self.max_val_acc = val_acc_to_compare
+    #                 is_best = True
             
-            if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
-                if self.rank == 0 and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
-                    self._checkpoint_model_and_opt(current_epoch=epoch)
-            else: # for G2E/S2E, models are small, is ok to save regularly
-                if self.rank == 0 and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
-                    self._checkpoint_model_and_opt(current_epoch=epoch)
+    #         if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
+    #             if self.rank == 0 and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+    #                 self._checkpoint_model_and_opt(current_epoch=epoch)
+    #         else: # for G2E/S2E, models are small, is ok to save regularly
+    #             if self.rank == 0 and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+    #                 self._checkpoint_model_and_opt(current_epoch=epoch)
 
-            dist.barrier()
-            torch.cuda.synchronize()
-            self._update_stats()
-            if self.early_stop:
-                self._check_earlystop(current_epoch=epoch)
-                if self.to_break:  # is it time to early stop?
-                    break
+    #         dist.barrier()
+    #         torch.cuda.synchronize()
+    #         self._update_stats()
+    #         if self.early_stop:
+    #             self._check_earlystop(current_epoch=epoch)
+    #             if self.to_break:  # is it time to early stop?
+    #                 break
 
-            if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
-                if self.args.lr_scheduler_criteria == 'loss':
-                    self.lr_scheduler.step(self.val_losses[-1])
-                elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
-                    self.lr_scheduler.step(self.val_topk_accs[1][-1])
-                logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
+    #         if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
+    #             if self.args.lr_scheduler_criteria == 'loss':
+    #                 self.lr_scheduler.step(self.val_losses[-1])
+    #             elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
+    #                 self.lr_scheduler.step(self.val_topk_accs[1][-1])
+    #             logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
 
-            if 3 in self.train_topk_accs:
-                epoch_top3_train_acc = self.train_topk_accs[3][-1]
-                epoch_top3_val_acc = self.val_topk_accs[3][-1]
-            else:
-                epoch_top3_train_acc = np.nan
-                epoch_top3_val_acc = np.nan
-            if 5 in self.train_topk_accs:
-                epoch_top5_train_acc = self.train_topk_accs[5][-1]
-                epoch_top5_val_acc = self.val_topk_accs[5][-1]
-            else:
-                epoch_top5_train_acc = np.nan
-                epoch_top5_val_acc = np.nan
-            if 10 in self.train_topk_accs:
-                epoch_top10_train_acc = self.train_topk_accs[10][-1]
-                epoch_top10_val_acc = self.val_topk_accs[10][-1]
-            else:
-                epoch_top10_train_acc = np.nan
-                epoch_top10_val_acc = np.nan
-            # if 20 in self.train_topk_accs:
-            #     epoch_top20_train_acc = self.train_topk_accs[20][-1]
-            #     epoch_top20_val_acc = self.val_topk_accs[20][-1]
-            # else:
-            #     epoch_top20_train_acc = np.nan
-            #     epoch_top20_val_acc = np.nan
-            if self.rank == 0:
-                message = f"\nEnd of epoch: {epoch}, \
-                    \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
-                    \ntop-3 train acc: {epoch_top3_train_acc:.4f}, top-5 train acc: {epoch_top5_train_acc:.4f}, \
-                    \ntop-10 train acc: {epoch_top10_train_acc:.4f}, \
-                    \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
-                    \ntop-3 val acc: {epoch_top3_val_acc:.4f}, top-5 val acc: {epoch_top5_val_acc:.4f} \
-                    \ntop-10 val acc: {epoch_top10_val_acc:.4f} \
-                    \n"
-                logging.info(message)
-                try:
-                    message += f'{self.expt_name}'
-                    send_message(message)
-                except Exception as e:
-                    logging.info(e)
-                    logging.info("Don't worry about this - just a small hack to send messages to Telegram")
-                # top-20 train acc: {epoch_top20_train_acc:.4f},
-                # , top-20 val acc: {epoch_top20_val_acc:.4f} 
-                if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
-                    logging.info('Stopping training as learning rate has dropped below 1e-6')
-                    break 
+    #         if 3 in self.train_topk_accs:
+    #             epoch_top3_train_acc = self.train_topk_accs[3][-1]
+    #             epoch_top3_val_acc = self.val_topk_accs[3][-1]
+    #         else:
+    #             epoch_top3_train_acc = np.nan
+    #             epoch_top3_val_acc = np.nan
+    #         if 5 in self.train_topk_accs:
+    #             epoch_top5_train_acc = self.train_topk_accs[5][-1]
+    #             epoch_top5_val_acc = self.val_topk_accs[5][-1]
+    #         else:
+    #             epoch_top5_train_acc = np.nan
+    #             epoch_top5_val_acc = np.nan
+    #         if 10 in self.train_topk_accs:
+    #             epoch_top10_train_acc = self.train_topk_accs[10][-1]
+    #             epoch_top10_val_acc = self.val_topk_accs[10][-1]
+    #         else:
+    #             epoch_top10_train_acc = np.nan
+    #             epoch_top10_val_acc = np.nan
+    #         # if 20 in self.train_topk_accs:
+    #         #     epoch_top20_train_acc = self.train_topk_accs[20][-1]
+    #         #     epoch_top20_val_acc = self.val_topk_accs[20][-1]
+    #         # else:
+    #         #     epoch_top20_train_acc = np.nan
+    #         #     epoch_top20_val_acc = np.nan
+    #         if self.rank == 0:
+    #             message = f"\nEnd of epoch: {epoch}, \
+    #                 \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
+    #                 \ntop-3 train acc: {epoch_top3_train_acc:.4f}, top-5 train acc: {epoch_top5_train_acc:.4f}, \
+    #                 \ntop-10 train acc: {epoch_top10_train_acc:.4f}, \
+    #                 \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
+    #                 \ntop-3 val acc: {epoch_top3_val_acc:.4f}, top-5 val acc: {epoch_top5_val_acc:.4f} \
+    #                 \ntop-10 val acc: {epoch_top10_val_acc:.4f} \
+    #                 \n"
+    #             logging.info(message)
+    #             try:
+    #                 message += f'{self.expt_name}'
+    #                 send_message(message)
+    #             except Exception as e:
+    #                 logging.info(e)
+    #                 logging.info("Don't worry about this - just a small hack to send messages to Telegram")
+    #             # top-20 train acc: {epoch_top20_train_acc:.4f},
+    #             # , top-20 val acc: {epoch_top20_val_acc:.4f} 
+    #             if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
+    #                 logging.info('Stopping training as learning rate has dropped below 1e-6')
+    #                 break 
 
-        if self.rank == 0:
-            logging.info(f'Total training time: {self.stats["train_time"]}')
+    #     if self.rank == 0:
+    #         logging.info(f'Total training time: {self.stats["train_time"]}')
         
-        return False, None, None
+    #     return False, None, None
 
     def test_distributed(self, saved_stats: Optional[dict] = None):
-        """
-        Evaluates the model on the test set
-        Parameters
-        ---------
-        saved_stats: Optional[dict]
-            Test statistics will be stored inside this stats file
-            Used to load existing stats file when loading a trained model from checkpoint
-        """
-        self.model.eval()
-        test_loss, test_correct_preds = 0, defaultdict(int)
-        if self.test_loader is None: # running G2E
-            self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
-        self.test_sampler.set_epoch(0)
-        if self.rank == 0:
-            test_loader = tqdm(self.test_loader, desc='testing...')
-        else:
-            test_loader = self.test_loader
-        self.k_to_test = [1, 2, 3, 5, 10, 20, 50]
-        for i in reversed(range(len(self.k_to_test))): 
-            # reversed so that removing that k won't affect current i wrt future k
-            if self.k_to_test[i] > self.args.minibatch_eval:
-                self.k_to_test.pop(i)
-        with torch.no_grad():
-            epoch_test_size = 0
-            for i, batch in enumerate(test_loader):
-                batch_data = batch[0]
-                if not isinstance(batch_data, tuple): # not sure what's the purpose of this
-                    batch_data = batch_data.cuda(non_blocking=True)
-                if self.model_name == 'TransformerEBM':
-                    batch_data = (batch_data, 'test')
-                batch_mask = batch[1].cuda(non_blocking=True)
-                if self.args.prob_file_prefix:
-                    batch_probs = batch[3].cuda(non_blocking=True)
-                    batch_energies = self._one_batch(
-                        batch_data, batch_mask, batch_probs, backprop=False,
-                        loss_type=self.args.loss_type, margin=self.args.loss_margin
-                    )
-                else:
-                    batch_energies = self._one_batch(
-                        batch_data, batch_mask, backprop=False,
-                        loss_type=self.args.loss_type, margin=self.args.loss_margin
-                    )
-                test_batch_size = batch_energies.shape[0]
-                test_batch_size = torch.tensor([test_batch_size]).cuda(self.gpu, non_blocking=True)
-                dist.all_reduce(test_batch_size, dist.ReduceOp.SUM)
-                test_batch_size = test_batch_size.item()
-                epoch_test_size += test_batch_size
+        raise NotImplementedError
+        # """
+        # Evaluates the model on the test set
+        # Parameters
+        # ---------
+        # saved_stats: Optional[dict]
+        #     Test statistics will be stored inside this stats file
+        #     Used to load existing stats file when loading a trained model from checkpoint
+        # """
+        # self.model.eval()
+        # test_loss, test_correct_preds = 0, defaultdict(int)
+        # if self.test_loader is None: # running G2E
+        #     self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
+        # self.test_sampler.set_epoch(0)
+        # if self.rank == 0:
+        #     test_loader = tqdm(self.test_loader, desc='testing...')
+        # else:
+        #     test_loader = self.test_loader
+        # self.k_to_test = [1, 2, 3, 5, 10, 20, 50]
+        # for i in reversed(range(len(self.k_to_test))): 
+        #     # reversed so that removing that k won't affect current i wrt future k
+        #     if self.k_to_test[i] > self.args.minibatch_eval:
+        #         self.k_to_test.pop(i)
+        # with torch.no_grad():
+        #     epoch_test_size = 0
+        #     for i, batch in enumerate(test_loader):
+        #         batch_data = batch[0]
+        #         if not isinstance(batch_data, tuple): # not sure what's the purpose of this
+        #             batch_data = batch_data.cuda(non_blocking=True)
+        #         if self.model_name == 'TransformerEBM':
+        #             batch_data = (batch_data, 'test')
+        #         batch_mask = batch[1].cuda(non_blocking=True)
+        #         if self.args.prob_file_prefix:
+        #             batch_probs = batch[3].cuda(non_blocking=True)
+        #             batch_energies = self._one_batch(
+        #                 batch_data, batch_mask, batch_probs, backprop=False,
+        #                 loss_type=self.args.loss_type, margin=self.args.loss_margin
+        #             )
+        #         else:
+        #             batch_energies = self._one_batch(
+        #                 batch_data, batch_mask, backprop=False,
+        #                 loss_type=self.args.loss_type, margin=self.args.loss_margin
+        #             )
+        #         test_batch_size = batch_energies.shape[0]
+        #         test_batch_size = torch.tensor([test_batch_size]).cuda(self.gpu, non_blocking=True)
+        #         dist.all_reduce(test_batch_size, dist.ReduceOp.SUM)
+        #         test_batch_size = test_batch_size.item()
+        #         epoch_test_size += test_batch_size
 
-                # for validation/test data, true rxn may not be present!
-                # only provide for finetuning step on retro proposals
-                if self.args.do_finetune:
-                    batch_idx = batch[2]
-                    batch_true_ranks_array = self.proposals_data['test'][batch_idx, 2].astype('int')
-                    batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
-                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
-                    # (bcos nothing in the numerator, loss is undefined)
-                    loss_numerator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                        batch_true_ranks_valid
-                    ]
-                    loss_denominator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                        :
-                    ]
-                    batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
+        #         # for validation/test data, true rxn may not be present!
+        #         # only provide for finetuning step on retro proposals
+        #         if self.args.do_finetune:
+        #             batch_idx = batch[2]
+        #             batch_true_ranks_array = self.proposals_data['test'][batch_idx, 2].astype('int')
+        #             batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
+        #             batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+        #             # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
+        #             # (bcos nothing in the numerator, loss is undefined)
+        #             loss_numerator = batch_energies[
+        #                 np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+        #                 batch_true_ranks_valid
+        #             ]
+        #             loss_denominator = batch_energies[
+        #                 np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+        #                 :
+        #             ]
+        #             batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item() 
 
-                    for k in self.k_to_test:
-                        # index with lowest energy is what the model deems to be the most feasible rxn
-                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
-                        batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
-                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
-                        dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
-                        batch_correct_preds = batch_correct_preds.item()
+        #             for k in self.k_to_test:
+        #                 # index with lowest energy is what the model deems to be the most feasible rxn
+        #                 batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
+        #                 batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+        #                 batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
+        #                 dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+        #                 batch_correct_preds = batch_correct_preds.item()
 
-                        test_correct_preds[k] += batch_correct_preds
-                        if k == 1:
-                            running_top1_acc = test_correct_preds[k] / epoch_test_size
-                            if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                                try:
-                                    for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                        if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
-                                            rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                            rxn_true_rank = batch_true_ranks_array[rxn_idx]
-                                            rxn_pred_rank = batch_preds[rxn_idx, 0].item()
-                                            rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
-                                            rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
-                                            rxn_orig_energy = batch_energies[rxn_idx, 0].item()
-                                            rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
-                                            rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
+        #                 test_correct_preds[k] += batch_correct_preds
+        #                 if k == 1:
+        #                     running_top1_acc = test_correct_preds[k] / epoch_test_size
+        #                     if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+        #                         try:
+        #                             for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
+        #                                 if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
+        #                                     rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+        #                                     rxn_true_rank = batch_true_ranks_array[rxn_idx]
+        #                                     rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+        #                                     rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+        #                                     rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+        #                                     rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+        #                                     rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+        #                                     rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
 
-                                            rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
-                                            rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
-                                            rxn_cand_precs = self.proposals_data['test'][batch_idx[rxn_idx], 3:]
-                                            rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
-                                            rxn_orig_prec = rxn_cand_precs[0]
-                                            rxn_orig_prec2 = rxn_cand_precs[1]
-                                            rxn_orig_prec3 = rxn_cand_precs[2]
-                                            logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
-                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
-                                            if rxn_true_energy == 'NaN':
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
-                                            else:
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
-                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
-                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
-                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
-                                            break
-                                except Exception as e:
-                                    tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                                    logging.info("".join(tb_str))
-                                    logging.info('\nIndex out of range (last minibatch)')
-                        elif k == 5:
-                            running_top5_acc = test_correct_preds[k] / epoch_test_size
-                        elif k == 10:
-                            running_top10_acc = test_correct_preds[k] / epoch_test_size
-                        dist.barrier()
-                else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
-                    batch_true_ranks = 0
-                    batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
+        #                                     rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
+        #                                     rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
+        #                                     rxn_cand_precs = self.proposals_data['test'][batch_idx[rxn_idx], 3:]
+        #                                     rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+        #                                     rxn_orig_prec = rxn_cand_precs[0]
+        #                                     rxn_orig_prec2 = rxn_cand_precs[1]
+        #                                     rxn_orig_prec3 = rxn_cand_precs[2]
+        #                                     logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+        #                                     logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+        #                                     if rxn_true_energy == 'NaN':
+        #                                         logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
+        #                                     else:
+        #                                         logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+        #                                     logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+        #                                     logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+        #                                     logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
+        #                                     break
+        #                         except Exception as e:
+        #                             tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+        #                             logging.info("".join(tb_str))
+        #                             logging.info('\nIndex out of range (last minibatch)')
+        #                 elif k == 5:
+        #                     running_top5_acc = test_correct_preds[k] / epoch_test_size
+        #                 elif k == 10:
+        #                     running_top10_acc = test_correct_preds[k] / epoch_test_size
+        #                 dist.barrier()
+        #         else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
+        #             batch_true_ranks = 0
+        #             batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
 
-                    # calculate top-k acc assuming true index is 0 (for pre-training step)
-                    for k in self.k_to_test:
-                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
-                        batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
-                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
-                        dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
-                        batch_correct_preds = batch_correct_preds.item()
+        #             # calculate top-k acc assuming true index is 0 (for pre-training step)
+        #             for k in self.k_to_test:
+        #                 batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
+        #                 batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
+        #                 batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
+        #                 dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+        #                 batch_correct_preds = batch_correct_preds.item()
                         
-                        test_correct_preds[k] += batch_correct_preds
+        #                 test_correct_preds[k] += batch_correct_preds
 
-                        if k == 1:
-                            running_top1_acc = test_correct_preds[k] / epoch_test_size
-                        elif k == 5:
-                            running_top5_acc = test_correct_preds[k] / epoch_test_size
-                        elif k == 10:
-                            running_top10_acc = test_correct_preds[k] / epoch_test_size
-                        dist.barrier()
-                if 5 not in self.k_to_calc:
-                    running_top5_acc = np.nan
-                if 10 not in self.k_to_calc:
-                    running_top10_acc = np.nan
+        #                 if k == 1:
+        #                     running_top1_acc = test_correct_preds[k] / epoch_test_size
+        #                 elif k == 5:
+        #                     running_top5_acc = test_correct_preds[k] / epoch_test_size
+        #                 elif k == 10:
+        #                     running_top10_acc = test_correct_preds[k] / epoch_test_size
+        #                 dist.barrier()
+        #         if 5 not in self.k_to_calc:
+        #             running_top5_acc = np.nan
+        #         if 10 not in self.k_to_calc:
+        #             running_top10_acc = np.nan
                 
-                batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
-                dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
-                batch_loss = batch_loss.item()
-                test_loss += batch_loss
-                if self.rank == 0:
-                    test_loader.set_description(f"testing...loss={test_loss / test_batch_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
-                    test_loader.refresh()
+        #         batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
+        #         dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
+        #         batch_loss = batch_loss.item()
+        #         test_loss += batch_loss
+        #         if self.rank == 0:
+        #             test_loader.set_description(f"testing...loss={test_loss / test_batch_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
+        #             test_loader.refresh()
                 
-            for k in self.k_to_test:
-                self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size
+        #     for k in self.k_to_test:
+        #         self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size
 
-        if saved_stats:
-            self.stats = saved_stats
-        if len(self.stats.keys()) <= 2:
-            raise RuntimeError(
-                "self.stats only has 2 keys or less. If loading checkpoint, you need to provide load_stats!"
-            )
-        dist.barrier()
-        self.stats["test_loss"] = test_loss / epoch_test_size 
-        self.stats["test_topk_accs"] = self.test_topk_accs
-        message = f"{self.expt_name}\n"
-        if self.rank == 0:
-            logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
-            for k in self.k_to_test:
-                this_topk_message = f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%'
-                logging.info(this_topk_message)
-                message += this_topk_message + '\n'
-            try:
-                send_message(message)
-            except Exception as e:
-                pass
-            torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
+        # if saved_stats:
+        #     self.stats = saved_stats
+        # if len(self.stats.keys()) <= 2:
+        #     raise RuntimeError(
+        #         "self.stats only has 2 keys or less. If loading checkpoint, you need to provide load_stats!"
+        #     )
+        # dist.barrier()
+        # self.stats["test_loss"] = test_loss / epoch_test_size 
+        # self.stats["test_topk_accs"] = self.test_topk_accs
+        # message = f"{self.expt_name}\n"
+        # if self.rank == 0:
+        #     logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
+        #     for k in self.k_to_test:
+        #         this_topk_message = f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%'
+        #         logging.info(this_topk_message)
+        #         message += this_topk_message + '\n'
+        #     try:
+        #         send_message(message)
+        #     except Exception as e:
+        #         pass
+        #     torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
     def get_energies_and_loss_distributed(
         self,
@@ -1689,12 +1720,37 @@ class Experiment:
                     batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator)
-                    loss_numerator = batch_energies[
+                    if self.args.loss_type == 'log':
+                        loss_numerator = batch_energies[
                         np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
                         batch_true_ranks_valid
-                    ]
-                    loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], :]
-                    batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
+                        ]
+                        loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], :]
+                        batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
+                    
+                    elif self.args.loss_type == 'hinge':
+                        # a bit tricky as we need to 'delete' the column idxs corresponding to the positive energy in each row
+                        energies_pos = batch_energies[
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                            batch_true_ranks_valid
+                        ]
+
+                        energies_valid = batch_energies[
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                            :
+                        ]
+                        columns = np.array(list(range(energies_valid.shape[1]))).reshape(-1, energies_valid.shape[1])
+                        mask = columns != batch_true_ranks_valid.reshape(-1, 1)
+                        energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
+
+                        if len(self.args.loss_margin) == 1: # no differential margin
+                            diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
+                        elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                            diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
+                            diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
+                            batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                            batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                    
                     loss += batch_loss
 
                     energies_combined.append(batch_energies) 
@@ -1703,6 +1759,7 @@ class Experiment:
                 loss /= epoch_data_size
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
                 true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).cpu()
+
             else: # pre-training
                 energies_combined = []
                 epoch_data_size = 0
@@ -1722,7 +1779,18 @@ class Experiment:
 
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
 
-                loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
+                if self.args.loss_type == 'log':
+                    loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
+                
+                elif self.args.loss_type == 'hinge':
+                    if len(self.args.loss_margin) == 1: # no differential margin
+                        diff = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 1:] + self.args.loss_margin[0]
+                    elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                        diff_top1 = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 1] + self.args.loss_margin[0]
+                        diff_top2 = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 2:] + self.args.loss_margin[1]
+                        loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                        loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+
                 loss /= epoch_data_size
             logging.info(f"\nLoss on {phase} : {loss:.4f}")
 
