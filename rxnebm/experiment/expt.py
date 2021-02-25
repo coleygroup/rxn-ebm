@@ -179,9 +179,9 @@ class Experiment:
 
         self.train_losses = []
         self.val_losses = []
-        self.train_topk_accs = {}  
-        self.val_topk_accs = {}  
-        self.test_topk_accs = {} 
+        self.train_topk_accs = {}
+        self.val_topk_accs = {}
+        self.test_topk_accs = {}
         self.k_to_calc = [1, 2, 3, 5, 10, 50]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
         k_not_to_calc = []
         for k in self.k_to_calc:
@@ -189,8 +189,8 @@ class Experiment:
                 k_not_to_calc.append(k)
             else:   # init empty lists; 1 value will be appended to each list per epoch
                 self.train_topk_accs[k] = []
-                self.val_topk_accs[k] = []  
-                self.test_topk_accs[k] = None    
+                self.val_topk_accs[k] = []
+                self.test_topk_accs[k] = None
         for k in k_not_to_calc:
             self.k_to_calc.remove(k)
         
@@ -290,7 +290,10 @@ class Experiment:
 
     def _init_optimizer_and_stats(self): 
         logging.info("Initialising optimizer & stats...")
-        self.optimizer = model_utils.get_optimizer(self.optimizer_name)(self.model.parameters(), lr=self.learning_rate) 
+        self.optimizer = model_utils.get_optimizer(self.optimizer_name)(
+                                self.model.parameters(), lr=self.learning_rate,
+                                weight_decay=self.args.weight_decay
+                            )
         if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
             if self.args.lr_scheduler_criteria == 'acc':
@@ -822,7 +825,7 @@ class Experiment:
                                                 rxn_orig_prec = rxn_cand_precs[0]
                                                 rxn_orig_prec2 = rxn_cand_precs[1]
                                                 rxn_orig_prec3 = rxn_cand_precs[2]
-                                                logging.info(f'\ntrue product:                          \t\t\t\t{rxn_true_prod}')
+                                                logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
                                                 logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
                                                 if rxn_true_energy == 'NaN':
                                                     logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
@@ -1069,7 +1072,7 @@ class Experiment:
                                             rxn_orig_prec = rxn_cand_precs[0]
                                             rxn_orig_prec2 = rxn_cand_precs[1]
                                             rxn_orig_prec3 = rxn_cand_precs[2]
-                                            logging.info(f'\ntrue product:                          \t\t\t\t{rxn_true_prod}')
+                                            logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
                                             logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
                                             if rxn_true_energy == 'NaN':
                                                 logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')

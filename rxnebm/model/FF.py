@@ -138,11 +138,19 @@ class FeedforwardTriple3indiv3prod1cos(nn.Module):
             args.encoder_dropout, args.encoder_activation, args.encoder_hidden_size, self.difffp_size
         )
 
-        self.output_layer = self.build_encoder(
-            args.out_dropout, args.out_activation, args.out_hidden_sizes, args.encoder_hidden_size[-1] * 6 + 1,
-            output=True
-        )
-        
+        if len(args.out_hidden_sizes) > 0:
+            self.output_layer = self.build_encoder(
+                args.out_dropout, args.out_activation, args.out_hidden_sizes, args.encoder_hidden_size[-1] * 6 + 1,
+                output=True
+            )
+        else:
+            self.output_layer = nn.Sequential(
+                                    *[
+                                    nn.Dropout(args.out_dropout), 
+                                    nn.Linear(args.encoder_hidden_size[-1] * 6 + 1, 1) 
+                                    ]
+                                )
+
         model_utils.initialize_weights(self)
 
     def build(self):

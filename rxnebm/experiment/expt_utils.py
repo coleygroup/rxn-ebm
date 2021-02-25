@@ -147,7 +147,7 @@ def load_model_opt_and_stats(
         # override bug in name of optimizer when saving checkpoint
         saved_stats["train_args"]["optimizer"] = model_utils.get_optimizer(optimizer_name)
         saved_optimizer = saved_stats["train_args"]["optimizer"](
-            saved_model.parameters(), lr=args.learning_rate
+            saved_model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
         )
         # https://discuss.pytorch.org/t/missing-keys-unexpected-keys-in-state-dict-when-loading-self-trained-model/22379/14
         for key in list(checkpoint["state_dict"].keys()):

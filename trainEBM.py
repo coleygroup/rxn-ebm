@@ -121,6 +121,7 @@ def parse_args():
     parser.add_argument("--milestone_lr", help="Epochs for MultiStepLR", type=int, nargs='+')
     parser.add_argument("--milestone_gamma", help="Gamma for MultiStepLR", type=float, default=0.4)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
+    parser.add_argument("--weight_decay", help="weight decay", type=float, default=0)
     parser.add_argument("--warmup_epochs", help="Num epochs to warm up LR (currently linearly) to given LR", 
                         type=int, default=0)
     parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < --lr_floor", 
@@ -182,7 +183,7 @@ def parse_args():
     parser.add_argument("--encoder_depth", help="MPN encoder_depth", type=int, default=3)
     parser.add_argument("--encoder_dropout", help="MPN/FFN encoder dropout", type=float, default=0.05)
     parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="PReLU")
-    parser.add_argument("--out_hidden_sizes", help="Output layer hidden sizes", type=int, nargs='+')
+    parser.add_argument("--out_hidden_sizes", help="Output layer hidden sizes", type=int, nargs='+', default=[])
     parser.add_argument("--out_activation", help="Output layer activation", type=str, default="PReLU")
     parser.add_argument("--out_dropout", help="Output layer dropout", type=float, default=0.2)
     parser.add_argument("--encoder_rnn_type", help="RNN type for graph encoder (gru/lstm)", type=str, default="gru")

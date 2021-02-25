@@ -22,6 +22,8 @@ separately stored .npz files will make it much easier.
 def rcts_prod_fps_from_rxn_smi(
     rxn_smi: str, fp_type: str, smi_to_fp_dict: dict, mol_fps: sparse_fp
 ) -> Tuple[sparse_fp, sparse_fp]:
+    ''' Try not to use this. It's quite slow actually
+    '''
     prod_smi = rxn_smi.split(">>")[-1]
     prod_idx = smi_to_fp_dict[prod_smi]
     prod_fp = mol_fps[prod_idx]
