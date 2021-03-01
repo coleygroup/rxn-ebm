@@ -21,45 +21,38 @@ def sequence_mask(lengths, maxlen: int):
 class S2E(nn.Module):
     def __init__(self, args,
                  vocab: Dict[str, int],
-                 embed_size: int,
-                 num_layers: int,
-                 hidden_size: int,
-                 num_heads: int,
-                 filter_size: int,
-                 dropout: float,
-                 attention_dropout: float,
-                 pooling_method: str,
                  **kwargs):
         super().__init__()
         self.model_repr = "TransformerEBM"
         self.args = args
         self.vocab = vocab
         self.vocab_size = len(vocab)
-        self.hidden_size = hidden_size
-        self.pooling_method = pooling_method
+        assert len(args.encoder_hidden_size) == 1
+        self.hidden_size = args.encoder_hidden_size[0]
+        self.pooling_method = args.s2e_pool_type
 
         self.encoder_embeddings = ONMTEmbeddings(
-            word_vec_size=embed_size,
+            word_vec_size=args.encoder_embed_size,
             word_vocab_size=self.vocab_size,
             word_padding_idx=self.vocab["_PAD"],
             position_encoding=True
         )
 
         self.encoder = TransformerEncoder(
-            num_layers=num_layers,
-            d_model=hidden_size,
-            heads=num_heads,
-            d_ff=filter_size,
-            dropout=dropout,
-            attention_dropout=attention_dropout,
+            num_layers=args.encoder_depth,
+            d_model=self.hidden_size,
+            heads=args.encoder_num_heads,
+            d_ff=args.encoder_filter_size,
+            dropout=args.encoder_dropout,
+            attention_dropout=args.attention_dropout,
             embeddings=self.encoder_embeddings,
             max_relative_positions=0
         )
 
         if self.args.prob_file_prefix:
-            self.output = nn.Linear(hidden_size + 1, 1)
+            self.output = nn.Linear(self.hidden_size + 1, 1)
         else:
-            self.output = nn.Linear(hidden_size, 1)
+            self.output = nn.Linear(self.hidden_size, 1)
         logging.info("Initializing weights for transformer")
         model_utils.initialize_weights(self, transformer=True)
 
