@@ -105,12 +105,12 @@ def parse_args():
     parser.add_argument("--rxn_type", help="aggregation type", type=str, default="hybrid_all")
     parser.add_argument("--fp_type", help="fp type", type=str, default="count")
     # training params
-    parser.add_argument("--loss_type", help="type of EBM loss ['log', 'hinge']", type=str, default="log")
+    parser.add_argument("--loss_type", help="type of EBM loss ['log', 'hinge', 'ReLU']", type=str, default="log")
     parser.add_argument("--loss_margin", help="margin for hinge loss, provide multiple values for differential margin [top-2,top-3_to_5,top-5_to_10]etc.", 
                         type=float, nargs='+', default=[1])
     parser.add_argument("--batch_size", help="batch_size", type=int, default=128)
     parser.add_argument("--batch_size_eval", help="batch_size", type=int, default=128)
-    parser.add_argument("--grad_clip", help="gradient clipping", type=float, default=5)
+    parser.add_argument("--grad_clip", help="gradient clipping, 0 means no clipping", type=float, default=0)
     parser.add_argument("--minibatch_size", help="minibatch size for smiles (training), i.e. max # of proposal rxn_smi allowed per rxn", 
                         type=int, default=32)
     parser.add_argument("--minibatch_eval", help="minibatch size for smiles (valid/test), i.e. max # of proposal rxn_smi allowed per rxn, for finetuning", 

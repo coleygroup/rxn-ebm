@@ -104,14 +104,17 @@ def get_lr_scheduler(scheduler: str) -> nn.Module:
     else:
         raise ValueError(f'Scheduler "{scheduler}" not supported.')
 
-def initialize_weights(model: nn.Module) -> None:
+def initialize_weights(model: nn.Module, transformer: bool = False) -> None:
     """
     Initializes the weights of a model in place.
     :param model: A PyTorch model.
     """
     for param in model.parameters():
         if param.dim() == 1:
-            nn.init.constant_(param, 0)
+            if transformer:
+                nn.init.constant_(param, 0.01)
+            else:
+                nn.init.constant_(param, 0)
         else:
             nn.init.xavier_normal_(param)
 

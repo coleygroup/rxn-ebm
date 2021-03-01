@@ -29,7 +29,9 @@ try:
                        bot_token=os.environ['BOT_TOKEN'])
 except Exception as e:
     pass
-    
+
+ReLU = nn.ReLU()
+
 class Experiment:
     """
     TODO: wandb/tensorboard for hyperparameter tuning
@@ -647,11 +649,15 @@ class Experiment:
                 # 2, backprop energy diff of energies from all minibatch negatives (DOING NOW)
                 if len(margin) == 1: # no differential margin
                     diff = energies[:, 0].unsqueeze(-1) - energies[:, 1:] + margin[0]
+                    loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
                 elif len(margin) == 2: # top-1 vs top-2+
                     diff_top1 = energies[:, 0].unsqueeze(-1) - energies[:, 1] + margin[0]
                     diff_top2 = energies[:, 0].unsqueeze(-1) - energies[:, 2:] + margin[1]
                     loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
                     loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+
+            elif loss_type == 'ReLU':
+                loss = ReLU(energies[:, 0].unsqueeze(-1) - energies[:, 1:]).sum()
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -814,7 +820,7 @@ class Experiment:
                             ]
                             batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
 
-                        elif self.args.loss_type == 'hinge':
+                        elif self.args.loss_type in ['hinge', 'ReLU']:
                             # a bit tricky as we need to 'delete' the column idxs corresponding to the positive energy in each row
                             energies_pos = batch_energies[
                                 np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
@@ -829,14 +835,17 @@ class Experiment:
                             mask = columns != batch_true_ranks_valid.reshape(-1, 1)
                             energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
 
-                            if len(self.args.loss_margin) == 1: # no differential margin
-                                diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
-                            elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                                diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
-                                diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
-                                batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                                batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
-
+                            if self.args.loss_type == 'hinge':
+                                if len(self.args.loss_margin) == 1: # no differential margin
+                                    diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
+                                    batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                                elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                                    diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
+                                    diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
+                                    batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                                    batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                            else: # ReLU
+                                batch_loss = ReLU(energies_pos.unsqueeze(-1) - energies_neg).sum()
 
                         for k in self.k_to_calc:
                             # index with lowest energy is what the model deems to be the most feasible rxn
@@ -902,6 +911,9 @@ class Experiment:
                                 diff_top2 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 2:] + self.args.loss_margin[1]
                                 batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
                                 batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                        
+                        elif self.args.loss_type == 'ReLU':
+                            batch_loss = ReLU(batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:]).sum()
 
                         # calculate top-k acc assuming true index is 0 (for pre-training step)
                         for k in self.k_to_calc:
@@ -1099,23 +1111,8 @@ class Experiment:
                             :
                         ]
                         batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
-                    
-                    elif self.args.loss_type == 'hinge':
-                        # a bit tricky as we need to 'delete' the column idxs corresponding to the positive energy in each row
-                        energies_pos = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                            batch_true_ranks_valid
-                        ]
-
-                        energies_valid = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                            :
-                        ]
-                        columns = np.array(list(range(energies_valid.shape[1]))).reshape(-1, energies_valid.shape[1])
-                        mask = columns != batch_true_ranks_valid.reshape(-1, 1)
-                        energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
                         
-                    elif self.args.loss_type == 'hinge':
+                    elif self.args.loss_type in ['hinge', 'ReLU']:
                         # a bit tricky as we need to 'delete' the column idxs corresponding to the positive energy in each row
                         energies_pos = batch_energies[
                             np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
@@ -1130,13 +1127,17 @@ class Experiment:
                         mask = columns != batch_true_ranks_valid.reshape(-1, 1)
                         energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
 
-                        if len(self.args.loss_margin) == 1: # no differential margin
-                            diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
-                        elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                            diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
-                            diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
-                            batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                            batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                        if self.args.loss_type == 'hinge':
+                            if len(self.args.loss_margin) == 1: # no differential margin
+                                diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
+                                batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                            elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                                diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
+                                diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
+                                batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                                batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                        else: # ReLU
+                            batch_loss = ReLU(energies_pos.unsqueeze(-1) - energies_neg).sum()
 
                     for k in self.k_to_test:
                         # index with lowest energy is what the model deems to be the most feasible rxn
@@ -1201,6 +1202,9 @@ class Experiment:
                             diff_top2 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 2:] + self.args.loss_margin[1]
                             batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
                             batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+
+                    elif self.args.loss_type == 'ReLU':
+                        batch_loss = ReLU(batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:]).sum()
 
                     # calculate top-k acc assuming true index is 0 (for pre-training step)
                     for k in self.k_to_test:

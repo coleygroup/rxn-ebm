@@ -60,8 +60,8 @@ class S2E(nn.Module):
             self.output = nn.Linear(hidden_size + 1, 1)
         else:
             self.output = nn.Linear(hidden_size, 1)
-        # logging.info("Initializing weights")
-        # model_utils.initialize_weights(self)
+        logging.info("Initializing weights for transformer")
+        model_utils.initialize_weights(self, transformer=True)
 
     def forward(self, batch, probs: Optional[Tensor] = None):
         """

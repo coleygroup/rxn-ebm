@@ -30,6 +30,8 @@ try:
 except Exception as e:
     pass
 
+ReLU = nn.ReLU()
+
 class Experiment:
     """
     TODO: wandb/tensorboard for hyperparameter tuning
@@ -599,7 +601,7 @@ class Experiment:
             model_state_dict = self.model.state_dict()
         checkpoint_dict = {
             "epoch": current_epoch,  # epochs are 0-indexed
-            "model_name": self.model_name,
+             "model_name": self.model_name,
             "state_dict": model_state_dict,
             "optimizer": self.optimizer.state_dict(),
             "stats": self.stats,
@@ -622,6 +624,7 @@ class Experiment:
         energies = self.model(batch, probs)  # size N x K
         # replace all-zero vectors with float('inf'), making those gradients 0 on backprop
         energies = torch.where(mask, energies, torch.tensor([float('inf')], device=mask.device))
+
         if backprop:
             if loss_type == 'log':
                 # for training only: positives are the 0-th index of each minibatch (row)
@@ -632,11 +635,15 @@ class Experiment:
                 # 2, backprop energy diff of energies from all minibatch negatives (DOING NOW)
                 if len(margin) == 1: # no differential margin
                     diff = energies[:, 0].unsqueeze(-1) - energies[:, 1:] + margin[0]
+                    loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
                 elif len(margin) == 2: # top-1 vs top-2+
                     diff_top1 = energies[:, 0].unsqueeze(-1) - energies[:, 1] + margin[0]
                     diff_top2 = energies[:, 0].unsqueeze(-1) - energies[:, 2:] + margin[1]
                     loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
                     loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+            
+            elif loss_type == 'ReLU':
+                loss = ReLU(energies[:, 0].unsqueeze(-1) - energies[:, 1:]).sum()
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -771,7 +778,7 @@ class Experiment:
                             ]
                             batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
 
-                        elif self.args.loss_type == 'hinge':
+                        elif self.args.loss_type in ['hinge', 'ReLU']:
                             # a bit tricky as we need to 'delete' the column idxs corresponding to the positive energy in each row
                             energies_pos = batch_energies[
                                 np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
@@ -786,17 +793,18 @@ class Experiment:
                             mask = columns != batch_true_ranks_valid.reshape(-1, 1)
                             energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
 
-                            if len(self.args.loss_margin) == 1: # no differential margin
-                                diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
-                            elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                                diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
-                                diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
-                                batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                                batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                            if self.args.loss_type == 'hinge':
+                                if len(self.args.loss_margin) == 1: # no differential margin
+                                    diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
+                                    batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                                elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                                    diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
+                                    diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
+                                    batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                                    batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                            else: # ReLU
+                                batch_loss = ReLU(energies_pos.unsqueeze(-1) - energies_neg).sum()
 
-                            # diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin
-                            # batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
-                    
                         for k in self.k_to_calc:
                             # index with lowest energy is what the model deems to be the most feasible rxn
                             batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
@@ -856,6 +864,9 @@ class Experiment:
                                 diff_top2 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 2:] + self.args.loss_margin[1]
                                 batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
                                 batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+
+                        elif self.args.loss_type == 'ReLU':
+                            batch_loss = ReLU(batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:]).sum()
 
                         # calculate top-k acc assuming true index is 0 (for pre-training step)
                         for k in self.k_to_calc:
@@ -1021,7 +1032,7 @@ class Experiment:
                         ]
                         batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
                     
-                    elif self.args.loss_type == 'hinge':
+                    elif self.args.loss_type in ['hinge', 'ReLU']:
                         # a bit tricky as we need to 'delete' the column idxs corresponding to the positive energy in each row
                         energies_pos = batch_energies[
                             np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
@@ -1036,13 +1047,17 @@ class Experiment:
                         mask = columns != batch_true_ranks_valid.reshape(-1, 1)
                         energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
 
-                        if len(self.args.loss_margin) == 1: # no differential margin
-                            diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
-                        elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                            diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
-                            diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
-                            batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                            batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                        if self.args.loss_type == 'hinge':
+                            if len(self.args.loss_margin) == 1: # no differential margin
+                                diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
+                                batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+                            elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                                diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
+                                diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
+                                batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                                batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                        else: # ReLU
+                            batch_loss = ReLU(energies_pos.unsqueeze(-1) - energies_neg).sum()
 
                     for k in self.k_to_test:
                         # index with lowest energy is what the model deems to be the most feasible rxn
@@ -1099,11 +1114,15 @@ class Experiment:
                         if len(self.args.loss_margin) == 1: # no differential margin
                             diff = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:] + self.args.loss_margin[0]
                             batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+
                         elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
                             diff_top1 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1] + self.args.loss_margin[0]
                             diff_top2 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 2:] + self.args.loss_margin[1]
                             batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
                             batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+
+                    elif self.args.loss_type == 'ReLU':
+                        batch_loss = ReLU(batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:]).sum()
 
                     # calculate top-k acc assuming true index is 0 (for pre-training step)
                     for k in self.k_to_test:
@@ -1149,6 +1168,240 @@ class Experiment:
             pass
 
         torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
+
+    def get_energies_and_loss_distributed(
+        self,
+        phase: str = "test",
+        save_energies: Optional[bool] = True,
+        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+    ) -> Tuple[Tensor, float]:
+        raise NotImplementedError('Please reload the best checkpoint and run expt.get_energies_and_loss() on a single GPU')
+
+    def get_energies_and_loss(
+        self,
+        phase: str = "test",
+        save_energies: Optional[bool] = True,
+        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+    ) -> Tuple[Tensor, float]:
+        """
+        Gets raw energy values from a trained model on a given dataloader 
+
+        Parameters
+        ----------
+        phase : str (Default = 'test') [train', 'test', 'valid']
+            whether to get energies from train/test/val phases
+        save_energies : Optional[bool] (Default = True)
+            whether to save the energy values to disk
+        name_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
+            name of the energy file to be saved
+            if None, defaults to f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
+        path_to_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
+            path to folder in which to save the energy outputs
+            if None, defaults to path/to/rxnebm/energies 
+
+        Returns
+        -------
+        energies : Tensor
+            energies of shape (# rxns, 1 + # neg rxns)
+        loss : float
+            the loss value on the provided dataset
+        """
+        if phase == "test":
+            dataloader = self.test_loader
+        elif phase == "train":
+            dataloader = self.train_loader
+        elif phase == "valid":
+            dataloader = self.val_loader
+
+        self.model.eval()
+        with torch.no_grad():
+            # for training, we know positive rxn is always the 0th-index, even during finetuning
+            if self.args.do_finetune and phase != 'train':
+                energies_combined, true_ranks = [], []
+                loss, epoch_data_size = 0, 0
+                for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
+                    batch_data = batch[0]
+                    if not isinstance(batch_data, tuple):
+                        batch_data = batch_data.to(self.device)
+                    if self.model_name == 'TransformerEBM':
+                        batch_data = (batch_data, phase)
+                    batch_mask = batch[1].to(self.device)
+                    batch_energies = self._one_batch(
+                        batch_data, batch_mask, backprop=False,
+                        loss_type=self.args.loss_type, margin=self.args.loss_margin
+                    ) 
+
+                    epoch_data_size += batch_energies.shape[0]
+
+                    batch_idx = batch[2]
+                    batch_true_ranks_array = self.proposals_data[phase][batch_idx, 2].astype('int')
+                    batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
+                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator)
+                    if self.args.loss_type == 'log':
+                        loss_numerator = batch_energies[
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
+                        batch_true_ranks_valid
+                        ]
+                        loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], :]
+                        batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
+                    
+                    elif self.args.loss_type in ['hinge', 'ReLU']:
+                        # a bit tricky as we need to 'delete' the column idxs corresponding to the positive energy in each row
+                        energies_pos = batch_energies[
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                            batch_true_ranks_valid
+                        ]
+
+                        energies_valid = batch_energies[
+                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                            :
+                        ]
+                        columns = np.array(list(range(energies_valid.shape[1]))).reshape(-1, energies_valid.shape[1])
+                        mask = columns != batch_true_ranks_valid.reshape(-1, 1)
+                        energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
+
+                        if self.args.loss_type == 'hinge':
+                            if len(self.args.loss_margin) == 1: # no differential margin
+                                diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
+                            elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                                diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
+                                diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
+                                batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                                batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                        else: # ReLU
+                            batch_loss = ReLU(energies_pos.unsqueeze(-1) - energies_neg).sum()
+                    loss += batch_loss
+
+                    energies_combined.append(batch_energies) 
+                    true_ranks.append(batch_true_ranks)
+
+                loss /= epoch_data_size
+                energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
+                true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).cpu()
+
+            else: # pre-training
+                energies_combined = []
+                epoch_data_size = 0
+                for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
+                    batch_data = batch[0]
+                    if not isinstance(batch_data, tuple):
+                        batch_data = batch_data.to(self.device)
+                    if self.model_name == 'TransformerEBM':
+                        batch_data = (batch_data, phase)
+                    batch_mask = batch[1].to(self.device)
+                    
+                    energies = self.model(batch_data)
+                    energies = torch.where(batch_mask, energies,
+                                        torch.tensor([float('inf')], device=batch_mask.device))
+                    energies_combined.append(energies)
+                    epoch_data_size += energies.shape[0]
+
+                energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
+
+                if self.args.loss_type == 'log':
+                    loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
+                
+                elif self.args.loss_type == 'hinge':
+                    if len(self.args.loss_margin) == 1: # no differential margin
+                        diff = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 1:] + self.args.loss_margin[0]
+                        loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
+
+                    elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
+                        diff_top1 = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 1] + self.args.loss_margin[0]
+                        diff_top2 = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 2:] + self.args.loss_margin[1]
+                        loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
+                        loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
+                
+                elif self.args.loss_type == 'ReLU':
+                    loss = ReLU(energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 1:]).sum()
+
+                loss /= epoch_data_size
+            logging.info(f"\nLoss on {phase} : {loss:.4f}")
+
+        if path_to_energies is None:
+            path_to_energies = Path(__file__).resolve().parents[1] / "energies"
+        else:
+            path_to_energies = Path(path_to_energies)
+        if name_energies is None:
+            name_energies = f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
+        if save_energies:
+            logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
+            torch.save(energies_combined, Path(path_to_energies / name_energies))
+
+        self.stats[f"{phase}_loss_best"] = loss
+        self.energies[phase] = energies_combined
+        if self.args.do_finetune and phase != 'train':
+            self.true_ranks[phase] = true_ranks.unsqueeze(dim=-1)
+            return energies_combined, loss, true_ranks
+        else:
+            return energies_combined, loss
+
+    def get_topk_acc(
+        self,
+        phase: str = "test",
+        k: int = 1,
+        message: Optional[str] = "",
+    ) -> Tensor:
+        """
+        Computes top-k accuracy of trained model in classifying feasible vs infeasible chemical rxns
+        (i.e. minimum energy assigned to label 0 of each training sample)
+
+        Parameters
+        ----------
+        phase : str (Default = 'test') [train', 'test', 'valid']
+            whether to get energies from train/test/valid phases
+        save_energies: bool (Default = True)
+            whether to save the generated energies tensor to disk
+        name_energies: Union[str, bytes, os.PathLike] (Default = None)
+            filename of energies to save as a .pkl file
+            If None, automatically set to 'energies_<phase>_<self.expt_name>'
+
+        Returns
+        -------
+        energies: tensor
+            energies of shape (# rxns, 1 + # neg rxns)
+
+        Also see: self.get_energies_and_loss()
+        """
+        if self.args.do_finetune and phase != 'train':
+            if phase not in self.energies:
+                energies, loss, true_ranks = self.get_energies_and_loss(phase=phase)
+            if self.energies[phase].shape[1] >= k: 
+                pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
+                topk_accuracy = torch.where(pred_labels == self.true_ranks[phase])[0].shape[0] / pred_labels.shape[0]
+
+                self.stats[f"{phase}_top{k}_acc_best"] = topk_accuracy
+                torch.save(self.stats, self.stats_filename)
+
+                this_topk_message = f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%"
+                logging.info(this_topk_message)
+                message += this_topk_message + '\n'
+            else:
+                logging.info(f'{k} out of range for dimension 1 on ({phase})')
+
+        else: # true rank is always 0
+            if phase not in self.energies:
+                energies, loss = self.get_energies_and_loss(phase=phase)
+                self.energies[phase] = energies
+                self.stats[f"{phase}_loss_best"] = loss
+            
+            if self.energies[phase].shape[1] >= k: 
+                pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
+                topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0] 
+
+                self.stats[f"{phase}_top{k}_acc_best"] = topk_accuracy
+                torch.save(self.stats, self.stats_filename)
+
+                this_topk_message = f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%"
+                logging.info(this_topk_message)
+                message += this_topk_message + '\n'
+            else:
+                logging.info(f'{k} out of range for dimension 1 on ({phase})')
+        return message
+
 
     def train_distributed(self):
         raise NotImplementedError
@@ -1652,232 +1905,6 @@ class Experiment:
         #         pass
         #     torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
-    def get_energies_and_loss_distributed(
-        self,
-        phase: str = "test",
-        save_energies: Optional[bool] = True,
-        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
-        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
-    ) -> Tuple[Tensor, float]:
-        raise NotImplementedError('Please reload the best checkpoint and run expt.get_energies_and_loss() on a single GPU')
-
-    def get_energies_and_loss(
-        self,
-        phase: str = "test",
-        save_energies: Optional[bool] = True,
-        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
-        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
-    ) -> Tuple[Tensor, float]:
-        """
-        Gets raw energy values from a trained model on a given dataloader 
-
-        Parameters
-        ----------
-        phase : str (Default = 'test') [train', 'test', 'valid']
-            whether to get energies from train/test/val phases
-        save_energies : Optional[bool] (Default = True)
-            whether to save the energy values to disk
-        name_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
-            name of the energy file to be saved
-            if None, defaults to f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
-        path_to_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
-            path to folder in which to save the energy outputs
-            if None, defaults to path/to/rxnebm/energies 
-
-        Returns
-        -------
-        energies : Tensor
-            energies of shape (# rxns, 1 + # neg rxns)
-        loss : float
-            the loss value on the provided dataset
-        """
-        if phase == "test":
-            dataloader = self.test_loader
-        elif phase == "train":
-            dataloader = self.train_loader
-        elif phase == "valid":
-            dataloader = self.val_loader
-
-        self.model.eval()
-        with torch.no_grad():
-            # for training, we know positive rxn is always the 0th-index, even during finetuning
-            if self.args.do_finetune and phase != 'train':
-                energies_combined, true_ranks = [], []
-                loss, epoch_data_size = 0, 0
-                for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
-                    batch_data = batch[0]
-                    if not isinstance(batch_data, tuple):
-                        batch_data = batch_data.to(self.device)
-                    if self.model_name == 'TransformerEBM':
-                        batch_data = (batch_data, phase)
-                    batch_mask = batch[1].to(self.device)
-                    batch_energies = self._one_batch(
-                        batch_data, batch_mask, backprop=False,
-                        loss_type=self.args.loss_type, margin=self.args.loss_margin
-                    ) 
-
-                    epoch_data_size += batch_energies.shape[0]
-
-                    batch_idx = batch[2]
-                    batch_true_ranks_array = self.proposals_data[phase][batch_idx, 2].astype('int')
-                    batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
-                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator)
-                    if self.args.loss_type == 'log':
-                        loss_numerator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
-                        batch_true_ranks_valid
-                        ]
-                        loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], :]
-                        batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
-                    
-                    elif self.args.loss_type == 'hinge':
-                        # a bit tricky as we need to 'delete' the column idxs corresponding to the positive energy in each row
-                        energies_pos = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                            batch_true_ranks_valid
-                        ]
-
-                        energies_valid = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                            :
-                        ]
-                        columns = np.array(list(range(energies_valid.shape[1]))).reshape(-1, energies_valid.shape[1])
-                        mask = columns != batch_true_ranks_valid.reshape(-1, 1)
-                        energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
-
-                        if len(self.args.loss_margin) == 1: # no differential margin
-                            diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
-                        elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                            diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
-                            diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
-                            batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                            batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
-                    
-                    loss += batch_loss
-
-                    energies_combined.append(batch_energies) 
-                    true_ranks.append(batch_true_ranks)
-
-                loss /= epoch_data_size
-                energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
-                true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).cpu()
-
-            else: # pre-training
-                energies_combined = []
-                epoch_data_size = 0
-                for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
-                    batch_data = batch[0]
-                    if not isinstance(batch_data, tuple):
-                        batch_data = batch_data.to(self.device)
-                    if self.model_name == 'TransformerEBM':
-                        batch_data = (batch_data, phase)
-                    batch_mask = batch[1].to(self.device)
-                    
-                    energies = self.model(batch_data)
-                    energies = torch.where(batch_mask, energies,
-                                        torch.tensor([float('inf')], device=batch_mask.device))
-                    energies_combined.append(energies)
-                    epoch_data_size += energies.shape[0]
-
-                energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
-
-                if self.args.loss_type == 'log':
-                    loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
-                
-                elif self.args.loss_type == 'hinge':
-                    if len(self.args.loss_margin) == 1: # no differential margin
-                        diff = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 1:] + self.args.loss_margin[0]
-                    elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                        diff_top1 = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 1] + self.args.loss_margin[0]
-                        diff_top2 = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 2:] + self.args.loss_margin[1]
-                        loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                        loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
-
-                loss /= epoch_data_size
-            logging.info(f"\nLoss on {phase} : {loss:.4f}")
-
-        if path_to_energies is None:
-            path_to_energies = Path(__file__).resolve().parents[1] / "energies"
-        else:
-            path_to_energies = Path(path_to_energies)
-        if name_energies is None:
-            name_energies = f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
-        if save_energies:
-            logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
-            torch.save(energies_combined, Path(path_to_energies / name_energies))
-
-        self.stats[f"{phase}_loss_best"] = loss
-        self.energies[phase] = energies_combined
-        if self.args.do_finetune and phase != 'train':
-            self.true_ranks[phase] = true_ranks.unsqueeze(dim=-1)
-            return energies_combined, loss, true_ranks
-        else:
-            return energies_combined, loss
-
-    def get_topk_acc(
-        self,
-        phase: str = "test",
-        k: int = 1,
-        message: Optional[str] = "",
-    ) -> Tensor:
-        """
-        Computes top-k accuracy of trained model in classifying feasible vs infeasible chemical rxns
-        (i.e. minimum energy assigned to label 0 of each training sample)
-
-        Parameters
-        ----------
-        phase : str (Default = 'test') [train', 'test', 'valid']
-            whether to get energies from train/test/valid phases
-        save_energies: bool (Default = True)
-            whether to save the generated energies tensor to disk
-        name_energies: Union[str, bytes, os.PathLike] (Default = None)
-            filename of energies to save as a .pkl file
-            If None, automatically set to 'energies_<phase>_<self.expt_name>'
-
-        Returns
-        -------
-        energies: tensor
-            energies of shape (# rxns, 1 + # neg rxns)
-
-        Also see: self.get_energies_and_loss()
-        """
-        if self.args.do_finetune and phase != 'train':
-            if phase not in self.energies:
-                energies, loss, true_ranks = self.get_energies_and_loss(phase=phase)
-            if self.energies[phase].shape[1] >= k: 
-                pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
-                topk_accuracy = torch.where(pred_labels == self.true_ranks[phase])[0].shape[0] / pred_labels.shape[0]
-
-                self.stats[f"{phase}_top{k}_acc_best"] = topk_accuracy
-                torch.save(self.stats, self.stats_filename)
-
-                this_topk_message = f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%"
-                logging.info(this_topk_message)
-                message += this_topk_message + '\n'
-            else:
-                logging.info(f'{k} out of range for dimension 1 on ({phase})')
-
-        else: # true rank is always 0
-            if phase not in self.energies:
-                energies, loss = self.get_energies_and_loss(phase=phase)
-                self.energies[phase] = energies
-                self.stats[f"{phase}_loss_best"] = loss
-            
-            if self.energies[phase].shape[1] >= k: 
-                pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
-                topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0] 
-
-                self.stats[f"{phase}_top{k}_acc_best"] = topk_accuracy
-                torch.save(self.stats, self.stats_filename)
-
-                this_topk_message = f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%"
-                logging.info(this_topk_message)
-                message += this_topk_message + '\n'
-            else:
-                logging.info(f'{k} out of range for dimension 1 on ({phase})')
-        return message
-        
 # def accuracy(output, target, topk=(1,)):
 # """Computes the accuracy over the k top predictions for the specified values of k"""
 # with torch.no_grad():
