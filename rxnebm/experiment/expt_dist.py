@@ -688,7 +688,7 @@ class Experiment:
             dist.barrier()
             for i, batch in enumerate(train_loader):
                 if epoch < self.args.warmup_epochs:
-                    total_batches = self.train_size // self.args.batch_size
+                    total_batches = self.train_size // self.args.batch_size // (self.args.gpus * self.args.nodes)
                     lr = ((i / total_batches + epoch) / self.args.warmup_epochs) * self.args.learning_rate
                     self.optimizer.param_groups[0]['lr'] = lr
 

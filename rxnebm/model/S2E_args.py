@@ -8,7 +8,7 @@ S2E_args = {
     "attention_dropout": 0.1,
     "pooling_method": "CLS"
 }
-# 4x128_4h_256f_128e_drop20 has 434k params, takes 6 min on 8 GPUs for 50topk, bs=8
+# 3x128_4h_256f_128e_drop20 has 434k params, takes 6 min on 8 GPUs for 50topk, bs=8
 # could try CLS pooling
 # seems like max_seq_len must match hidden_size???? 
 
