@@ -104,6 +104,8 @@ class S2E(nn.Module):
         elif self.pooling_method == "mean":
             pooled_encoding = torch.sum(encodings, dim=0, keepdim=False)
             pooled_encoding = pooled_encoding / batch_lens
+        elif self.pooling_method == 'sum':
+            pooled_encoding = torch.sum(encodings, dim=0, keepdim=False)
         else:
             raise ValueError(f"Unsupported pooling method: {self.pooling_method}")
         

@@ -20,7 +20,7 @@ from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_dist, expt_mixture, expt_utils
 from rxnebm.model import FF, G2E, S2E, model_utils
 
-torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.benchmark = False # turn off for G2E
 torch.backends.cudnn.deterministic = True
 
 try:
