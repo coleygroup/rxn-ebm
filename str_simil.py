@@ -28,12 +28,14 @@ logging.info(f'Parallelizing over {num_cores} cores')
 
 # PARAMETERS
 TRIALS = 1
-NUM_STRINGS = 100000 # v fast, only 17 secs on 64 cores I think
-RXN_COUNT = 30
+NUM_STRINGS = 100000 # q fast, 1 x 100k => ~20 sec/rxn on 64 cores
+RXN_COUNT = 30 # 30 x 100k takes ~10 mins on 64 cores, 10 x 1mil takes ~34 mins on 64 cores
 LOG_FREQ = 1000 # log max_simil, best_noncano & invalids every LOG_FREQ num_strings
 # CHUNK_SIZE = NUM_STRINGS // num_cores # not sure if this really helps
-SEED = 1337
-random.seed(1337)
+SEED = 20210307
+random.seed(SEED)
+os.environ["PYTHONHASHSEED"] = str(SEED)
+np.random.seed(SEED)
 #################
 
 def gen_one_smi(task):
@@ -43,20 +45,21 @@ def gen_one_smi(task):
     while not found:
         try:
             rcts_noncano = Chem.MolToSmiles(rcts_mol, doRandom=True)
+            length = len(rcts_noncano)
             found = True
         except:
             invalid += 1
             continue
     simil = textdistance.levenshtein.normalized_similarity(rcts_noncano, prod)
-    return rcts_noncano, simil, invalid
+    return rcts_noncano, simil, invalid, length
 
 def simulate():
     with open('rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
         train = pickle.load(f)
     
-    logging.info('#'*50)
+    logging.info('#'*70)
     logging.info(f'Simulating {TRIALS} trials x {RXN_COUNT} rxn_smi x {NUM_STRINGS} random rcts_smi, SEED {SEED}')
-    logging.info('#'*50)
+    logging.info('#'*70)
     data = {} # key = train_rxn_idx, value = (orig_simil, max_simil, best_rcts_noncano)
 
     pool = multiprocessing.Pool(num_cores)
@@ -77,19 +80,19 @@ def simulate():
             orig_simil = textdistance.levenshtein.normalized_similarity(rcts, prod)
             tasks = [(rcts_mol, prod) for _ in range(NUM_STRINGS)]
             
-            max_simil = float('-inf')
-            best_noncano = None
+            max_simil = 0
+            best_noncano = ''
             invalids = 0
             max_simils = []
             best_noncanos = []
             invalids_list = []
-            for smi_idx, result in tqdm(enumerate(pool.imap(gen_one_smi, tasks)),
+            for smi_idx, result in tqdm(enumerate(pool.imap(gen_one_smi, tasks), start=1),
                                         total=NUM_STRINGS): # , chunksize=CHUNK_SIZE
-                rcts_noncano, simil, invalid = result
+                rcts_noncano, simil, invalid, length = result
                 if simil > max_simil:
                     max_simil = simil
                     best_noncano = rcts_noncano
-                if smi_idx % LOG_FREQ == 0 and smi_idx > 0:
+                if smi_idx % LOG_FREQ == 0:
                     max_simils.append(max_simil)
                     best_noncanos.append(best_noncano)
                     invalids_list.append(invalid)
@@ -99,7 +102,14 @@ def simulate():
             # logging.info(f'Best sampled: {best_noncano}, simil: {max_simil:.6f}')
             # logging.info(f'Original rct_smi: {rcts}, simil: {orig_simil:.6f}')
 
-            data[rxn_idx] = (orig_simil, max_simil, best_noncano, max_simils, best_noncanos, invalids_list)
+            data[rxn_idx] = {
+                'orig_simil': orig_simil, 
+                'max_simil': max_simil, 
+                'best_noncano': best_noncano, 
+                'max_simils_list': max_simils, 
+                'best_noncanos_list': best_noncanos, 
+                'invalids_list': invalids_list
+            }
             avg_max_simil += max_simil / RXN_COUNT
             avg_orig_simil += orig_simil / RXN_COUNT
             avg_greedy_simil += max(max_simil, orig_simil) / RXN_COUNT
