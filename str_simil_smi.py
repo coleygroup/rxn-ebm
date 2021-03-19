@@ -59,7 +59,7 @@ def check_simil(task):
 
 
 def simulate_root(): # just root
-    with open('rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
+    with open('../rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
         train = pickle.load(f)
     
     logging.info('#'*70)
@@ -157,11 +157,11 @@ def simulate_root(): # just root
     logging.info(f'Time elapsed (secs): {time.time() - start_all:.3f}')
 
     expt_name = f'ROOT_{TRIALS}T_{NUM_STRINGS}N_{RXN_COUNT}rxn_{SEED}SEED_{avg_max_simil:.3f}_{avg_orig_simil:.3f}'
-    with open(f'rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
+    with open(f'../rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
         pickle.dump(data, f)
 
 def simulate_root_random(): # root + random
-    with open('rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
+    with open('../rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
         train = pickle.load(f)
     
     logging.info('#'*70)
@@ -281,12 +281,12 @@ def simulate_root_random(): # root + random
     logging.info(f'Time elapsed (secs): {time.time() - start_all:.3f}')
 
     expt_name = f'ROOTRANDOM_{TRIALS}T_{NUM_STRINGS}N_{MAX_INDIV}max_{RXN_COUNT}rxn_{SEED}SEED_{avg_max_simil:.3f}_{avg_orig_simil:.3f}'
-    with open(f'rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
+    with open(f'../rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
         pickle.dump(data, f)
 
 
 def simulate_whole():
-    with open('rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
+    with open('../rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
         train = pickle.load(f)
     
     logging.info('#'*70)
@@ -375,7 +375,7 @@ def simulate_whole():
     logging.info(f'Time elapsed (secs): {time.time() - start_all:.3f}')
 
     expt_name = f'WHOLE_{TRIALS}T_{NUM_STRINGS}N_{RXN_COUNT}rxn_{SEED}SEED_{avg_max_simil:.3f}_{avg_orig_simil:.3f}'
-    with open(f'rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
+    with open(f'../rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
         pickle.dump(data, f)
 
 if __name__ == "__main__":
@@ -385,7 +385,7 @@ if __name__ == "__main__":
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    fh = logging.FileHandler(f"./logs/str_simil/{log_file}.{dt}")
+    fh = logging.FileHandler(f"../logs/str_simil/{log_file}.{dt}")
     fh.setLevel(logging.INFO)
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(logging.INFO)
@@ -397,7 +397,7 @@ if __name__ == "__main__":
 
 
 def simulate_indiv():
-    with open('rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
+    with open('../rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
         train = pickle.load(f)
     
     logging.info('#'*70)
@@ -511,13 +511,13 @@ def simulate_indiv():
     logging.info(f'Time elapsed (secs): {time.time() - start_all:.3f}')
 
     expt_name = f'INDIV_{TRIALS}T_{NUM_STRINGS}N_{RXN_COUNT}rxn_{SEED}SEED_{avg_max_simil:.3f}_{avg_orig_simil:.3f}'
-    with open(f'rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
+    with open(f'../rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
         pickle.dump(data, f)
 
 # outdated code 
 # (found that optimizing individual rct_smi & finding best permutation is NOT optimal)
 # def simulate_perms():
-#     with open('rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
+#     with open('../rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
 #         train = pickle.load(f)
             
 #     try: # may fail on Windows
@@ -639,5 +639,5 @@ def simulate_indiv():
 #     logging.info(f'Time elapsed (secs): {time.time() - start_all:.3f}')
 
 #     expt_name = f'indiv_{TRIALS}T_{NUM_STRINGS}N_{RXN_COUNT}rxn_{SEED}SEED_{avg_max_simil:.3f}_{avg_orig_simil:.3f}'
-#     with open(f'rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
+#     with open(f'../rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
 #         pickle.dump(data, f)

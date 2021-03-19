@@ -63,7 +63,7 @@ def prep_canon_mt():
         with open(f'rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_{phase}.pickle', 'rb') as handle:
             rxn_smis = pickle.load(handle)
 
-        with open(f'rxnebm/data/cleaned_data/retrosynthesis-{phase}.smi', mode='w') as f:            
+        with open(f'rxnebm/data/cleaned_data/retrosynthesis_canon_{phase}.smi', mode='w') as f:            
             for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
                 rxn_smi_canon, _, _ = canonicalize.canonicalize_rxn_smi(rxn_smi, remove_mapping=False)
                 rcts_smi, prod_smi = rxn_smi_canon.split('>>')[0], rxn_smi_canon.split('>>')[-1]

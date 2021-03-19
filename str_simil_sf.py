@@ -62,7 +62,7 @@ def smi_to_sf(smi):
     return sf.encoder(smi)
 
 def simulate_root(): # root + random
-    with open('rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
+    with open('../rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
         train = pickle.load(f)
     
     logging.info('#'*70)
@@ -175,11 +175,11 @@ def simulate_root(): # root + random
     logging.info(f'Time elapsed (secs): {time.time() - start_all:.3f}')
 
     expt_name = f'ROOT_SELFIES_{TRIALS}T_{NUM_STRINGS}N_{RXN_COUNT}rxn_{SEED}SEED_{avg_max_simil:.3f}_{avg_orig_simil:.3f}'
-    with open(f'rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
+    with open(f'../rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
         pickle.dump(data, f)
 
 def simulate_root_random(): # root + random
-    with open('rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
+    with open('../rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_train.pickle', 'rb') as f:
         train = pickle.load(f)
     
     logging.info('#'*70)
@@ -313,7 +313,7 @@ def simulate_root_random(): # root + random
     logging.info(f'Time elapsed (secs): {time.time() - start_all:.3f}')
 
     expt_name = f'ROOTRANDOM_SELFIES_{TRIALS}T_{NUM_STRINGS}N_{MAX_INDIV}max_{RXN_COUNT}rxn_{SEED}SEED_{avg_max_simil:.3f}_{avg_orig_simil:.3f}'
-    with open(f'rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
+    with open(f'../rxnebm/data/string_similarity/{expt_name}.pickle', 'wb') as f:
         pickle.dump(data, f)
 
 if __name__ == "__main__":
@@ -323,7 +323,7 @@ if __name__ == "__main__":
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
-    fh = logging.FileHandler(f"./logs/str_simil/{log_file}.{dt}")
+    fh = logging.FileHandler(f"../logs/str_simil/{log_file}.{dt}")
     fh.setLevel(logging.INFO)
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(logging.INFO)
