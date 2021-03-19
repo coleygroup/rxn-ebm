@@ -19,6 +19,7 @@ import multiprocessing
 from rdkit import RDLogger
 import rdkit.Chem as Chem
 
+sys.path.append('.')
 from rxnebm.data.preprocess import smi_to_fp
 
 import joblib
@@ -202,12 +203,12 @@ if __name__ == "__main__":
 
     RDLogger.DisableLog("rdApp.warning")
 
-    os.makedirs("./logs/gen_mixture/", exist_ok=True)
+    os.makedirs(Path(__file__).resolve().parents[1] / "/logs/gen_mixture/", exist_ok=True)
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
 
     logger = logging.getLogger()
     logger.setLevel(logging.INFO) 
-    fh = logging.FileHandler(f"./logs/gen_mixture/{args.log_file}.{dt}")
+    fh = logging.FileHandler(Path(__file__).resolve().parents[1] / f"logs/gen_mixture/{args.log_file}.{dt}")
     fh.setLevel(logging.INFO)
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(logging.INFO)
@@ -215,7 +216,7 @@ if __name__ == "__main__":
     logger.addHandler(sh)
 
     if args.input_folder is None:
-        args.input_folder = Path(__file__).resolve().parents[0] / 'rxnebm/data/cleaned_data/' 
+        args.input_folder = Path(__file__).resolve().parents[1] / 'rxnebm/data/cleaned_data/' 
     else:
         args.input_folder = Path(args.input_folder)
     if args.output_folder is None:

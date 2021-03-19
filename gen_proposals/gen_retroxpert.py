@@ -195,7 +195,7 @@ def process_csv(
     beam_size: int = 200,
     parallelize: bool = False,
     phases: Optional[List[str]] = ['train', 'valid', 'test'],
-    data_folder: Optional[os.PathLike] = Path('rxnebm/data/cleaned_data/'),
+    data_folder: Optional[os.PathLike] = Path('../rxnebm/data/cleaned_data/'),
     csv_prefix: Optional[str] = 'retroxpert_top200_max200_beam200_raw'
 ):
     for phase in phases:
@@ -322,12 +322,12 @@ if __name__ == '__main__':
 
     RDLogger.DisableLog("rdApp.warning")
 
-    os.makedirs("./logs/gen_retroxpert/", exist_ok=True)
+    os.makedirs(Path(__file__).resolve().parents[1] / "logs/gen_retroxpert/", exist_ok=True)
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
 
     logger = logging.getLogger()
     logger.setLevel(logging.INFO) 
-    fh = logging.FileHandler(f"./logs/gen_retroxpert/{args.log_file}.{dt}")
+    fh = logging.FileHandler(Path(__file__).resolve().parents[1] / f"logs/gen_retroxpert/{args.log_file}.{dt}")
     fh.setLevel(logging.INFO)
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(logging.INFO)
@@ -335,7 +335,7 @@ if __name__ == '__main__':
     logger.addHandler(sh)
 
     if args.data_folder is None:
-        args.data_folder = Path(__file__).resolve().parents[0] / 'rxnebm/data/cleaned_data/' 
+        args.data_folder = Path(__file__).resolve().parents[1] / 'rxnebm/data/cleaned_data/' 
     else:
         args.data_folder = Path(args.data_folder)
     logging.info(args)

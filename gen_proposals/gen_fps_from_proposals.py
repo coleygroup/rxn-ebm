@@ -18,6 +18,7 @@ from rdkit import RDLogger
 from joblib import Parallel, delayed
 import multiprocessing
 
+sys.path.append('.')
 from rxnebm.data import augmentors
 from rxnebm.data.preprocess import smi_to_fp
 from rxnebm.proposer import retrosim_model
@@ -371,11 +372,11 @@ if __name__ == '__main__':
     args = parse_args()
  
     RDLogger.DisableLog("rdApp.warning")
-    os.makedirs("./logs", exist_ok=True)
+    os.makedirs(Path(__file__).resolve().parents[1] / "logs/gen_fp", exist_ok=True)
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
     logger = logging.getLogger()
     logger.setLevel(logging.INFO) 
-    fh = logging.FileHandler(f"./logs/{args.log_file}.{dt}")
+    fh = logging.FileHandler(Path(__file__).resolve().parents[1] / f"logs/gen_fp/{args.log_file}.{dt}")
     fh.setLevel(logging.INFO)
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(logging.INFO)
@@ -383,7 +384,7 @@ if __name__ == '__main__':
     logger.addHandler(sh)
 
     if args.cleaned_data_root is None:
-        args.cleaned_data_root = Path(__file__).resolve().parents[0] / 'rxnebm/data/cleaned_data'
+        args.cleaned_data_root = Path(__file__).resolve().parents[1] / 'rxnebm/data/cleaned_data'
     else:
         args.cleaned_data_root = Path(args.cleaned_data_root)
 
