@@ -1,3 +1,4 @@
+import argparse
 import logging
 import multiprocessing
 import os
@@ -24,14 +25,38 @@ from rdkit import RDLogger
 from scipy import sparse
 from tqdm import tqdm
 
-SEED = 20210307
-random.seed(SEED)
-language = 'selfies' # ['smiles', 'selfies']
-simil_type = 'string' # ['string', 'token']
-simil_func = textdistance.levenshtein.normalized_similarity
-simil_funcname = 'leven_fixed'
+from token_to_unicode import token_to_unicode_smiles, token_to_unicode_selfies
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--expt_name',
+                    type=str, help='Custom description of the experiment')
+parser.add_argument('--simil_func',
+                    type=str, help='["levenshtein", "monge_elkan"]')
+parser.add_argument('--simil_type',
+                    type=str, help='["string", "token"]', default='string')
+parser.add_argument('--language',
+                    type=str, help='Language ["smiles", "selfies"]')
+parser.add_argument('--max_indiv',
+                    type=int, help='Max unique non-cano rct to generate')
+parser.add_argument('--num_strings',
+                    type=int, help='Max attempts at generating unique non-cano rct')
+parser.add_argument('--seed',
+                    type=int, help='Random seed', default=20210307)
+args = parser.parse_args()
+
+# MAX_INDIV = 200
+# NUM_STRINGS = 30000
+# SEED = 20210307
+random.seed(args.seed)
+# language = 'smiles' # ['smiles', 'selfies']
+# simil_type = 'string' # ['string', 'token']
+if args.simil_func == 'levenshtein':
+    simil_func = textdistance.levenshtein.normalized_similarity
+else:
+    raise ValueError
+# expt_name = 'leven_root+rand_200ind_30Kstr' # we can put whatever we want here
 # simil_func = textdistance.monge_elkan.normalized_similarity
-# simil_funcname = 'monge_fixed'
+# expt_name = 'monge_fixed'
 
 # lv = py_sm.similarity_measure.levenshtein.Levenshtein()
 # me = py_sm.similarity_measure.monge_elkan.MongeElkan(sim_func=lv.get_raw_score)
@@ -52,7 +77,20 @@ def tokenize_smiles(smi: str) -> str:
 #     return " ".join(tokens)
     return tokens
 
-def optimize_one_rxn_string_sf(simil_func, rxn_smi):
+def tokenize_and_unicode_selfies(smi: str) -> str:
+    encoded_selfies = sf.encoder(smi)
+    tokens = list(sf.split_selfies(encoded_selfies))
+    translated = ''.join(map(token_to_unicode_selfies.get, tokens))
+    return translated
+
+def tokenize_and_unicode_smiles(smi: str) -> str:
+    pattern = r"(\[[^\]]+]|Br?|Cl?|N|O|S|P|F|I|b|c|n|o|s|p|\(|\)|\.|=|#|-|\+|\\\\|\/|:|~|@|\?|>|\*|\$|\%[0-9]{2}|[0-9])"
+    regex = re.compile(pattern)
+    tokens = [token for token in regex.findall(smi)]
+    translated = ''.join(map(token_to_unicode_smiles.get, tokens))
+    return translated
+
+def optimize_one_rxn_string_sf(simil_func, rxn_smi): # OUTDATED, only does root
     # simil_func = similarity function (monge_elkan)
     prod_smi = rxn_smi.split('>>')[-1]
     prod_sf = sf.encoder(prod_smi)
@@ -119,7 +157,7 @@ def optimize_one_rxn_string_sf(simil_func, rxn_smi):
 
     return best_noncano, max_simil_sf, orig_simil_sf
 
-def optimize_one_rxn_string(simil_func, rxn_smi):
+def optimize_one_rxn_string(simil_func, rxn_smi): # OUTDATED, only does root
     # simil_func = similarity function (monge_elkan)
     prod_smi = rxn_smi.split('>>')[-1]
     # prod_smi_ = tokenize_smiles(prod_smi)
@@ -188,7 +226,79 @@ def optimize_one_rxn_string(simil_func, rxn_smi):
 
     return best_noncano, max_simil_smi, orig_simil_smi
 
-def optimize_one_rxn_tokenized(simil_func, rxn_smi):
+def optimize_one_rxn_string_v2(simil_func, rxn_smi):
+    rcts_smi = rxn_smi.split('>>')[0]
+    prod_smi = rxn_smi.split('>>')[-1]
+    
+    orig_simil_smi = simil_func(rcts_smi, prod_smi)
+    
+    rct_noncanos = [] # element = list[noncanos_by_root_for_that_rctidx]
+    # len(rct_noncanos) = # of rcts
+    rct_noncanos_by_idx_root = {} # key = noncano, value = dict[rct_noncanos_by_root]
+    rct_mols_by_idx = {} # key = rct_idx, value = Chem.Mol object
+    noncano_to_rct_idx = {} # key = noncano, value = rct_idx (original)
+    for rct_idx, rct in enumerate(rcts_smi.split('.')):
+        rct_mol = Chem.MolFromSmiles(rct)
+        rct_mols_by_idx[rct_idx] = rct_mol
+        
+        thisidx_rct_noncanos = []
+        rct_noncanos_by_root = {}
+        for atom in range(rct_mol.GetNumAtoms()):
+            rct_noncano_smi = Chem.MolToSmiles(
+                        rct_mol,
+                        rootedAtAtom=atom,
+                    )
+            rct_noncanos_by_root[rct_noncano_smi] = atom
+            thisidx_rct_noncanos.append(rct_noncano_smi)
+            noncano_to_rct_idx[rct_noncano_smi] = rct_idx
+        rct_noncanos.append(thisidx_rct_noncanos)
+        rct_noncanos_by_idx_root[rct_idx] = rct_noncanos_by_root
+    
+    # enumerate to find best roots for each rct, works for any # of rcts
+    max_simil_smi = float('-inf')
+    for combo in itertools.product(*rct_noncanos):
+        for perm in itertools.permutations(combo):
+            noncano_concat = '.'.join(perm)
+            simil = simil_func(noncano_concat, prod_smi)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = noncano_concat
+                
+    best_roots = {}
+    gen_noncanos = [] # element = list[noncanos_by_rctidx]
+    for best_root_rct in best_noncano.split('.'):
+        # due to permutation, we lost the original rct_idx, so we need to retrieve it
+        rct_idx = noncano_to_rct_idx[best_root_rct]
+        
+        best_roots[rct_idx] = rct_noncanos_by_idx_root[rct_idx][best_root_rct]
+        
+        # now we generate noncanos randomly up to specified budget
+        # NUM_STRINGS may be 10k, but MAX_INDIV maybe just 100
+        counter = 0
+        this_rct_noncanos = set([best_root_rct])
+        while len(this_rct_noncanos) < args.max_indiv and counter < args.num_strings:
+            rct_noncano = Chem.MolToSmiles(
+                rct_mols_by_idx[rct_idx], 
+                rootedAtAtom=best_roots[rct_idx],
+                doRandom=True
+            )
+            this_rct_noncanos.add(rct_noncano)
+            counter += 1
+        gen_noncanos.append(this_rct_noncanos)
+        
+    # now we enumerate to find best combo & perm among these generated (root + random)
+    max_simil_smi = float('-inf')
+    for combo in itertools.product(*gen_noncanos):
+        for perm in itertools.permutations(combo):
+            noncano_concat = '.'.join(perm)
+            simil = simil_func(noncano_concat, prod_smi)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = noncano_concat
+
+    return best_noncano, max_simil_smi, orig_simil_smi
+
+def optimize_one_rxn_tokenized_old(simil_func, rxn_smi): # OUTDATED
     # simil_func = similarity function (monge_elkan)
     prod_smi = rxn_smi.split('>>')[-1]
     prod_smi_ = tokenize_smiles(prod_smi)
@@ -196,9 +306,7 @@ def optimize_one_rxn_tokenized(simil_func, rxn_smi):
     rcts_smi = rxn_smi.split('>>')[0]
     rcts_smi_ = tokenize_smiles(rcts_smi)
 
-    # orig_simil_smi = simil_func(rcts_smi, prod_smi)
     orig_simil_smi = simil_func(rcts_smi_, prod_smi_)
-    # orig_simil_smi = me.get_raw_score(rcts_smi_, prod_smi_)
 
     rct_noncanos_smi = defaultdict(list)
     for rct_idx, rct in enumerate(rcts_smi.split('.')):
@@ -271,79 +379,254 @@ def optimize_one_rxn_tokenized(simil_func, rxn_smi):
 
     return "".join(best_noncano), max_simil_smi, orig_simil_smi
 
-# TODO: combine simil_score from token & string level, see if we can get better improvement/results
-# def optimize_one_rxn_tokenized_hybrid(simil_func_token, simil_func_str, rxn_smi):
-#     # simil_func = similarity function (monge_elkan)
-#     prod_smi = rxn_smi.split('>>')[-1]
-#     prod_smi_ = tokenize_smiles(prod_smi)
+def optimize_one_rxn_tokenized_SMILES(simil_func, rxn_smi):
+    # use levenshtein char-level edit dist using unicode dict trick
+    # SMILES token vocab size is ~283. ascii is only 255 - 33 - 1 (DEL) = 221
+    rcts_smi = rxn_smi.split('>>')[0]
+    rcts_smi_ = tokenize_and_unicode_smiles(rcts_smi)
 
-#     rcts_smi = rxn_smi.split('>>')[0]
-#     rcts_smi_ = tokenize_smiles(rcts_smi)
-
-#     orig_simil_smi = simil_func_str(rcts_smi, prod_smi) + simil_func_token(rcts_smi_, prod_smi_)
-
-#     rct_noncanos_smi = defaultdict(list)
-#     for rct_idx, rct in enumerate(rcts_smi.split('.')):
-#         rct_mol = Chem.MolFromSmiles(rct)
-
-#         for atom in range(rct_mol.GetNumAtoms()):
-#             rct_noncano_smi = Chem.MolToSmiles(rct_mol, rootedAtAtom=atom)
-#             rct_noncanos_smi[rct_idx].append(rct_noncano_smi)
-
-#     max_simil_smi = float('-inf')
-#     if len(rct_noncanos_smi) == 2:
-#         A = set(rct_noncanos_smi[0])
-#         B = set(rct_noncanos_smi[1])
-#         # tokenize everything
-#         A_, B_ = [], []
-#         for a in A:
-#             A_.append(tokenize_smiles(a))
-#         for b in B:
-#             B_.append(tokenize_smiles(b))
-
-#         for a_, b_ in itertools.product(A_, B_):
-#             noncano_concat = a_ + ['.'] + b_
-#             # noncano_concat = "".join(noncano_concat)
-#             simil = simil_func(noncano_concat, prod_smi_)
-#             # simil = me.get_raw_score(noncano_concat, prod_smi_)
-#             if simil > max_simil_smi:
-#                 max_simil_smi = simil
-#                 best_noncano = noncano_concat
-
-#     elif len(rct_noncanos_smi) == 3:
-#         A = set(rct_noncanos_smi[0])
-#         B = set(rct_noncanos_smi[1])
-#         C = set(rct_noncanos_smi[2])
-#         # tokenize everything
-#         A_, B_, C_ = [], [], []
-#         for a in A:
-#             A_.append(tokenize_smiles(a))
-#         for b in B:
-#             B_.append(tokenize_smiles(b))
-#         for c in C:
-#             C_.append(tokenize_smiles(c))
-
-#         for a_, b_, c_ in itertools.product(A_, B_, C_):
-#             noncano_concat = a_ + ['.'] + b_ + ['.'] + c_
-#             simil = simil_func(noncano_concat, prod_smi_)
-#             # simil = me.get_raw_score(noncano_concat, prod_smi_)
-#             if simil > max_simil_smi:
-#                 max_simil_smi = simil
-#                 best_noncano = noncano_concat
-
-#     elif len(rct_noncanos_smi) == 1:
-#         for smi in set(rct_noncanos_smi[0]):
-#             smi = tokenize_smiles(smi)
-#             simil = simil_func(smi, prod_smi_)
-#             # simil = me.get_raw_score(smi, prod_smi_)
-#             if simil > max_simil_smi:
-#                 max_simil_smi = simil
-#                 best_noncano = smi
+    prod_smi = rxn_smi.split('>>')[-1]
+    prod_smi_ = tokenize_and_unicode_smiles(prod_smi)
     
-#     else:
-#         raise ValueError('We have not accounted for rxn w/ more than 3 reactants!')
+    orig_simil_smi = simil_func(rcts_smi_, prod_smi_)
+    
+    rct_noncanos = [] # element = list[noncanos_by_root_for_that_rctidx]
+    # len(rct_noncanos) = # of rcts
+    rct_noncanos_by_idx_root = {} # key = noncano, value = dict[rct_noncanos_by_root]
+    rct_mols_by_idx = {} # key = rct_idx, value = Chem.Mol object
+    noncano_to_rct_idx = {} # key = noncano, value = rct_idx (original)
+    for rct_idx, rct in enumerate(rcts_smi.split('.')):
+        rct_mol = Chem.MolFromSmiles(rct)
+        rct_mols_by_idx[rct_idx] = rct_mol
+        
+        thisidx_rct_noncanos = []
+        rct_noncanos_by_root = {}
+        for atom in range(rct_mol.GetNumAtoms()):
+            rct_noncano_smi = Chem.MolToSmiles(
+                        rct_mol,
+                        rootedAtAtom=atom,
+                    )
+            rct_noncanos_by_root[rct_noncano_smi] = atom
+            thisidx_rct_noncanos.append(rct_noncano_smi)
+            noncano_to_rct_idx[rct_noncano_smi] = rct_idx
+        rct_noncanos.append(thisidx_rct_noncanos)
+        rct_noncanos_by_idx_root[rct_idx] = rct_noncanos_by_root
+    
+    # enumerate to find best roots for each rct, works for any # of rcts
+    max_simil_smi = float('-inf')
+    for combo in itertools.product(*rct_noncanos):
+        for perm in itertools.permutations(combo):
+            noncano_concat = '.'.join(perm)
+            noncano_concat_ = tokenize_and_unicode_smiles(noncano_concat)
+            simil = simil_func(noncano_concat_, prod_smi_)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = noncano_concat
+                
+    best_roots = {}
+    gen_noncanos = [] # element = list[noncanos_by_rctidx]
+    for best_root_rct in best_noncano.split('.'):
+        # due to permutation, we lost the original rct_idx, so we need to retrieve it
+        rct_idx = noncano_to_rct_idx[best_root_rct]
+        
+        best_roots[rct_idx] = rct_noncanos_by_idx_root[rct_idx][best_root_rct]
+        
+        # now we generate noncanos randomly up to specified budget
+        # NUM_STRINGS may be 10k, but MAX_INDIV maybe just 100
+        counter = 0
+        this_rct_noncanos = set([best_root_rct])
+        while len(this_rct_noncanos) < args.max_indiv and counter < args.num_strings:
+            rct_noncano = Chem.MolToSmiles(
+                rct_mols_by_idx[rct_idx], 
+                rootedAtAtom=best_roots[rct_idx],
+                doRandom=True
+            )
+            this_rct_noncanos.add(rct_noncano)
+            counter += 1
+        gen_noncanos.append(this_rct_noncanos)
+        
+    # now we enumerate to find best combo & perm among these generated (root + random)
+    max_simil_smi = float('-inf')
+    for combo in itertools.product(*gen_noncanos):
+        for perm in itertools.permutations(combo):
+            noncano_concat = '.'.join(perm)
+            noncano_concat_ = tokenize_and_unicode_smiles(noncano_concat)
+            simil = simil_func(noncano_concat_, prod_smi_)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = noncano_concat
 
-#     return "".join(best_noncano), max_simil_smi, orig_simil_smi
+    return best_noncano, max_simil_smi, orig_simil_smi
+
+def optimize_one_rxn_tokenized_root_SMILES(simil_func, rxn_smi): # just do root, updated
+    # use levenshtein char-level edit dist using unicode dict trick
+    # SMILES token vocab size is ~283. ascii is only 255 - 33 - 1 (DEL) = 221
+    rcts_smi = rxn_smi.split('>>')[0]
+    rcts_smi_ = tokenize_and_unicode_smiles(rcts_smi)
+
+    prod_smi = rxn_smi.split('>>')[-1]
+    prod_smi_ = tokenize_and_unicode_smiles(prod_smi)
+    
+    orig_simil_smi = simil_func(rcts_smi_, prod_smi_)
+    
+    rct_noncanos = [] # element = list[noncanos_by_root_for_that_rctidx]
+    # len(rct_noncanos) = # of rcts
+    rct_noncanos_by_idx_root = {} # key = noncano, value = dict[rct_noncanos_by_root]
+    rct_mols_by_idx = {} # key = rct_idx, value = Chem.Mol object
+    noncano_to_rct_idx = {} # key = noncano, value = rct_idx (original)
+    for rct_idx, rct in enumerate(rcts_smi.split('.')):
+        rct_mol = Chem.MolFromSmiles(rct)
+        rct_mols_by_idx[rct_idx] = rct_mol
+        
+        thisidx_rct_noncanos = []
+        rct_noncanos_by_root = {}
+        for atom in range(rct_mol.GetNumAtoms()):
+            rct_noncano_smi = Chem.MolToSmiles(
+                        rct_mol,
+                        rootedAtAtom=atom,
+                    )
+            rct_noncanos_by_root[rct_noncano_smi] = atom
+            thisidx_rct_noncanos.append(rct_noncano_smi)
+            noncano_to_rct_idx[rct_noncano_smi] = rct_idx
+        rct_noncanos.append(thisidx_rct_noncanos)
+        rct_noncanos_by_idx_root[rct_idx] = rct_noncanos_by_root
+    
+    # enumerate to find best roots for each rct, works for any # of rcts
+    max_simil_smi = float('-inf')
+    for combo in itertools.product(*rct_noncanos):
+        for perm in itertools.permutations(combo):
+            noncano_concat = '.'.join(perm)
+            noncano_concat_ = tokenize_and_unicode_smiles(noncano_concat)
+            simil = simil_func(noncano_concat_, prod_smi_)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = noncano_concat
+
+    return best_noncano, max_simil_smi, orig_simil_smi
+
+
+def optimize_one_rxn_tokenized_sf(simil_func, rxn_smi):
+    # use levenshtein char-level edit dist using unicode dict trick
+    rcts_smi = rxn_smi.split('>>')[0]
+    rcts_smi_ = tokenize_and_unicode_selfies(rcts_smi)
+
+    prod_smi = rxn_smi.split('>>')[-1]
+    prod_smi_ = tokenize_and_unicode_selfies(prod_smi)
+    
+    orig_simil_smi = simil_func(rcts_smi_, prod_smi_)
+    
+    rct_noncanos = [] # element = list[noncanos_by_root_for_that_rctidx]
+    # len(rct_noncanos) = # of rcts
+    rct_noncanos_by_idx_root = {} # key = noncano, value = dict[rct_noncanos_by_root]
+    rct_mols_by_idx = {} # key = rct_idx, value = Chem.Mol object
+    noncano_to_rct_idx = {} # key = noncano, value = rct_idx (original)
+    for rct_idx, rct in enumerate(rcts_smi.split('.')):
+        rct_mol = Chem.MolFromSmiles(rct)
+        rct_mols_by_idx[rct_idx] = rct_mol
+        
+        thisidx_rct_noncanos = []
+        rct_noncanos_by_root = {}
+        for atom in range(rct_mol.GetNumAtoms()):
+            rct_noncano_smi = Chem.MolToSmiles(
+                        rct_mol,
+                        rootedAtAtom=atom,
+                    )
+            rct_noncanos_by_root[rct_noncano_smi] = atom
+            thisidx_rct_noncanos.append(rct_noncano_smi)
+            noncano_to_rct_idx[rct_noncano_smi] = rct_idx
+        rct_noncanos.append(thisidx_rct_noncanos)
+        rct_noncanos_by_idx_root[rct_idx] = rct_noncanos_by_root
+    
+    # enumerate to find best roots for each rct, works for any # of rcts
+    max_simil_smi = float('-inf')
+    for combo in itertools.product(*rct_noncanos):
+        for perm in itertools.permutations(combo):
+            noncano_concat = '.'.join(perm)
+            noncano_concat_ = tokenize_and_unicode_selfies(noncano_concat)
+            simil = simil_func(noncano_concat_, prod_smi_)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = noncano_concat
+                
+    best_roots = {}
+    gen_noncanos = [] # element = list[noncanos_by_rctidx]
+    for best_root_rct in best_noncano.split('.'):
+        # due to permutation, we lost the original rct_idx, so we need to retrieve it
+        rct_idx = noncano_to_rct_idx[best_root_rct]
+        
+        best_roots[rct_idx] = rct_noncanos_by_idx_root[rct_idx][best_root_rct]
+        
+        # now we generate noncanos randomly up to specified budget
+        # NUM_STRINGS may be 10k, but MAX_INDIV maybe just 100
+        counter = 0
+        this_rct_noncanos = set([best_root_rct])
+        while len(this_rct_noncanos) < args.max_indiv and counter < args.num_strings:
+            rct_noncano = Chem.MolToSmiles(
+                rct_mols_by_idx[rct_idx], 
+                rootedAtAtom=best_roots[rct_idx],
+                doRandom=True
+            )
+            this_rct_noncanos.add(rct_noncano)
+            counter += 1
+        gen_noncanos.append(this_rct_noncanos)
+        
+    # now we enumerate to find best combo & perm among these generated (root + random)
+    max_simil_smi = float('-inf')
+    for combo in itertools.product(*gen_noncanos):
+        for perm in itertools.permutations(combo):
+            noncano_concat = '.'.join(perm)
+            noncano_concat_ = tokenize_and_unicode_selfies(noncano_concat)
+            simil = simil_func(noncano_concat_, prod_smi_)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = noncano_concat
+
+    return best_noncano, max_simil_smi, orig_simil_smi
+
+def optimize_one_rxn_tokenized_root_sf(simil_func, rxn_smi): # just do root, updated
+    # use levenshtein char-level edit dist using unicode dict trick
+    rcts_smi = rxn_smi.split('>>')[0]
+    rcts_smi_ = tokenize_and_unicode_selfies(rcts_smi)
+
+    prod_smi = rxn_smi.split('>>')[-1]
+    prod_smi_ = tokenize_and_unicode_selfies(prod_smi)
+    
+    orig_simil_smi = simil_func(rcts_smi_, prod_smi_)
+    
+    rct_noncanos = [] # element = list[noncanos_by_root_for_that_rctidx]
+    # len(rct_noncanos) = # of rcts
+    rct_noncanos_by_idx_root = {} # key = noncano, value = dict[rct_noncanos_by_root]
+    rct_mols_by_idx = {} # key = rct_idx, value = Chem.Mol object
+    noncano_to_rct_idx = {} # key = noncano, value = rct_idx (original)
+    for rct_idx, rct in enumerate(rcts_smi.split('.')):
+        rct_mol = Chem.MolFromSmiles(rct)
+        rct_mols_by_idx[rct_idx] = rct_mol
+        
+        thisidx_rct_noncanos = []
+        rct_noncanos_by_root = {}
+        for atom in range(rct_mol.GetNumAtoms()):
+            rct_noncano_smi = Chem.MolToSmiles(
+                        rct_mol,
+                        rootedAtAtom=atom,
+                    )
+            rct_noncanos_by_root[rct_noncano_smi] = atom
+            thisidx_rct_noncanos.append(rct_noncano_smi)
+            noncano_to_rct_idx[rct_noncano_smi] = rct_idx
+        rct_noncanos.append(thisidx_rct_noncanos)
+        rct_noncanos_by_idx_root[rct_idx] = rct_noncanos_by_root
+    
+    # enumerate to find best roots for each rct, works for any # of rcts
+    max_simil_smi = float('-inf')
+    for combo in itertools.product(*rct_noncanos):
+        for perm in itertools.permutations(combo):
+            noncano_concat = '.'.join(perm)
+            noncano_concat_ = tokenize_and_unicode_selfies(noncano_concat)
+            simil = simil_func(noncano_concat_, prod_smi_)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = noncano_concat
+
+    return best_noncano, max_simil_smi, orig_simil_smi
 
 def main():
     try: # may fail on Windows
@@ -363,16 +646,26 @@ def main():
         orig_simil_avg_smi = 0
         greedy_simil_avg = 0
 
-        if language == 'selfies':
-            if simil_type == 'string':
+        if args.language == 'selfies':
+            if args.simil_type == 'string':
                 optimize_one_rxn_ = partial(optimize_one_rxn_string_sf, simil_func)
+            elif args.simil_type == 'token':
+                optimize_one_rxn_ = partial(optimize_one_rxn_tokenized_sf, simil_func)
+            elif args.simil_type == 'token_rootonly':
+                optimize_one_rxn_ = partial(optimize_one_rxn_tokenized_root_sf, simil_func)
             else:
-                raise NotImplementedError
-        else: # 'smiles'
-            if simil_type == 'string':
-                optimize_one_rxn_ = partial(optimize_one_rxn_string, simil_func)
-            else: # 'token'
-                optimize_one_rxn_ = partial(optimize_one_rxn_tokenized, simil_func)
+                raise ValueError
+        elif args.language == 'smiles': # 'smiles'
+            if args.simil_type == 'string':
+                optimize_one_rxn_ = partial(optimize_one_rxn_string_v2, simil_func) # optimize_one_rxn_string
+            elif args.simil_type == 'token': # 'token'
+                optimize_one_rxn_ = partial(optimize_one_rxn_tokenized_SMILES, simil_func)
+            elif args.simil_type == 'token_rootonly'
+                optimize_one_rxn_ = partial(optimize_one_rxn_tokenized_root_SMILES, simil_func)
+            else:
+                raise ValueError
+        else:
+            raise ValueError('Unrecognized language')
 
         for result in tqdm(pool.imap(optimize_one_rxn_, rxns_phase), # chunksize=5 --> 6 min for valid
                         total=len(rxns_phase), desc=f'Processing rxn_smi of {phase}'):
@@ -382,7 +675,7 @@ def main():
             orig_simil_avg_smi += orig_simil_smi / RXN_COUNT
             best_rcts.append(best_noncano)
     
-        with open(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/50k_rooted_{language}_{simil_funcname}_{phase}.pickle', 'wb') as f:
+        with open(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/50k_rooted_{args.language}_{args.expt_name}_{phase}.pickle', 'wb') as f:
             pickle.dump(best_rcts, f)
                         
         perc = (greedy_simil_avg - orig_simil_avg_smi) / orig_simil_avg_smi * 100
@@ -390,19 +683,24 @@ def main():
 
 def prep_noncanon_mt():
     start = time.time()
-    # rxn_class = "UNK"
     for phase in ['train', 'valid', 'test']:
         with open(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/50k_clean_rxnsmi_noreagent_canon_{phase}.pickle', 'rb') as handle:
             rxn_smis = pickle.load(handle)
-        with open(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/50k_rooted_{language}_{simil_funcname}_{phase}.pickle', 'rb') as handle:
+        with open(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/50k_rooted_{args.language}_{args.expt_name}_{phase}.pickle', 'rb') as handle:
             rcts = pickle.load(handle)
 
-        with open(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_rooted_{language}_{simil_funcname}_{phase}.smi', mode='w') as f:            
-            if language == 'smiles':
+        with open(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_rooted_{args.language}_{args.expt_name}_{phase}.smi', mode='w') as f:            
+            if args.language == 'smiles':
+                # if args.simil_type == 'string': # dont do it here, do it in transformers.py side
                 for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
                     prod_smi = rxn_smi.split('>>')[-1]
                     rcts_smi = rcts[i]
                     f.write(prod_smi + ' >> ' + rcts_smi + '\n')
+                # else:
+                #     for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
+                #         prod_smi = tokenize_smiles(rxn_smi.split('>>')[-1])
+                #         rcts_smi = tokenize_smiles(rcts[i])
+                #         f.write(prod_smi + ' >> ' + rcts_smi + '\n')
             else:
                 for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
                     prod_sf = sf.encoder(rxn_smi.split('>>')[-1])
@@ -425,10 +723,9 @@ def prep_canon_mt():
                 f.write(prod_smi + ' >> ' + rcts_smi + '\n')
             
     print(f'Finished all phases! Elapsed: {time.time() - start:.2f} secs')
-    # very fast, ~60 sec for USPTO-50k
 
 if __name__ == "__main__":
-    log_file = f'ROOTED_{language}_{simil_funcname.upper()}_{SEED}SEED' # {NUM_STRINGS}N_{MAX_INDIV}max_{RXN_COUNT}rxn_
+    log_file = f'{args.language}_{args.expt_name.upper()}_{args.seed}SEED' # {NUM_STRINGS}N_{MAX_INDIV}max_{RXN_COUNT}rxn_
 
     os.makedirs(Path(__file__).resolve().parents[1] / "logs/str_simil/", exist_ok=True)
     RDLogger.DisableLog('rdApp.*') # to disable all logging from RDKit side
@@ -444,18 +741,21 @@ if __name__ == "__main__":
 
     logging.info(log_file)
     for phase in ['train', 'valid', 'test']:
-        if not Path(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/50k_rooted_{language}_{simil_funcname}_{phase}.pickle').exists():
+        if not Path(
+            Path(__file__).resolve().parents[1] / 
+            f'rxnebm/data/cleaned_data/50k_rooted_{args.language}_{args.expt_name}_{phase}.pickle'
+        ).exists():
             main()
             break
 
     for phase in ['train', 'valid', 'test']:
-        if not Path(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_rooted_{language}_{simil_funcname}_{phase}.pickle').exists():
+        if not Path(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_rooted_{args.language}_{args.expt_name}_{phase}.smi').exists():
             prep_noncanon_mt()
             break
 
-    for phase in ['train', 'valid', 'test']:
-        if not Path(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_canon_{phase}.smi').exists():
-            prep_canon_mt()
-            break
+    # for phase in ['train', 'valid', 'test']:
+    #     if not Path(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_canon_{phase}.smi').exists():
+    #         prep_canon_mt()
+    #         break
 
     logging.info('All done!')
