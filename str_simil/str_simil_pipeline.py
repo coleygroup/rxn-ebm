@@ -366,7 +366,7 @@ def optimize_one_rxn_tokenized_root_indiv_SMILES(simil_func, rxn_smi): # just do
                         rootedAtAtom=atom,
                     )
             rct_noncano_smi_ = tokenize_and_unicode_smiles(rct_noncano_smi)
-            simil = simil_func(rct_noncano_smi_, prod_smi)
+            simil = simil_func(rct_noncano_smi_, prod_smi_)
             if simil > max_simil_smi:
                 max_simil_smi = simil
                 best_noncano = rct_noncano_smi
@@ -664,6 +664,8 @@ if __name__ == "__main__":
         ).exists():
             main()
             break
+        else:
+            logging.info('Pickle file already exists!')
 
     for phase in ['train', 'valid', 'test']:
         if not Path(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_rooted_{args.language}_{args.expt_name}_{phase}.smi').exists():
