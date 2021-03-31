@@ -71,7 +71,7 @@ def tokenize_smiles(smi: str) -> str:
 #     return " ".join(tokens)
     return tokens
 
-def tokenize_and_unicode_selfies(smi: str) -> str:
+def tokenize_and_unicode_selfies_from_smiles(smi: str) -> str:
     encoded_selfies = sf.encoder(smi)
     tokens = list(sf.split_selfies(encoded_selfies))
     translated = ''.join(map(token_to_unicode_selfies.get, tokens))
@@ -84,7 +84,7 @@ def tokenize_and_unicode_smiles(smi: str) -> str:
     translated = ''.join(map(token_to_unicode_smiles.get, tokens))
     return translated
 
-def optimize_one_rxn_char(simil_func, rxn_smi): # only does root, char-level (eg levenshtein)
+def optimize_one_rxn_char_rootonly(simil_func, rxn_smi): # only does root, char-level (eg levenshtein), only for SMILES
     # simil_func = similarity function (monge_elkan)
     prod_smi = rxn_smi.split('>>')[-1]
     rcts_smi = rxn_smi.split('>>')[0]
@@ -118,7 +118,42 @@ def optimize_one_rxn_char(simil_func, rxn_smi): # only does root, char-level (eg
 
     return best_noncano, max_simil_smi, orig_simil_smi
 
-def optimize_one_rxn_char_v2(simil_func, rxn_smi): # root + random, char-level (eg levenshtein)
+def optimize_one_rxn_char_rootonly_indiv(simil_func, rxn_smi): # only does root, char-level (eg levenshtein), only for SMILES
+    prod_smi = rxn_smi.split('>>')[-1]
+    rcts_smi = rxn_smi.split('>>')[0]
+
+    orig_simil_smi = simil_func(rcts_smi, prod_smi)
+
+    best_indiv_rcts = [] # each element = each best individually optimized reactant
+    # i.e. len(best_indiv_rcts) = # rcts in original rxn
+    for rct_idx, rct in enumerate(rcts_smi.split('.')):
+        rct_mol = Chem.MolFromSmiles(rct)
+
+        # max_simil_smi = simil_func(rct, prod_smi) # float('-inf')
+        # best_noncano = rct
+        max_simil_smi = float('-inf')
+        for atom in range(rct_mol.GetNumAtoms()):
+            rct_noncano_smi = Chem.MolToSmiles(
+                        rct_mol,
+                        rootedAtAtom=atom,
+                    )
+            simil = simil_func(rct_noncano_smi, prod_smi)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = rct_noncano_smi
+        best_indiv_rcts.append(best_noncano)
+        
+    max_simil_smi = float('-inf')
+    for perm in itertools.permutations(best_indiv_rcts):
+        noncano_concat = '.'.join(perm)
+        simil = simil_func(noncano_concat, prod_smi)
+        if simil > max_simil_smi:
+            max_simil_smi = simil
+            best_noncano = noncano_concat
+
+    return best_noncano, max_simil_smi, orig_simil_smi
+
+def optimize_one_rxn_char(simil_func, rxn_smi): # root + random, char-level (eg levenshtein), only for SMILES
     rcts_smi = rxn_smi.split('>>')[0]
     prod_smi = rxn_smi.split('>>')[-1]
     
@@ -307,14 +342,54 @@ def optimize_one_rxn_tokenized_root_SMILES(simil_func, rxn_smi): # just do root,
 
     return best_noncano, max_simil_smi, orig_simil_smi
 
+def optimize_one_rxn_tokenized_root_indiv_SMILES(simil_func, rxn_smi): # just do root, opt reactants individually
+    # use levenshtein char-level edit dist using unicode dict trick
+    rcts_smi = rxn_smi.split('>>')[0]
+    rcts_smi_ = tokenize_and_unicode_smiles(rcts_smi)
+
+    prod_smi = rxn_smi.split('>>')[-1]
+    prod_smi_ = tokenize_and_unicode_smiles(prod_smi)
+    
+    orig_simil_smi = simil_func(rcts_smi_, prod_smi_)
+    
+    best_indiv_rcts = [] # each element = each best individually optimized reactant
+    # i.e. len(best_indiv_rcts) = # rcts in original rxn
+    for rct_idx, rct in enumerate(rcts_smi.split('.')):
+        rct_mol = Chem.MolFromSmiles(rct)
+
+        # max_simil_smi = simil_func(rct, prod_smi) # float('-inf')
+        # best_noncano = rct
+        max_simil_smi = float('-inf')
+        for atom in range(rct_mol.GetNumAtoms()):
+            rct_noncano_smi = Chem.MolToSmiles(
+                        rct_mol,
+                        rootedAtAtom=atom,
+                    )
+            rct_noncano_smi_ = tokenize_and_unicode_smiles(rct_noncano_smi)
+            simil = simil_func(rct_noncano_smi_, prod_smi)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = rct_noncano_smi
+        best_indiv_rcts.append(best_noncano)
+    
+    max_simil_smi = float('-inf')
+    for perm in itertools.permutations(best_indiv_rcts):
+        noncano_concat = '.'.join(perm)
+        noncano_concat_ = tokenize_and_unicode_smiles(noncano_concat)
+        simil = simil_func(noncano_concat_, prod_smi_)
+        if simil > max_simil_smi:
+            max_simil_smi = simil
+            best_noncano = noncano_concat
+
+    return best_noncano, max_simil_smi, orig_simil_smi
 
 def optimize_one_rxn_tokenized_sf(simil_func, rxn_smi): # root + random
     # use levenshtein char-level edit dist using unicode dict trick
     rcts_smi = rxn_smi.split('>>')[0]
-    rcts_smi_ = tokenize_and_unicode_selfies(rcts_smi)
+    rcts_smi_ = tokenize_and_unicode_selfies_from_smiles(rcts_smi)
 
     prod_smi = rxn_smi.split('>>')[-1]
-    prod_smi_ = tokenize_and_unicode_selfies(prod_smi)
+    prod_smi_ = tokenize_and_unicode_selfies_from_smiles(prod_smi)
     
     orig_simil_smi = simil_func(rcts_smi_, prod_smi_)
     
@@ -345,7 +420,7 @@ def optimize_one_rxn_tokenized_sf(simil_func, rxn_smi): # root + random
     for combo in itertools.product(*rct_noncanos):
         for perm in itertools.permutations(combo):
             noncano_concat = '.'.join(perm)
-            noncano_concat_ = tokenize_and_unicode_selfies(noncano_concat)
+            noncano_concat_ = tokenize_and_unicode_selfies_from_smiles(noncano_concat)
             simil = simil_func(noncano_concat_, prod_smi_)
             if simil > max_simil_smi:
                 max_simil_smi = simil
@@ -378,7 +453,7 @@ def optimize_one_rxn_tokenized_sf(simil_func, rxn_smi): # root + random
     for combo in itertools.product(*gen_noncanos):
         for perm in itertools.permutations(combo):
             noncano_concat = '.'.join(perm)
-            noncano_concat_ = tokenize_and_unicode_selfies(noncano_concat)
+            noncano_concat_ = tokenize_and_unicode_selfies_from_smiles(noncano_concat)
             simil = simil_func(noncano_concat_, prod_smi_)
             if simil > max_simil_smi:
                 max_simil_smi = simil
@@ -389,10 +464,10 @@ def optimize_one_rxn_tokenized_sf(simil_func, rxn_smi): # root + random
 def optimize_one_rxn_tokenized_root_sf(simil_func, rxn_smi): # just do root, updated
     # use levenshtein char-level edit dist using unicode dict trick
     rcts_smi = rxn_smi.split('>>')[0]
-    rcts_smi_ = tokenize_and_unicode_selfies(rcts_smi)
+    rcts_smi_ = tokenize_and_unicode_selfies_from_smiles(rcts_smi)
 
     prod_smi = rxn_smi.split('>>')[-1]
-    prod_smi_ = tokenize_and_unicode_selfies(prod_smi)
+    prod_smi_ = tokenize_and_unicode_selfies_from_smiles(prod_smi)
     
     orig_simil_smi = simil_func(rcts_smi_, prod_smi_)
     
@@ -415,11 +490,50 @@ def optimize_one_rxn_tokenized_root_sf(simil_func, rxn_smi): # just do root, upd
     for combo in itertools.product(*rct_noncanos):
         for perm in itertools.permutations(combo):
             noncano_concat = '.'.join(perm)
-            noncano_concat_ = tokenize_and_unicode_selfies(noncano_concat)
+            noncano_concat_ = tokenize_and_unicode_selfies_from_smiles(noncano_concat)
             simil = simil_func(noncano_concat_, prod_smi_)
             if simil > max_simil_smi:
                 max_simil_smi = simil
                 best_noncano = noncano_concat
+
+    return best_noncano, max_simil_smi, orig_simil_smi
+
+def optimize_one_rxn_tokenized_root_indiv_sf(simil_func, rxn_smi): # just do root + opt reactants individually
+    # use levenshtein char-level edit dist using unicode dict trick
+    rcts_smi = rxn_smi.split('>>')[0]
+    rcts_smi_ = tokenize_and_unicode_selfies_from_smiles(rcts_smi)
+
+    prod_smi = rxn_smi.split('>>')[-1]
+    prod_smi_ = tokenize_and_unicode_selfies_from_smiles(prod_smi)
+    
+    orig_simil_smi = simil_func(rcts_smi_, prod_smi_)
+    
+    best_indiv_rcts = [] # each element = each best individually optimized reactant
+    # i.e. len(best_indiv_rcts) = # rcts in original rxn
+    for rct_idx, rct in enumerate(rcts_smi.split('.')):
+        rct_mol = Chem.MolFromSmiles(rct)
+        
+        max_simil_smi = float('-inf')
+        for atom in range(rct_mol.GetNumAtoms()):
+            rct_noncano_smi = Chem.MolToSmiles(
+                        rct_mol,
+                        rootedAtAtom=atom,
+                    )
+            rct_noncano_sf = tokenize_and_unicode_selfies_from_smiles(rct_noncano_smi)
+            simil = simil_func(rct_noncano_sf, prod_smi_)
+            if simil > max_simil_smi:
+                max_simil_smi = simil
+                best_noncano = rct_noncano_smi
+        best_indiv_rcts.append(best_noncano)
+
+    max_simil_smi = float('-inf')
+    for perm in itertools.permutations(best_indiv_rcts):
+        noncano_concat = '.'.join(perm)
+        noncano_concat_ = tokenize_and_unicode_selfies_from_smiles(noncano_concat)
+        simil = simil_func(noncano_concat_, prod_smi_)
+        if simil > max_simil_smi:
+            max_simil_smi = simil
+            best_noncano = noncano_concat
 
     return best_noncano, max_simil_smi, orig_simil_smi
 
@@ -442,23 +556,31 @@ def main():
         greedy_simil_avg = 0
 
         if args.language == 'selfies':
-            if args.simil_type == 'string':
-                optimize_one_rxn_ = partial(optimize_one_rxn_char_sf, simil_func)
+            if args.simil_type in ['string', 'string_rootonly', 'string_rootonly_indiv']:
+                raise ValueError("Char-level optimization is not suitable for SELFIES")
             elif args.simil_type == 'token':
                 optimize_one_rxn_ = partial(optimize_one_rxn_tokenized_sf, simil_func)
             elif args.simil_type == 'token_rootonly':
                 optimize_one_rxn_ = partial(optimize_one_rxn_tokenized_root_sf, simil_func)
+            elif args.simil_type == 'token_rootonly_indiv':
+                optimize_one_rxn_ = partial(optimize_one_rxn_tokenized_root_indiv_sf, simil_func)
             else:
-                raise ValueError
+                raise ValueError('Unrecognized simil type')
         elif args.language == 'smiles':
             if args.simil_type == 'string':
-                optimize_one_rxn_ = partial(optimize_one_rxn_char_v2, simil_func) # optimize_one_rxn_char
+                optimize_one_rxn_ = partial(optimize_one_rxn_char, simil_func)
+            elif args.simil_type == 'string_rootonly':
+                optimize_one_rxn_ = partial(optimize_one_rxn_char_rootonly, simil_func)
+            elif args.simil_type == 'string_rootonly_indiv':
+                optimize_one_rxn_ = partial(optimize_one_rxn_char_rootonly_indiv, simil_func)
             elif args.simil_type == 'token':
                 optimize_one_rxn_ = partial(optimize_one_rxn_tokenized_SMILES, simil_func)
             elif args.simil_type == 'token_rootonly':
                 optimize_one_rxn_ = partial(optimize_one_rxn_tokenized_root_SMILES, simil_func)
+            elif args.simil_type == 'token_rootonly_indiv':
+                optimize_one_rxn_ = partial(optimize_one_rxn_tokenized_root_indiv_SMILES, simil_func)
             else:
-                raise ValueError
+                raise ValueError('Unrecognized simil type')
         else:
             raise ValueError('Unrecognized language')
 
