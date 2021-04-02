@@ -608,21 +608,24 @@ def prep_noncanon_mt():
 
         with open(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_rooted_{args.language}_{args.expt_name}_{phase}.smi', mode='w') as f:            
             if args.language == 'smiles':
-                # if args.simil_type == 'string': # dont do it here, do it in transformers.py side
-                for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
-                    prod_smi = rxn_smi.split('>>')[-1]
-                    rcts_smi = rcts[i]
-                    f.write(prod_smi + ' >> ' + rcts_smi + '\n')
-                # else:
-                #     for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
-                #         prod_smi = tokenize_smiles(rxn_smi.split('>>')[-1])
-                #         rcts_smi = tokenize_smiles(rcts[i])
-                #         f.write(prod_smi + ' >> ' + rcts_smi + '\n')
+                if args.simil_type == 'string': # char-level
+                    for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
+                        prod_smi = rxn_smi.split('>>')[-1]
+                        rcts_smi = rcts[i]
+                        f.write(prod_smi + ' >> ' + rcts_smi + '\n')
+                else: # token-level
+                    for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
+                        prod_smi = ' '.join(tokenize_smiles(rxn_smi.split('>>')[-1]))
+                        rcts_smi = ' '.join(tokenize_smiles(rcts[i]))
+                        f.write(prod_smi + ' >> ' + rcts_smi + '\n')
             else:
-                for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
-                    prod_sf = sf.encoder(rxn_smi.split('>>')[-1])
-                    rcts_sf = sf.encoder(rcts[i])
-                    f.write(prod_sf + ' >> ' + rcts_sf + '\n')
+                if args.simil_type == 'string':
+                    raise ValueError('Do not use char-level tokenization for SELFIES!')
+                else:
+                    for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
+                        prod_sf = ' '.join(sf.split_selfies(sf.encoder(rxn_smi.split('>>')[-1])))
+                        rcts_sf = ' '.join(sf.split_selfies(sf.encoder(rcts[i])))
+                        f.write(prod_sf + ' >> ' + rcts_sf + '\n')
             
     print(f'Finished all phases! Elapsed: {time.time() - start:.2f} secs')
 
