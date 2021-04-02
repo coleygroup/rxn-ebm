@@ -621,7 +621,7 @@ def prep_noncanon_mt():
             else:
                 for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
                     prod_sf = sf.encoder(rxn_smi.split('>>')[-1])
-                    rcts_sf = rcts[i]
+                    rcts_sf = sf.encoder(rcts[i])
                     f.write(prod_sf + ' >> ' + rcts_sf + '\n')
             
     print(f'Finished all phases! Elapsed: {time.time() - start:.2f} secs')
