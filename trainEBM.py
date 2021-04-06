@@ -178,14 +178,14 @@ def parse_args():
     # model params, G2E/FF/S2E args
     parser.add_argument("--encoder_hidden_size", help="MPN/FFN/Transformer encoder_hidden_size(s)", 
                         type=int, nargs='+', default=256)
-    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size(s)", type=int, nargs='+')
+    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size(s)", type=int, nargs='+', default=[320])
     parser.add_argument("--encoder_depth", help="MPN encoder_depth / Transformer num_layers", type=int, default=3)
     parser.add_argument("--encoder_num_heads", help="Transformer num_heads", type=int, default=4)
     parser.add_argument("--encoder_filter_size", help="Transformer filter_size", type=int, default=256)
     parser.add_argument("--encoder_embed_size", help="Transformer embedding size", type=int, default=64)
     parser.add_argument("--encoder_dropout", help="MPN/FFN/Transformer encoder dropout", type=float, default=0.05)
     parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="PReLU")
-    parser.add_argument("--out_hidden_sizes", help="Output layer hidden sizes", type=int, nargs='+', default=[])
+    parser.add_argument("--out_hidden_sizes", help="Output layer hidden sizes", type=int, nargs='+', default=[256])
     parser.add_argument("--out_activation", help="Output layer activation", type=str, default="PReLU")
     parser.add_argument("--out_dropout", help="Output layer dropout", type=float, default=0.2)
     parser.add_argument("--encoder_rnn_type", help="RNN type for graph encoder (gru/lstm)", type=str, default="gru")
@@ -195,11 +195,11 @@ def parse_args():
                         type=str, default="sum")
     parser.add_argument("--s2e_pool_type", help="Reaction pooling method for Transformer (mean/CLS)",
                         type=str, default="mean")                  
-    parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+')
+    parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+', default=[256])
     parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
     parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
     parser.add_argument("--attention_dropout", help="Attention dropout for Transformer", type=float, default=0.1)
-    parser.add_argument("--preembed_size", help="Preembedding layer hidden size(s)",type=int, nargs='+')
+    parser.add_argument("--preembed_size", help="Preembedding layer hidden size(s)", type=int, nargs='+', default=[90])
 
     return parser.parse_args()
 

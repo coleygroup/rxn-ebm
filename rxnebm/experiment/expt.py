@@ -518,11 +518,11 @@ class Experiment:
 
     def _init_smi_dataloaders(self, onthefly: bool):
         logging.info("Initialising SMILES dataloaders...")
-        if onthefly and self.args.do_compute_graph_feat: # don't load test data yet, to save memory
-            self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
-            self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
-            self.test_loader, self.test_size = None, None # self._get_smi_dl(phase="test", shuffle=False)
-        elif onthefly:
+        # if onthefly and self.args.do_compute_graph_feat: # don't load test data yet, to save memory
+        #     self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
+        #     self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
+        #     self.test_loader, self.test_size = None, None # self._get_smi_dl(phase="test", shuffle=False)
+        if onthefly:
             self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
             self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
             self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)

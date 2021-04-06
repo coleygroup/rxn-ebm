@@ -66,8 +66,10 @@ BOND_FDIM = 9                                                                   
 BINARY_FDIM = 5 + BOND_FDIM
 INVALID_BOND = -1
 
+# ATOM_FDIM = [len(ATOM_LIST), len(DEGREES), len(FORMAL_CHARGE), len(HYBRIDIZATION), len(VALENCE),
+#              len(NUM_Hs), 2]            # undo one-hot to save space
 ATOM_FDIM = [len(ATOM_LIST), len(DEGREES), len(FORMAL_CHARGE), len(HYBRIDIZATION), len(VALENCE),
-             len(NUM_Hs), 2]            # undo one-hot to save space
+             len(NUM_Hs), len(CHIRAL_TAG), len(RS_TAG), 2]            # undo one-hot to save space,                 # new
 # BOND_FDIM = [4, 2, 2]                   # undo one-hot to save space
 # ATOM_FDIM and BOND_FDIM now contains list of feature dimensions
 
@@ -167,7 +169,7 @@ def get_atom_features_sparse(atom: Chem.Atom, rxn_class: int = None, use_rxn_cla
 
     if symbol in ["*", "unk"]:
         # padding = [999999999] * 7 if use_rxn_class else [999999999] * 6
-        padding = [999999999] * ATOM_FDIM if use_rxn_class else [999999999] * (ATOM_FDIM - 1) # new
+        padding = [999999999] * len(ATOM_FDIM) if use_rxn_class else [999999999] * (len(ATOM_FDIM) - 1) # new
         feature_array.extend(padding)
 
     else:
@@ -225,7 +227,7 @@ def get_bond_features_sparse(bond: Chem.Bond) -> List[int]:
     bt = bond.GetBondType()
     bs = bond.GetStereo()                                                               # new
     # bond_features = [BOND_DICT[bt], int(bond.GetIsConjugated()), int(bond.IsInRing())]
-    bond_features = [BOND_DICT[bt], int(bond.GetIsConjugated()), int(bond.IsInRing())   # new
+    bond_features = [BOND_DICT[bt], int(bond.GetIsConjugated()), int(bond.IsInRing()),   # new
                     BOND_STEREO_DICT[bs]]  # new
 
     return bond_features
