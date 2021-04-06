@@ -670,10 +670,11 @@ if __name__ == "__main__":
         else:
             logging.info('Pickle file already exists!')
 
-    for phase in ['train', 'valid', 'test']:
-        if not Path(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_rooted_{args.language}_{args.expt_name}_{phase}.smi').exists():
-            prep_noncanon_mt()
-            break
+    prep_noncanon_mt()
+    # for phase in ['train', 'valid', 'test']:
+    #     if not Path(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_rooted_{args.language}_{args.expt_name}_{phase}.smi').exists():
+    #         prep_noncanon_mt()
+    #         break
 
     # for phase in ['train', 'valid', 'test']:
     #     if not Path(Path(__file__).resolve().parents[1] / f'rxnebm/data/cleaned_data/retrosynthesis_canon_{phase}.smi').exists():

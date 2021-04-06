@@ -29,6 +29,14 @@ VALENCE_DICT = {vl: i for i, vl in enumerate(VALENCE)}
 NUM_Hs = [0, 1, 3, 4, 5]
 NUM_Hs_DICT = {nH: i for i, nH in enumerate(NUM_Hs)}
 
+CHIRAL_TAG = [Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CW,
+              Chem.rdchem.ChiralType.CHI_TETRAHEDRAL_CCW,
+              Chem.rdchem.ChiralType.CHI_UNSPECIFIED]                           # new
+CHIRAL_TAG_DICT = {ct: i for i, ct in enumerate(CHIRAL_TAG)}                    # new
+
+RS_TAG = ["R", "S", "None"]                                                     # new
+RS_TAG_DICT = {rs: i for i, rs in enumerate(RS_TAG)}                            # new
+
 BOND_TYPES = [None, Chem.rdchem.BondType.SINGLE, Chem.rdchem.BondType.DOUBLE,
               Chem.rdchem.BondType.TRIPLE, Chem.rdchem.BondType.AROMATIC]
 BOND_DICT = {bond_type: i for i, bond_type in enumerate(BOND_TYPES[1:])}
@@ -40,13 +48,21 @@ BOND_FLOAT_TO_TYPE = {
     1.5: BOND_TYPES[4],
 }
 
+BOND_STEREO = [Chem.rdchem.BondStereo.STEREOE,
+               Chem.rdchem.BondStereo.STEREOZ,
+               Chem.rdchem.BondStereo.STEREONONE]
+BOND_STEREO_DICT = {bond_stereo: i for i, bond_stereo in enumerate(BOND_STEREO)}
+
 BOND_DELTAS = {-3: 0, -2: 1, -1.5: 2, -1: 3, -0.5: 4, 0: 5, 0.5: 6, 1: 7, 1.5: 8, 2: 9, 3: 10}
 BOND_FLOATS = [0.0, 1.0, 2.0, 3.0, 1.5]
 RXN_CLASSES = list(range(10))
 
+# ATOM_FDIM = len(ATOM_LIST) + len(DEGREES) + len(FORMAL_CHARGE) + len(HYBRIDIZATION) \
+#             + len(VALENCE) + len(NUM_Hs) + 1
 ATOM_FDIM = len(ATOM_LIST) + len(DEGREES) + len(FORMAL_CHARGE) + len(HYBRIDIZATION) \
-            + len(VALENCE) + len(NUM_Hs) + 1
-BOND_FDIM = 6
+            + len(VALENCE) + len(NUM_Hs) + len(CHIRAL_TAG) + len(RS_TAG) + 2            # new
+# BOND_FDIM = 6
+BOND_FDIM = 9                                                                           # new
 BINARY_FDIM = 5 + BOND_FDIM
 INVALID_BOND = -1
 
@@ -150,7 +166,8 @@ def get_atom_features_sparse(atom: Chem.Atom, rxn_class: int = None, use_rxn_cla
     feature_array.append(symbol_id)
 
     if symbol in ["*", "unk"]:
-        padding = [999999999] * 7 if use_rxn_class else [999999999] * 6
+        # padding = [999999999] * 7 if use_rxn_class else [999999999] * 6
+        padding = [999999999] * ATOM_FDIM if use_rxn_class else [999999999] * (ATOM_FDIM - 1) # new
         feature_array.extend(padding)
 
     else:
@@ -161,9 +178,16 @@ def get_atom_features_sparse(atom: Chem.Atom, rxn_class: int = None, use_rxn_cla
         hybridization_id = HYBRIDIZATION_DICT.get(atom.GetHybridization(), 4)
         valence_id = VALENCE_DICT.get(atom.GetTotalValence(), 6)
         num_h_id = NUM_Hs_DICT.get(atom.GetTotalNumHs(), 4)
+        chiral_tag_id = CHIRAL_TAG_DICT.get(atom.GetChiralTag(), 2)                 # new
+
+        rs_tag = atom.GetPropsAsDict().get("_CIPCode", "None")                      # new
+        rs_tag_id = RS_TAG_DICT.get(rs_tag, 2)                                      # new
+
         is_aromatic = int(atom.GetIsAromatic())
-        feature_array.extend([degree_id, formal_charge_id, hybridization_id,
-                              valence_id, num_h_id, is_aromatic])
+        # feature_array.extend([degree_id, formal_charge_id, hybridization_id,
+        #                       valence_id, num_h_id, is_aromatic])
+        feature_array.extend([degree_id, formal_charge_id, hybridization_id,        # new
+                              valence_id, num_h_id, chiral_tag_id, rs_tag_id, is_aromatic])
 
         if use_rxn_class:
             feature_array.append(rxn_class)
@@ -183,6 +207,8 @@ def get_bond_features(bond: Chem.Bond) -> np.ndarray:
     # bond_features = [float(bt == bond_type) for bond_type in BOND_TYPES[1:]]
     # bond_features.extend([float(bond.GetIsConjugated()), float(bond.IsInRing())])
     bond_features = [int(bt == bond_type) for bond_type in BOND_TYPES[1:]]
+    bs = bond.GetStereo()                                                               # new
+    bond_features.extend([int(bs == bond_stereo) for bond_stereo in BOND_STEREO])       # new
     bond_features.extend([int(bond.GetIsConjugated()), int(bond.IsInRing())])
     # bond_features = np.array(bond_features, dtype=np.float32)
     return bond_features
@@ -197,6 +223,9 @@ def get_bond_features_sparse(bond: Chem.Bond) -> List[int]:
         bond object
     """
     bt = bond.GetBondType()
-    bond_features = [BOND_DICT[bt], int(bond.GetIsConjugated()), int(bond.IsInRing())]
+    bs = bond.GetStereo()                                                               # new
+    # bond_features = [BOND_DICT[bt], int(bond.GetIsConjugated()), int(bond.IsInRing())]
+    bond_features = [BOND_DICT[bt], int(bond.GetIsConjugated()), int(bond.IsInRing())   # new
+                    BOND_STEREO_DICT[bs]]  # new
 
     return bond_features
