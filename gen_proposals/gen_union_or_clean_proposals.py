@@ -48,7 +48,7 @@ def merge_proposers(
         maxks : List[int],
         input_mode : str = 'csv',
         phases: Optional[List[str]] = ['train', 'valid', 'test'],
-        rxnsmi_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped',
+        rxnsmi_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped_canon',
         input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
         output_folder: Optional[Union[str, bytes, os.PathLike]] = None
     ):
@@ -460,7 +460,7 @@ def parse_args():
                         default="GLN_retrain_cano_200topk_200maxk_200beam,retrosim_200maxtest_200maxprec,retroxpert_200topk_200maxk_200beam")
     parser.add_argument("--input_mode", help="input mode ['csv', 'pickle']", type=str, default='csv')
     parser.add_argument("--rxnsmi_file_prefix", help="file prefix of atom-mapped rxn smiles", type=str,
-                        default="50k_clean_rxnsmi_noreagent_allmapped")
+                        default="50k_clean_rxnsmi_noreagent_allmapped_canon")
     parser.add_argument("--output_folder", help="output folder", type=str)
     parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="LOCAL")
 
@@ -482,7 +482,7 @@ if __name__ == "__main__":
 
     RDLogger.DisableLog("rdApp.warning")
 
-    os.makedirs(Path(__file__).resolve().parents[1] / "/logs/gen_union/", exist_ok=True)
+    os.makedirs(Path(__file__).resolve().parents[1] / "logs/gen_union/", exist_ok=True)
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
 
     logger = logging.getLogger()
@@ -507,7 +507,7 @@ if __name__ == "__main__":
     else:
         output_folder = Path(args.output_folder)
 
-    phases = [] 
+    phases = []
     if args.train:
         logging.info('Appending train')
         phases.append('train') 

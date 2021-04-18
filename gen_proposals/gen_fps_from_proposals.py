@@ -52,8 +52,9 @@ def parse_args():
     parser.add_argument("--log_file", help="log_file", type=str, default="proc_proposals")
     parser.add_argument("--cleaned_data_root", help="Path to cleaned_data folder (do not change)", type=str,
                         default=None) 
+    parser.add_argument("--proposals_file_prefix", help='Prefix of 3 proposals CSV files', type=str, default=None)
     parser.add_argument("--rxn_smi_file_prefix", help="Prefix of the 3 pickle files containing the train/valid/test reaction SMILES strings (do not change)", type=str,
-                        default='50k_clean_rxnsmi_noreagent_allmapped') 
+                        default='50k_clean_rxnsmi_noreagent_allmapped_canon') 
     parser.add_argument("--output_file_prefix", help="Prefix of 3 output files containing proposals in chosen representation", type=str) # add graphs to prefix when necessary
     parser.add_argument("--helper_file_prefix", help="Prefix of helper files for count_mol_fps & mol_smi_to_fp", type=str) # add graphs to prefix when necessary
 
@@ -124,7 +125,9 @@ def main(args):
     elif args.proposer == 'neuralsym':
         proposals_file_prefix = f"neuralsym_{topk}topk_{maxk}maxk_noGT" # do not change  
     elif args.proposer == 'union':
-        proposals_file_prefix = 'GLN_retrain_35topk_125maxk_retrosim_30topk_100maxk_retroxpert_35topk_75maxk_noGT' # hardcoded for now, TODO: make into arg
+        assert args.proposals_file_prefix is not None # user should pass in
+        proposals_file_prefix = args.proposals_file_prefix
+        # proposals_file_prefix = 'GLN_retrain_50topk_200maxk_retrosim_50topk_200maxk_noGT' # hardcoded for now, TODO: make into arg
     elif args.proposer == 'MT':
         raise NotImplementedError
 
@@ -372,11 +375,11 @@ if __name__ == '__main__':
     args = parse_args()
  
     RDLogger.DisableLog("rdApp.warning")
-    os.makedirs(Path(__file__).resolve().parents[1] / "logs/gen_fp", exist_ok=True)
+    os.makedirs(Path(__file__).resolve().parents[1] / "logs/make_fp", exist_ok=True)
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
     logger = logging.getLogger()
     logger.setLevel(logging.INFO) 
-    fh = logging.FileHandler(Path(__file__).resolve().parents[1] / f"logs/gen_fp/{args.log_file}.{dt}")
+    fh = logging.FileHandler(Path(__file__).resolve().parents[1] / f"logs/make_fp/{args.log_file}.{dt}")
     fh.setLevel(logging.INFO)
     sh = logging.StreamHandler(sys.stdout)
     sh.setLevel(logging.INFO)

@@ -382,7 +382,7 @@ class MPNEncoder(nn.Module):
             self.W_o = nn.Sequential(
                     nn.Linear(self.node_fdim + self.h_size, self.h_size_inner), 
                     encoder_activation,
-                    nn.Dropout(self.dropout),
+                    # nn.Dropout(self.dropout), # remove dropout
                     nn.Linear(self.h_size_inner, self.h_size),
                     encoder_activation
                 )
