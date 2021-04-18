@@ -19,3 +19,7 @@ python3 gen_proposals/gen_union_or_clean_proposals.py \
     --proposers union \
     --topks 100 \
     --maxks 400
+
+mv rxnebm/data/cleaned_data/union_100topk_400maxk_noGT_test.csv rxnebm/data/cleaned_data/GLN_50top200max_SIM_50top200max_noGT_test.csv
+mv rxnebm/data/cleaned_data/union_100topk_400maxk_noGT_valid.csv rxnebm/data/cleaned_data/GLN_50top200max_SIM_50top200max_noGT_valid.csv
+mv rxnebm/data/cleaned_data/union_100topk_400maxk_noGT_train.csv rxnebm/data/cleaned_data/GLN_50top200max_SIM_50top200max_noGT_train.csv

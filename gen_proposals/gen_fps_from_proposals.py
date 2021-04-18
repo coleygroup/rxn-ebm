@@ -55,8 +55,8 @@ def parse_args():
     parser.add_argument("--proposals_file_prefix", help='Prefix of 3 proposals CSV files', type=str, default=None)
     parser.add_argument("--rxn_smi_file_prefix", help="Prefix of the 3 pickle files containing the train/valid/test reaction SMILES strings (do not change)", type=str,
                         default='50k_clean_rxnsmi_noreagent_allmapped_canon') 
-    parser.add_argument("--output_file_prefix", help="Prefix of 3 output files containing proposals in chosen representation", type=str) # add graphs to prefix when necessary
-    parser.add_argument("--helper_file_prefix", help="Prefix of helper files for count_mol_fps & mol_smi_to_fp", type=str) # add graphs to prefix when necessary
+    parser.add_argument("--output_file_prefix", help="Prefix of 3 output files containing proposals in chosen representation", type=str)
+    parser.add_argument("--helper_file_prefix", help="Prefix of helper files for count_mol_fps & mol_smi_to_fp", type=str)
 
     # parser.add_argument("--parallelize", help="Whether to parallelize over all available cores", action="store_true") # always parallelize
     parser.add_argument("--split_every", help="Split train .npz every N steps to prevent out of memory error", 
@@ -391,16 +391,9 @@ if __name__ == '__main__':
     else:
         args.cleaned_data_root = Path(args.cleaned_data_root)
 
-    # for fp_size in [16384]:
-    #     args.proposer = 'retroxpert'
-    #     args.topk = 50
-    #     args.maxk = 200
-    #     args.beam_size = 200
-    #     # args.split_every = 10000
-    #     args.fp_size = fp_size
-    #     args.rxn_type = 'hybrid_all' 
-    # args.helper_file_prefix = f'{fp_size}'
-    if args.proposer in ['GLN', 'MT']: # only these models have beam_size as they do beam search
+    if args.proposer == 'union':
+        pass
+    elif args.proposer in ['GLN', 'MT']: # only these models have beam_size as they do beam search
         args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{args.beam_size}beam_{args.fp_size}_{args.rxn_type}"
     else:
         args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{args.fp_size}_{args.rxn_type}"

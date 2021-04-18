@@ -241,7 +241,8 @@ def merge_proposers(
                     phase,
                     clean_rxnsmi_phase,
                     rcts_smiles_phase,
-                    proposed_precs_phase
+                    proposed_precs_phase,
+                    maxk
                 )
 
         if phase == 'train':
@@ -250,7 +251,8 @@ def merge_proposers(
                     phase,
                     clean_rxnsmi_phase,
                     rcts_smiles_phase,
-                    processed_precs_phase # proposed_precs_phase
+                    processed_precs_phase, # proposed_precs_phase
+                    maxk
                 )
 
         analyse_proposed(
@@ -312,6 +314,7 @@ def calc_accs(
         clean_rxnsmi_phase : List[str],
         rcts_smiles_phase : List[str],
         proposed_precs_phase : List[str],
+        maxk : int = 400,
     ) -> Dict[str, List[int]]:
     phase_ranks = []
     processed_precs = []
@@ -353,14 +356,14 @@ def calc_accs(
             processed_precs.append(all_proposed_precursors)
 
     logging.info('\n')
-    for n in [1, 2, 3, 5, 10, 20, 50, 100, 150, 200, 225, 250, 300]:
+    for n in [1, 2, 3, 5, 10, 20, 50, 100, 150, 200, 225, 250, 300, maxk]:
         total = float(len(phase_ranks))
         acc = sum([r+1 <= n for r in phase_ranks]) / total
         logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
     logging.info('\n')
 
     # more detailed, for debugging
-    for n in [1] + list(range(5, 301, 5)):
+    for n in [1] + list(range(5, 301, 5)) + [maxk]:
         total = float(len(phase_ranks))
         acc = sum([r+1 <= n for r in phase_ranks]) / total
         logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
