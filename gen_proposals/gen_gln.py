@@ -48,16 +48,17 @@ def merge_chunks(
     return 
 
 def gen_proposals(
-            topk: int = 50,
-            maxk: int = 100, 
-            beam_size: Optional[int] = 50,
+            topk: int = 200,
+            maxk: int = 200, 
+            beam_size: Optional[int] = 200,
             phases: Optional[List[str]] = ['train', 'valid', 'test'],
             start_idx : Optional[int] = 0,
             end_idx : Optional[int] = None, 
             input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
-            input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped',
+            input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped_canon',
             output_folder: Optional[Union[str, bytes, os.PathLike]] = None,
             checkpoint_every: Optional[int] = 4000,
+            model_path: Optional[Union[str, bytes, os.PathLike]] = "./rxnebm/proposer/GLN_original/dropbox/schneider50k.ckpt"
             ):
     '''
     Parameters
@@ -82,7 +83,8 @@ def gen_proposals(
     checkpoint_every : Optional[int] (Default = 4000)
         save checkpoint of proposed precursor smiles every N prod_smiles
     '''
-    # proposer = GLNProposer(gln_config)
+    gln_config["model_path"] = model_path
+    proposer = GLNProposer(gln_config)
 
     clean_rxnsmis = {} 
     for phase in phases:
@@ -94,7 +96,7 @@ def gen_proposals(
         phase_topk = topk if phase == 'train' else maxk
         for i, rxn_smi in enumerate(
                                 tqdm(
-                                    clean_rxnsmis[phase][ start_idx : end_idx ], 
+                                    clean_rxnsmis[phase][start_idx:end_idx], 
                                     desc=f'Generating GLN proposals for {phase}'
                                 )
                             ):
@@ -130,7 +132,7 @@ def compile_into_csv(
                 beam_size: Optional[int] = 50,
                 phases: Optional[List[str]] = ['train', 'valid', 'test'],
                 input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
-                input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped',
+                input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped_canon',
                 output_folder: Optional[Union[str, bytes, os.PathLike]] = None
                 ):
     for phase in phases:
@@ -364,9 +366,11 @@ def parse_args():
     parser.add_argument('-f') # filler for COLAB
     
     parser.add_argument("--log_file", help="log_file", type=str, default="gen_gln")
+
+    parser.add_argument("--model_path", help="model checkpoint folder", type=str)
     parser.add_argument("--input_folder", help="input folder", type=str)
     parser.add_argument("--input_file_prefix", help="input file prefix of atom-mapped rxn smiles", type=str,
-                        default="50k_clean_rxnsmi_noreagent_allmapped")
+                        default="50k_clean_rxnsmi_noreagent_allmapped_canon")
     parser.add_argument("--output_folder", help="output folder", type=str)
     parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="LOCAL")
 
@@ -426,6 +430,7 @@ if __name__ == "__main__":
             output_folder = input_folder
     else:
         output_folder = Path(args.output_folder)
+        os.makedirs(output_folder, exist_ok=True)
 
     phases = [] 
     if args.train:
@@ -451,7 +456,8 @@ if __name__ == "__main__":
             input_folder=input_folder,
             input_file_prefix=args.input_file_prefix,
             output_folder=output_folder,
-            checkpoint_every=args.checkpoint_every
+            checkpoint_every=args.checkpoint_every,
+            model_path=args.model_path
         ) 
 
     if args.merge_chunks:

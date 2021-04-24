@@ -2,8 +2,8 @@ TORCH_VER=1.6.0
 CUDA_VER=10.1
 CUDA_CODE=cu101
 
-conda create -n rxnebm_ztu python=3.6 tensorflow-gpu=1.14 tqdm pathlib typing scipy pandas joblib -y
-conda activate rxnebm_ztu
+conda create -n rxnebm python=3.6 tensorflow-gpu=1.14 tqdm pathlib typing scipy pandas joblib -y
+conda activate rxnebm
 
 conda install -y pytorch=${TORCH_VER} torchvision cudatoolkit=${CUDA_VER} torchtext -c pytorch
 conda install -y rdkit -c rdkit
@@ -22,6 +22,6 @@ pip install torch-spline-conv -f https://pytorch-geometric.com/whl/torch-${TORCH
 pip install torch-geometric
 
 # install gln as a package, must install on a machine with CUDA to enable CUDA GPU ops
-# cd ./rxnebm/proposer/GLN_original
-# pip install -e .
-# cd ../../..
+cd ./rxnebm/proposer/GLN_original
+pip install -e .
+cd ../../..
