@@ -91,7 +91,6 @@ def main(args):
     beam_size = args.beam_size
     topk = args.topk
     maxk = args.maxk
-    # parallelize = args.parallelize
     rxn_smi_file_prefix = args.rxn_smi_file_prefix
     helper_file_prefix = args.helper_file_prefix
     if args.split_every is None:
@@ -115,49 +114,39 @@ def main(args):
     else:
         output_file_prefix = args.output_file_prefix
 
-    if args.proposer == 'retrosim':
-        # proposals_file_prefix = f"retrosim_{topk}maxtest_{max_prec}maxprec" # do not change
-        proposals_file_prefix = f"retrosim_{topk}topk_{maxk}maxk_noGT" # do not change
-    elif args.proposer == 'GLN_retrain':
-        proposals_file_prefix = f"GLN_retrain_{topk}topk_{maxk}maxk_noGT" # do not change
-    elif args.proposer == 'retroxpert':
-        proposals_file_prefix = f"retroxpert_{topk}topk_{maxk}maxk_noGT" # do not change
-    elif args.proposer == 'neuralsym':
-        proposals_file_prefix = f"neuralsym_{topk}topk_{maxk}maxk_noGT" # do not change  
-    elif args.proposer == 'union':
-        assert args.proposals_file_prefix is not None # user should pass in
+    if args.proposals_file_prefix:
         proposals_file_prefix = args.proposals_file_prefix
-        # proposals_file_prefix = 'GLN_retrain_50topk_200maxk_retrosim_50topk_200maxk_noGT' # hardcoded for now, TODO: make into arg
-    elif args.proposer == 'MT':
-        raise NotImplementedError
-
-    if args.proposer in ['GLN_retrain', 'retroxpert', 'retrosim', 'neuralsym']: #TODO: MT
-        for phase in ['train', 'valid', 'test']:
-            files = os.listdir(cleaned_data_root)
-            if proposals_file_prefix not in files:
-                topk_pass, maxk_pass = False, False
-                for filename in files:
-                    if args.proposer in filename and f'noGT_train.csv' in filename and not '.csv.' in filename:
-                    # if args.proposer in filename and f'{beam_size}beam_train.csv' in filename and not '.csv.' in filename: 
-                        for kwarg in filename.split('_'): # split into ['GLN', '200topk', '200maxk', '200beam', 'valid.csv']
-                            if 'topk' in kwarg:
-                                if int(kwarg.strip('topk')) >= topk: 
-                                    topk_pass = True  # as long as proposal file's topk >= requested topk, we can load it
-                            if 'maxk' in kwarg:
-                                if int(kwarg.strip('maxk')) >= maxk:
-                                    maxk_pass = True
-                    if topk_pass and maxk_pass: 
-                        proposals_file_prefix = filename.replace('_train.csv', '')
-                        break
-
-            logging.info(f"finding proposals CSV file at : {cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv'}")
-            if not (cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv').exists():
-                raise RuntimeError(f'Could not find proposals CSV file by {args.proposer}! Please generate the proposals CSV file, for example by running gen_gln.py')
-    
-    elif args.proposer == 'union':
-        pass
     else:
-        raise ValueError(f'Unrecognized proposer {args.proposer}')
+        if args.proposer in ['GLN_retrain', 'GLN', 'retroxpert', 'retrosim', 'neuralsym']:
+            proposals_file_prefix = f"{args.proposer}_{topk}topk_{maxk}maxk_noGT" # do not change
+        elif args.proposer == 'union':
+            raise ValueError('Please specify --proposals_file_prefix') # user should pass in 
+        elif args.proposer == 'MT':
+            raise NotImplementedError
+        else:
+            raise ValueError
+
+        if args.proposer in ['GLN_retrain', 'GLN', 'retroxpert', 'retrosim', 'neuralsym']:
+            for phase in ['train', 'valid', 'test']:
+                files = os.listdir(cleaned_data_root)
+                if proposals_file_prefix not in files:
+                    topk_pass, maxk_pass = False, False
+                    for filename in files:
+                        if args.proposer in filename and f'maxk_noGT' in filename and not '.csv.' in filename and filename.find('topk') == 1: # only 1x 'topk' in filename, to avoid union csv files
+                            for kwarg in filename.split('_'): # split into ['GLN', '200topk', '200maxk', 'valid.csv']
+                                if 'topk' in kwarg:
+                                    if int(kwarg.strip('topk')) >= topk: 
+                                        topk_pass = True  # as long as proposal file's topk >= requested topk, we can load it
+                                if 'maxk' in kwarg:
+                                    if int(kwarg.strip('maxk')) >= maxk: # same rule for maxk
+                                        maxk_pass = True
+                        if topk_pass and maxk_pass:
+                            proposals_file_prefix = filename.replace('_train.csv', '')
+                            break
+
+                logging.info(f"finding proposals CSV file at : {cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv'}")
+                if not (cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv').exists():
+                    raise RuntimeError(f'Could not find proposals CSV file by {args.proposer}! Please generate the proposals CSV file, for example by running gen_gln.py')
 
     # check if ALL 3 files to be computed already exist in cleaned_data_root, if so, then just exit the function
     phases_to_compute = ['train', 'valid', 'test']
@@ -167,7 +156,7 @@ def main(args):
             print(f"At: {cleaned_data_root / output_file_prefix}_{phase}")
             print("The processed proposals file already exists!")
             phases_to_compute.remove(phase)        
-    if len(phases_to_compute) == 0: # all pre-computed, OK exit 
+    if len(phases_to_compute) == 0: # all pre-computed, OK exit
         return
     elif len(phases_to_compute) < 3: # corrupted 
         raise RuntimeError('The proposal processing is most likely corrupted. Please delete existing files and restart!')
@@ -243,43 +232,6 @@ def main(args):
                                             rxn, i
                                         ) for i, rxn in enumerate(processed_rxn_smis)
                                     )
-                # else:
-                #     # unparallelized version
-                #     for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
-                #         pos_rxn_smi = rxn[0]
-                #         neg_rxn_smis = rxn[1:]
-
-                #         pos_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(pos_rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
-                #         pos_rxn_fp = augmentors.make_rxn_fp(pos_rcts_fp, prod_fp, rxn_type)
-
-                #         neg_rxn_fps = []
-                #         for neg_rxn_smi in neg_rxn_smis:
-                #             try:
-                #                 neg_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(neg_rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
-                #                 neg_rxn_fp = augmentors.make_rxn_fp(neg_rcts_fp, prod_fp, rxn_type)
-                #                 neg_rxn_fps.append(neg_rxn_fp)
-                #             except Exception as e: 
-                #                 logging.info(f'Error {e} at index {i}')
-                #                 continue 
-
-                #         if len(neg_rxn_fps) < topk:
-                #             if rxn_type == 'sep' or rxn_type == 'hybrid':
-                #                 dummy_fp = np.zeros((1, fp_size * 2))
-                #             elif rxn_type == 'hybrid_all':
-                #                 dummy_fp = np.zeros((1, fp_size * 3))
-                #             else: # diff 
-                #                 dummy_fp = np.zeros((1, fp_size))
-                #             neg_rxn_fps.extend([dummy_fp] * (topk - len(neg_rxn_fps)))
-
-                #         this_rxn_fps = sparse.hstack([pos_rxn_fp, *neg_rxn_fps])
-                #         # phase_rxn_fps[i] = sparse.hstack([pos_rxn_fp, *neg_rxn_fps]) # significantly slower! 
-                #         phase_rxn_fps.append(this_rxn_fps)
-                    
-                    # if (i % args.split_every == 0 and i > 0) or (i == len(processed_rxn_smis) - 1):
-                    #     logging.info(f'Checkpointing {i}')
-                    #     phase_rxn_fps_checkpoint = sparse.vstack(phase_rxn_fps)
-                    #     sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}_{i}.npz", phase_rxn_fps_checkpoint)
-                    #     phase_rxn_fps = [] # reset to empty list
 
             else: # for valid/test, we cannot assume pos_rxn_smi is inside
                 # if args.parallelize:
@@ -316,32 +268,6 @@ def main(args):
                                             rxn, i,
                                         ) for i, rxn in enumerate(processed_rxn_smis)
                                     )
-                # else:
-                #     # unparallelized version
-                #     for i, rxn in enumerate(tqdm(processed_rxn_smis, desc='Generating rxn fps...')):
-                #         rxn_smis = rxn[1:] 
-
-                #         rxn_fps = []
-                #         for rxn_smi in rxn_smis:
-                #             try:
-                #                 rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi(rxn_smi, fp_type, mol_smi_to_fp, count_mol_fps)
-                #                 rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type) # log=True (take log(x+1) of rct & prodfps)
-                #                 rxn_fps.append(rxn_fp)
-                #             except Exception as e:
-                #                 logging.info(f'Error {e} at index {i}')
-                #                 continue 
-
-                #         if len(rxn_fps) < maxk:
-                #             if rxn_type == 'sep' or rxn_type == 'hybrid':
-                #                 dummy_fp = np.zeros((1, fp_size * 2))
-                #             elif rxn_type == 'hybrid_all':
-                #                 dummy_fp = np.zeros((1, fp_size * 3))
-                #             else: # diff 
-                #                 dummy_fp = np.zeros((1, fp_size))
-                #             rxn_fps.extend([dummy_fp] * (maxk - len(rxn_fps)))
-
-                #         this_rxn_fps = sparse.hstack(rxn_fps)
-                #         phase_rxn_fps.append(this_rxn_fps)
 
             phase_rxn_fps = sparse.vstack(phase_rxn_fps)
             sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}.npz", phase_rxn_fps)
@@ -391,7 +317,7 @@ if __name__ == '__main__':
     else:
         args.cleaned_data_root = Path(args.cleaned_data_root)
 
-    if args.proposer == 'union':
+    if args.proposer == 'union' or args.output_file_prefix:
         pass
     elif args.proposer in ['GLN', 'MT']: # only these models have beam_size as they do beam search
         args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{args.beam_size}beam_{args.fp_size}_{args.rxn_type}"

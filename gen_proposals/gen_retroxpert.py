@@ -48,8 +48,10 @@ def parse_args():
 
     parser.add_argument("--log_file", help="log_file", type=str, default="gen_retroxpert")
     parser.add_argument("--data_folder", help="data folder", type=str)
-    parser.add_argument("--csv_prefix", help="file prefix of CSV file from retroxpert", type=str,
-                        default="retroxpert_top200_max200_beam200_raw")
+    parser.add_argument("--input_csv_prefix", help="file prefix of CSV file from retroxpert", type=str,
+                        default="retroxpert_raw_200topk_200maxk_200beam")
+    parser.add_argument("--output_csv_prefix", help="file prefix of CSV file from retroxpert", type=str,
+                        default="retroxpert_200topk_200maxk_200beam")
 
     parser.add_argument("--phases", help="Phases to process", 
                         type=str, nargs='+', default=['train', 'valid', 'test'])
@@ -193,10 +195,11 @@ def process_csv(
     topk: int = 50,
     maxk: int = 200,
     beam_size: int = 200,
+    input_csv_prefix: str = 'retroxpert_raw_200topk_200maxk_200beam',
+    output_csv_prefix: str = 'retroxpert_200topk_200maxk_200beam',
     parallelize: bool = False,
     phases: Optional[List[str]] = ['train', 'valid', 'test'],
-    data_folder: Optional[os.PathLike] = Path('../rxnebm/data/cleaned_data/'),
-    csv_prefix: Optional[str] = 'retroxpert_top200_max200_beam200_raw'
+    data_folder: Optional[os.PathLike] = Path('../rxnebm/data/cleaned_data/')
 ):
     for phase in phases:
         logging.info(f'Processing {phase} of {phases}')
@@ -204,13 +207,13 @@ def process_csv(
         phase_ranks = []
         phase_topk = topk if phase == 'train' else maxk
         dup_count = 0
-        with open(data_folder / f"{csv_prefix}_{phase}.csv", "r") as csv_file:
+        with open(data_folder / f"{input_csv_prefix}_{phase}.csv", "r") as csv_file:
             csv_reader = csv.DictReader(csv_file)
             csv_length = 0
             for row in csv_reader:
                 csv_length += 1
 
-        with open(data_folder / f"{csv_prefix}_{phase}.csv", "r") as csv_file:
+        with open(data_folder / f"{input_csv_prefix}_{phase}.csv", "r") as csv_file:
             csv_reader = csv.DictReader(csv_file)
             if phase == 'train':
                 if parallelize:
@@ -267,7 +270,7 @@ def process_csv(
         base_col_names.extend(proposed_col_names)
         with open(
             data_folder / 
-            f'retroxpert_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.csv', 'w'
+            f'{output_csv_prefix}_{phase}.csv', 'w'
         ) as out_csv:
             writer = csv.writer(out_csv)
             writer.writerow(base_col_names) # header
@@ -279,7 +282,7 @@ def process_csv(
 
         with open(
             data_folder / 
-            f'retroxpert_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.csv', 'r'
+            f'{output_csv_prefix}_{phase}.csv', 'r'
         ) as processed_csv:
             csv_reader = csv.DictReader(processed_csv)
             proposed_counter = Counter()
@@ -347,6 +350,7 @@ if __name__ == '__main__':
         parallelize=args.parallelize,
         phases=args.phases,
         data_folder=args.data_folder,
-        csv_prefix=args.csv_prefix
+        input_csv_prefix=args.input_csv_prefix,
+        output_csv_prefix=args.output_csv_prefix,
     )
     logging.info('Finished compiling all CSVs')
