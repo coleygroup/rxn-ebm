@@ -46,6 +46,7 @@ def parse_args():
     parser.add_argument("--test_on_train", help="whether to evaluate on the training data", action="store_true")
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default=date.today().strftime("%d_%m_%Y"))
     parser.add_argument("--load_epoch", help="epoch to load from", type=int)
+    parser.add_argument("--testing_best_ckpt", help="helper arg indicating if we are just testing best ckpt. You shouldn't need to touch this", action="store_true")
     parser.add_argument("--expt_name", help="experiment name", type=str, default="")
     parser.add_argument("--old_expt_name", help="old experiment name", type=str, default="")
     parser.add_argument("--checkpoint_folder", help="checkpoint folder",
@@ -331,6 +332,7 @@ def main_dist(
                 args.do_not_train = True
                 args.test_on_train = False # don't eval on train to save some time
                 args.load_epoch = last_epoch - 1
+                args.testing_best_ckpt = True # turn flag on to avoid changing args.load_epoch again
 
                 setup_logger(args)
                 try:
@@ -354,11 +356,12 @@ def main_dist(
             args.old_expt_name = args.expt_name
             args.date_trained = str(args.checkpoint_folder)[-10:]
             args.load_checkpoint = True
-            args.load_epoch = None # to load best checkpoint
+            args.load_epoch = None # to load best checkpoint based on val top-1
             args.do_test = True
             args.do_not_train = True
             args.test_on_train = True
-            args.random_seed += 100 # just to get more diverse random examples of predictions, doesn't affect anything else
+            args.testing_best_ckpt = True
+            # args.random_seed += 100 # just to get more diverse random examples of predictions, shouldn't affect anything else
 
             logging.info(f'Reloading expt: {args.expt_name}')
             try:
@@ -378,32 +381,7 @@ def main(args):
     # hard-coded
     saved_model, saved_optimizer, saved_stats, saved_stats_filename = None, None, None, None
     begin_epoch = 0
-    augmentations = {
-        "rdm": {"num_neg": 2},
-        "mut": {"num_neg": 13}
-    }
-
-    '''
-    if args.do_pretrain:
-        logging.info("Precomputing augmentation")
-        augmented_data = dataset.AugmentedDataFingerprints(
-            augmentations=augmentations,
-            smi_to_fp_dict_filename=args.smi_to_fp_dict_filename,
-            fp_to_smi_dict_filename=args.fp_to_smi_dict_filename,
-            mol_fps_filename=args.mol_fps_filename,
-            search_index_filename=args.search_index_filename,
-            mut_smis_filename=args.mut_smis_filename,
-            seed=args.random_seed
-        )
-
-        for phase in ["train", "valid", "test"]:
-            augmented_data.precompute(
-                output_filename=f"{args.precomp_file_prefix}_{phase}.npz",
-                rxn_smis=f"{args.rxn_smis_file_prefix}_{phase}.pickle",
-                parallel=False
-            )
-    '''
-
+    augmentations = {} # deprecated
     vocab = {}
     model_args = {}
     if isinstance(args.encoder_hidden_size, list) and args.model_name.split('_')[0] == 'GraphEBM':
@@ -460,7 +438,7 @@ def main(args):
             raise ValueError(f"Model {args.model_name} not supported!")
 
         if not args.ddp:
-            logging.info(f"Model {args.model_name} created")    # model.model_repr wont' work with DataParallel
+            logging.info(f"Model {args.model_name} created")    # model.model_repr wont work with DataParallel
 
     if not args.ddp:
         logging.info("Logging model summary")
@@ -568,7 +546,7 @@ def main(args):
             except Exception as e:
                 # something went wrong in reloading checkpoint to resume training w/ reduced LR. 
                 # most likely, it means model diverged during the first epoch, so there is no stats file & checkpoint to reload from
-                # in which case, it's fine, just let the exception run and quit the program
+                # in which case, it's fine, just let the exception run
                 print(e)
             
             if args.do_get_energies_and_acc:
@@ -577,8 +555,9 @@ def main(args):
                 args.load_checkpoint = True
                 args.do_test = True
                 args.do_not_train = True
-                args.test_on_train = False # don't eval on train to save some time
+                args.test_on_train = True
                 args.load_epoch = str(last_epoch - 1)
+                args.testing_best_ckpt = True # turn flag on to avoid changing args.load_epoch
 
                 main(args)
         
@@ -602,7 +581,22 @@ def main(args):
                     logging.info(f"\nGetting {phase} accuracies")
                     experiment.get_acc(phase=phase)
 
-            elif args.do_get_energies_and_acc:
+            elif args.do_get_energies_and_acc and not args.testing_best_ckpt:
+                # reload best checkpoint & use just 1 GPU to run
+                args.ddp = False
+                args.old_expt_name = args.expt_name
+                args.date_trained = str(args.checkpoint_folder)[-10:]
+                args.load_checkpoint = True
+                args.load_epoch = None # to load best checkpoint based on val top-1
+                args.do_test = True
+                args.do_not_train = True
+                args.test_on_train = True
+                args.testing_best_ckpt = True # turn flag on
+
+                logging.info(f'Reloading expt: {args.expt_name}')
+                main(args)
+
+            elif args.do_get_energies_and_acc and args.testing_best_ckpt:
                 phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
                 for phase in phases_to_eval:
                     experiment.get_energies_and_loss(
