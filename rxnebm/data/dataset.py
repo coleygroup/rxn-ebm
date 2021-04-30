@@ -459,7 +459,7 @@ class ReactionDatasetFingerprints(Dataset):
         search_index_filename: Optional[str] = None,
         proposals_csv_filename: Optional[str] = None,
         prob_filename: Optional[str] = None,
-        root: Optional[str] = None,
+        root: Optional[Union[str, bytes, os.PathLike]] = None
     ):
         self.input_dim = input_dim # needed to reshape row vector in self.__getitem__()
         self.onthefly = onthefly  # needed by worker_init_fn
@@ -524,12 +524,16 @@ class ReactionDatasetSMILES(Dataset):
         proposals_csv_filename: Optional[str] = None,
         onthefly: bool = False,
         prob_filename: Optional[str] = None,
+        root: Optional[Union[str, bytes, os.PathLike]] = None
     ):
         model_utils.seed_everything(args.random_seed)
 
         self.args = args
         self.phase = phase
-        self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
+        if root:
+            self.root = Path(root)
+        else:
+            self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
 
         # self.precomp_rxnsmi_filename = precomp_rxnsmi_filename
         self.fp_to_smi_dict_filename = args.fp_to_smi_dict_filename

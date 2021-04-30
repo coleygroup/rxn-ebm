@@ -306,7 +306,8 @@ class Experiment:
         logging.info("Initialising Mixture Fingerprint dataloaders...")
         train_dataset = dataset.MixtureDatasetFingerprints(
             prodfps_filename=f"{prodfps_file_prefix}_train.npz",
-            labels_filename=f"{labels_file_prefix}_train.npy"
+            labels_filename=f"{labels_file_prefix}_train.npy",
+            root=self.root
         )
         if self.gpu is not None: # train_sampler is needed in self.train_distributed() so we have to save it as an attribute
             self.train_sampler = torch.utils.data.distributed.DistributedSampler(

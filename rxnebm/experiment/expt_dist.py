@@ -95,9 +95,11 @@ class Experiment:
         self.random_seed = args.random_seed
 
         if root:
-            self.root = Path(root)
+            self.root = Path(root) 
+            logging.info(f'Using data root as user input {self.root}')
         else:
             self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
+            logging.info(f'Using default data root of {self.root}')
         self.checkpoint_folder = Path(self.args.checkpoint_folder)
 
         self.expt_name = args.expt_name
@@ -403,7 +405,8 @@ class Experiment:
             rxn_smis_filename=self.rxn_smis_filenames["train"],
             onthefly=onthefly,
             augmented_data=augmented_data,
-            prob_filename=self.prob_filenames['train']
+            prob_filename=self.prob_filenames['train'],
+            root=self.root
         )
         if self.gpu is not None: # train_sampler is needed in self.train_distributed() so we have to save it as an attribute
             self.train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -432,7 +435,8 @@ class Experiment:
             rxn_smis_filename=self.rxn_smis_filenames["valid"],
             onthefly=onthefly,
             augmented_data=augmented_data,
-            prob_filename=self.prob_filenames['valid']
+            prob_filename=self.prob_filenames['valid'],
+            root=self.root
         )
         if self.gpu is not None:
             self.val_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -461,7 +465,8 @@ class Experiment:
             rxn_smis_filename=self.rxn_smis_filenames["test"],
             onthefly=onthefly,
             augmented_data=augmented_data,
-            prob_filename=self.prob_filenames['test']
+            prob_filename=self.prob_filenames['test'],
+            root=self.root
         )
         if self.gpu is not None:
             self.test_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -495,7 +500,8 @@ class Experiment:
             rxn_smis_filename=self.rxn_smis_filenames[phase],
             proposals_csv_filename=self.proposals_csv_filenames[phase],
             onthefly=True,
-            prob_filename=self.prob_filenames[phase]
+            prob_filename=self.prob_filenames[phase],
+            root=self.root
         )
 
         if self.args.do_compute_graph_feat:

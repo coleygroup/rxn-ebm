@@ -51,6 +51,7 @@ def parse_args():
     parser.add_argument("--old_expt_name", help="old experiment name", type=str, default="")
     parser.add_argument("--checkpoint_folder", help="checkpoint folder",
                         type=str, default=expt_utils.setup_paths("LOCAL"))
+    parser.add_argument("--root", help="input data folder, if None it will be set to default rxnebm/data/cleaned_data/", type=str)
     # distributed arguments
     parser.add_argument("--dataparallel", help="whether to do dataparallel training", action="store_true")
     parser.add_argument("--ddp", help="whether to do DDP training", action="store_true")
@@ -230,7 +231,7 @@ def main_dist(
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
         saved_stats: Optional[dict] = None,
         begin_epoch: Optional[int] = None,
-        vocab: Dict[str, int] = None
+        vocab: Dict[str, int] = None,
     ):
     print('Initiating process group')
     # https://github.com/yangkky/distributed_tutorial/blob/master/ddp_tutorial.md
@@ -257,7 +258,7 @@ def main_dist(
         logging.info(f'{model_args}')
 
     logging.info("Setting up DDP experiment")
-    experiment = expt_dist.Experiment( # expt_dist.Experiment
+    experiment = expt_dist.Experiment(
         gpu=gpu,
         args=args,
         model=model,
@@ -272,6 +273,7 @@ def main_dist(
         begin_epoch=begin_epoch,
         debug=True,
         vocab=vocab,
+        root=root
     )
     diverged = False
     if not args.do_not_train and args.do_pretrain:
@@ -460,7 +462,7 @@ def main(args):
                 args.onthefly,
                 True, # debug
                 False, # dataparallel
-                None, # root
+                args.root,
                 args.load_checkpoint,
                 saved_optimizer,
                 saved_stats,
@@ -500,6 +502,7 @@ def main(args):
                 debug=True,
                 vocab=None,
                 gpu=None, # not doing DDP
+                root=args.root
             )
         else:
             experiment = expt.Experiment(
@@ -516,6 +519,7 @@ def main(args):
                 debug=True,
                 vocab=vocab,
                 gpu=None, # not doing DDP
+                root=args.root
             )
         diverged = False
         if not args.do_not_train and args.do_pretrain:
