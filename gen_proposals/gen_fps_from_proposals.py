@@ -23,34 +23,13 @@ from rxnebm.data import augmentors
 from rxnebm.data.preprocess import smi_to_fp
 from rxnebm.proposer import retrosim_model
 
-import joblib
-import contextlib
-
-@contextlib.contextmanager
-def tqdm_joblib(tqdm_object):
-    # https://stackoverflow.com/questions/24983493/tracking-progress-of-joblib-parallel-execution
-    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
-    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-
-        def __call__(self, *args, **kwargs):
-            tqdm_object.update(n=self.batch_size)
-            return super().__call__(*args, **kwargs)
-
-    old_batch_callback = joblib.parallel.BatchCompletionCallBack
-    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
-    try:
-        yield tqdm_object
-    finally:
-        joblib.parallel.BatchCompletionCallBack = old_batch_callback
-        tqdm_object.close()
+from utils import tqdm_joblib
 
 def parse_args():
     parser = argparse.ArgumentParser("proc_proposals.py")
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="proc_proposals")
-    parser.add_argument("--cleaned_data_root", help="Path to cleaned_data folder (do not change)", type=str,
+    parser.add_argument("--root", help="Path to cleaned_data folder (do not change)", type=str,
                         default=None) 
     parser.add_argument("--proposals_file_prefix", help='Prefix of 3 proposals CSV files', type=str, default=None)
     parser.add_argument("--rxn_smi_file_prefix", help="Prefix of the 3 pickle files containing the train/valid/test reaction SMILES strings (do not change)", type=str,
@@ -96,7 +75,7 @@ def main(args):
     if args.split_every is None:
         args.split_every = float('+inf')
 
-    cleaned_data_root = args.cleaned_data_root 
+    root = args.root 
     representation = args.representation
     radius = args.radius
     fp_size = args.fp_size
@@ -117,7 +96,7 @@ def main(args):
     if args.proposals_file_prefix:
         proposals_file_prefix = args.proposals_file_prefix
     else:
-        if args.proposer in ['GLN_retrain', 'GLN', 'retroxpert', 'retrosim', 'neuralsym']:
+        if args.proposer in ['GLN_retrain', 'GLN', 'retroxpert', 'retrosim', 'neuralsym', 'megan']:
             proposals_file_prefix = f"{args.proposer}_{topk}topk_{maxk}maxk_noGT" # do not change
         elif args.proposer == 'union':
             raise ValueError('Please specify --proposals_file_prefix') # user should pass in 
@@ -126,9 +105,9 @@ def main(args):
         else:
             raise ValueError
 
-        if args.proposer in ['GLN_retrain', 'GLN', 'retroxpert', 'retrosim', 'neuralsym']:
+        if args.proposer in ['GLN_retrain', 'GLN', 'retroxpert', 'retrosim', 'neuralsym', 'megan']:
             for phase in ['train', 'valid', 'test']:
-                files = os.listdir(cleaned_data_root)
+                files = os.listdir(root)
                 if proposals_file_prefix not in files:
                     topk_pass, maxk_pass = False, False
                     for filename in files:
@@ -144,16 +123,16 @@ def main(args):
                             proposals_file_prefix = filename.replace('_train.csv', '')
                             break
 
-                logging.info(f"finding proposals CSV file at : {cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv'}")
-                if not (cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv').exists():
+                logging.info(f"finding proposals CSV file at : {root / f'{proposals_file_prefix}_{phase}.csv'}")
+                if not (root / f'{proposals_file_prefix}_{phase}.csv').exists():
                     raise RuntimeError(f'Could not find proposals CSV file by {args.proposer}! Please generate the proposals CSV file, for example by running gen_gln.py')
 
-    # check if ALL 3 files to be computed already exist in cleaned_data_root, if so, then just exit the function
+    # check if ALL 3 files to be computed already exist in root, if so, then just exit the function
     phases_to_compute = ['train', 'valid', 'test']
     for phase in ["train", "valid", "test"]: 
-        if (cleaned_data_root / f"{output_file_prefix}_{phase}.npz").exists() or \
-        (cleaned_data_root / f"{output_file_prefix}_{phase}.pickle").exists():
-            print(f"At: {cleaned_data_root / output_file_prefix}_{phase}")
+        if (root / f"{output_file_prefix}_{phase}.npz").exists() or \
+        (root / f"{output_file_prefix}_{phase}.pickle").exists():
+            print(f"At: {root / output_file_prefix}_{phase}")
             print("The processed proposals file already exists!")
             phases_to_compute.remove(phase)        
     if len(phases_to_compute) == 0: # all pre-computed, OK exit
@@ -166,7 +145,7 @@ def main(args):
     for phase in phases_to_compute:
         logging.info(f'Processing {phase}')
         
-        proposals = pd.read_csv(cleaned_data_root / f'{proposals_file_prefix}_{phase}.csv', index_col=None, dtype='str')
+        proposals = pd.read_csv(root / f'{proposals_file_prefix}_{phase}.csv', index_col=None, dtype='str')
         proposals = proposals.fillna('9999') 
         proposals_trimmed = proposals.drop(['orig_rxn_smi', 'rank_of_true_precursor'], axis=1)
         proposals_numpy = proposals_trimmed.values
@@ -187,7 +166,7 @@ def main(args):
         logging.info('Processed into pos and neg rxn_smis!')
 
         if representation == 'rxn_smiles':
-            with open(cleaned_data_root / f'{output_file_prefix}_{phase}.pickle', 'wb') as handle:
+            with open(root / f'{output_file_prefix}_{phase}.pickle', 'wb') as handle:
                 pickle.dump(processed_rxn_smis, handle, protocol=pickle.HIGHEST_PROTOCOL)
             logging.info(f'Saved {phase} rxn_smi!')
 
@@ -270,28 +249,28 @@ def main(args):
                                     )
 
             phase_rxn_fps = sparse.vstack(phase_rxn_fps)
-            sparse.save_npz(cleaned_data_root / f"{output_file_prefix}_{phase}.npz", phase_rxn_fps)
+            sparse.save_npz(root / f"{output_file_prefix}_{phase}.npz", phase_rxn_fps)
             del phase_rxn_fps
         
         else:
             raise ValueError(f'{representation} not supported!')
 
-def merge_chunks(args):
+def merge_chunks(args): # more or less deprecated
     logging.info(f'Merging chunks with idxs {args.split_idxs}') 
     
-    chunk_A = sparse.load_npz(args.cleaned_data_root / f"{args.output_file_prefix}_{args.phase}_{args.split_idxs[0]}.npz")
-    chunk_B = sparse.load_npz(args.cleaned_data_root / f"{args.output_file_prefix}_{args.phase}_{args.split_idxs[1]}.npz")
+    chunk_A = sparse.load_npz(args.root / f"{args.output_file_prefix}_{args.phase}_{args.split_idxs[0]}.npz")
+    chunk_B = sparse.load_npz(args.root / f"{args.output_file_prefix}_{args.phase}_{args.split_idxs[1]}.npz")
     combined = sparse.vstack([chunk_A, chunk_B])
     del chunk_A, chunk_B
     gc.collect() 
 
     for idx in tqdm(args.split_idxs[2:]):
-        chunk = sparse.load_npz(args.cleaned_data_root / f"{args.output_file_prefix}_{args.phase}_{idx}.npz")
+        chunk = sparse.load_npz(args.root / f"{args.output_file_prefix}_{args.phase}_{idx}.npz")
         combined = sparse.vstack([combined, chunk])
         del chunk 
         gc.collect() 
 
-    sparse.save_npz(args.cleaned_data_root / f"{args.output_file_prefix}_{args.phase}.npz", combined)
+    sparse.save_npz(args.root / f"{args.output_file_prefix}_{args.phase}.npz", combined)
     logging.info(f'Successfully merged chunks of {args.phase}!')
     del combined
     gc.collect() 
@@ -312,10 +291,10 @@ if __name__ == '__main__':
     logger.addHandler(fh)
     logger.addHandler(sh)
 
-    if args.cleaned_data_root is None:
-        args.cleaned_data_root = Path(__file__).resolve().parents[1] / 'rxnebm/data/cleaned_data'
+    if args.root is None:
+        args.root = Path(__file__).resolve().parents[1] / 'rxnebm/data/cleaned_data'
     else:
-        args.cleaned_data_root = Path(args.cleaned_data_root)
+        args.root = Path(args.root)
 
     if args.proposer == 'union' or args.output_file_prefix:
         pass

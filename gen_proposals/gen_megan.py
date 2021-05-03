@@ -100,16 +100,20 @@ def compile_into_csv(args):
                     proposal_nomap = line_split[2]
                     # canonicalize, just in case (try to)
                     try:
-                        proposal_nomap = Chem.MolToSmiles(Chem.MolFromSmiles(proposal_nomap), True)
-                    except: # unparsable?
+                        proposal_nomap_mol = Chem.MolFromSmiles(proposal_nomap)
+                        Chem.SanitizeMol(proposal_nomap_mol)
+                        
+                        if proposal_nomap_mol is not None:
+                            proposal_nomap = Chem.MolToSmiles(proposal_nomap_mol, True)
+                            
+                            this_rxn_precursors.append(proposal_nomap)
+                            if proposal_nomap not in this_rxn_seen:
+                                this_rxn_seen.append(proposal_nomap)
+                            else:
+                                dup_count += 1
+                    except: # unparsable? could be errors like explicit valence greater than permitted, or can't kekulize mol, we can't use this proposal, skip it
                         continue
                     
-                    this_rxn_precursors.append(proposal_nomap)
-                    if proposal_nomap not in this_rxn_seen:
-                        this_rxn_seen.append(proposal_nomap)
-                    else:
-                        dup_count += 1
-
                     # to get mapped first then clear atom map, but redundant since we can get unmapped directly
                     # proposal_map = line_split[1]
                     # proposal_mol = Chem.MolFromSmiles(proposal_map)
