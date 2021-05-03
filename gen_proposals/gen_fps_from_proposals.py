@@ -183,13 +183,13 @@ def main(args):
 
                     neg_rxn_fps = []
                     for neg_rxn_smi in neg_rxn_smis:
-                        try:
-                            neg_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(neg_rxn_smi, fp_type, radius, fp_size, dtype)
-                            neg_rxn_fp = augmentors.make_rxn_fp(neg_rcts_fp, prod_fp, rxn_type)
-                            neg_rxn_fps.append(neg_rxn_fp)
-                        except Exception as e:
-                            logging.info(f'Error {e} at index {i}')
-                            continue 
+                        # try:
+                        neg_rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(neg_rxn_smi, fp_type, radius, fp_size, dtype)
+                        neg_rxn_fp = augmentors.make_rxn_fp(neg_rcts_fp, prod_fp, rxn_type)
+                        neg_rxn_fps.append(neg_rxn_fp)
+                        # except Exception as e:
+                        #     logging.info(f'Error {e} at index {i}')
+                        #     continue 
 
                     if len(neg_rxn_fps) < topk:
                         if rxn_type == 'sep' or rxn_type == 'hybrid':
@@ -219,13 +219,13 @@ def main(args):
 
                     rxn_fps = []
                     for rxn_smi in rxn_smis:
-                        try:
-                            rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(rxn_smi, fp_type, radius, fp_size, dtype)
-                            rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type) # log=True (take log(x+1) of rct & prodfps)
-                            rxn_fps.append(rxn_fp)
-                        except Exception as e:
-                            logging.info(f'Error {e} at index {i}')
-                            continue 
+                        # try:
+                        rcts_fp, prod_fp = augmentors.rcts_prod_fps_from_rxn_smi_dist(rxn_smi, fp_type, radius, fp_size, dtype)
+                        rxn_fp = augmentors.make_rxn_fp(rcts_fp, prod_fp, rxn_type) # log=True (take log(x+1) of rct & prodfps)
+                        rxn_fps.append(rxn_fp)
+                        # except Exception as e:
+                        #     logging.info(f'Error {e} at index {i}')
+                        #     continue 
 
                     if len(rxn_fps) < maxk:
                         if rxn_type == 'sep' or rxn_type == 'hybrid':

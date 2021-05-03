@@ -301,7 +301,6 @@ def main_dist(
         args.load_epoch = None # to load best checkpoint based on val top-1
         args.do_test = True
         args.do_not_train = True
-        args.test_on_train = True
         args.testing_best_ckpt = True
         # args.random_seed += 100 # just to get more diverse random examples of predictions, shouldn't affect anything else
 
@@ -446,54 +445,52 @@ def main(args):
             logging.info("Start finetuning")
             experiment.train()
 
-        else:
-            if args.do_test:
-                if not args.test_on_train:
-                    del experiment.train_loader # free up memory
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                logging.info("Start testing")
-                experiment.test()
+        if args.do_test:
+            if not args.test_on_train:
+                del experiment.train_loader # free up memory
+                gc.collect()
+                torch.cuda.empty_cache()
+            logging.info("Start testing")
+            experiment.test()
 
-            if args.do_get_energies_and_acc and not args.testing_best_ckpt:
-                # reload best checkpoint & use just 1 GPU to run
-                args.ddp = False
-                if args.old_expt_name is None: # user did not provide, means we are training from scratch, not loading a checkpoint
-                    args.old_expt_name = args.expt_name
-                # args.date_trained = str(args.checkpoint_folder)[-10:]
-                args.load_checkpoint = True
-                args.load_epoch = None # to load best checkpoint based on val top-1
-                args.do_test = True
-                args.do_not_train = True
-                args.test_on_train = True
-                args.testing_best_ckpt = True # turn flag on
+        if args.do_get_energies_and_acc and not args.testing_best_ckpt:
+            # reload best checkpoint & use just 1 GPU to run
+            args.ddp = False
+            if args.old_expt_name is None: # user did not provide, means we are training from scratch, not loading a checkpoint
+                args.old_expt_name = args.expt_name
+            # args.date_trained = str(args.checkpoint_folder)[-10:]
+            args.load_checkpoint = True
+            args.load_epoch = None # to load best checkpoint based on val top-1
+            args.do_test = True
+            args.do_not_train = True
+            args.testing_best_ckpt = True # turn flag on
 
-                logging.info(f'Reloading expt: {args.expt_name}')
-                main(args)
+            logging.info(f'Reloading expt: {args.expt_name}')
+            main(args)
 
-            elif args.do_get_energies_and_acc and args.testing_best_ckpt:
-                phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
-                for phase in phases_to_eval:
-                    experiment.get_energies_and_loss(
-                        phase=phase, save_energies=True, path_to_energies=args.path_to_energies
-                    )
+        elif args.do_get_energies_and_acc and args.testing_best_ckpt:
+            phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
+            for phase in phases_to_eval:
+                experiment.get_energies_and_loss(
+                    phase=phase, save_energies=True, path_to_energies=args.path_to_energies
+                )
 
-                # just print accuracies to compare experiments
-                for phase in phases_to_eval:
-                    logging.info(f"\nGetting {phase} accuracies")
-                    message = f"{args.expt_name}\n"
-                    for k in [1, 3, 5, 10, 20, 50]:
-                        message = experiment.get_topk_acc(phase=phase, k=k, message=message)
-                    try:
-                        send_message(message)
-                    except Exception as e:
-                        pass
+            # just print accuracies to compare experiments
+            for phase in phases_to_eval:
+                logging.info(f"\nGetting {phase} accuracies")
+                message = f"{args.expt_name}\n"
+                for k in [1, 3, 5, 10, 20, 50]:
+                    message = experiment.get_topk_acc(phase=phase, k=k, message=message)
+                try:
+                    send_message(message)
+                except Exception as e:
+                    pass
 
-                # full accuracies
-                for phase in phases_to_eval:
-                    logging.info(f"\nGetting {phase} accuracies")
-                    for k in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200]:
-                        experiment.get_topk_acc(phase=phase, k=k)
+            # full accuracies
+            for phase in phases_to_eval:
+                logging.info(f"\nGetting {phase} accuracies")
+                for k in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200]:
+                    experiment.get_topk_acc(phase=phase, k=k)
 
 if __name__ == "__main__":
     args = parse_args()
