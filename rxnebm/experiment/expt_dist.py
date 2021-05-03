@@ -721,15 +721,16 @@ class Experiment:
                 train_loss += batch_loss
 
                 if math.isnan(train_loss):
-                    if self.rank == 0:
-                        msg = 'Training loss is nan and training diverged! Reloading from best checkpoint w/ reduced LR'
-                        logging.info(msg)
-                        msg += f'\n{self.expt_name}'
-                        try:
-                            send_message(message)
-                        except Exception as e:
-                            logging.info(e)
-                    return True, self.optimizer.param_groups[0]["lr"], epoch
+                    raise ValueError('Training loss is nan')
+                    # if self.rank == 0:
+                    #     msg = 'Training loss is nan and training diverged! Reloading from best checkpoint w/ reduced LR'
+                    #     logging.info(msg)
+                    #     msg += f'\n{self.expt_name}'
+                    #     try:
+                    #         send_message(message)
+                    #     except Exception as e:
+                    #         logging.info(e)
+                    # return True, self.optimizer.param_groups[0]["lr"], epoch
 
                 train_batch_size = batch_energies.shape[0]
                 train_batch_size = torch.tensor([train_batch_size]).cuda(self.gpu, non_blocking=True)
@@ -1046,8 +1047,6 @@ class Experiment:
 
         if self.rank == 0:
             logging.info(f'Total training time: {self.stats["train_time"]}')
-
-        return False, None, None
 
     def test_distributed(self, saved_stats: Optional[dict] = None):
         """

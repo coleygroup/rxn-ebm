@@ -700,14 +700,6 @@ class Experiment:
 
                 if math.isnan(train_loss):
                     raise ValueError('Training loss is nan')
-                    # msg = 'Training loss is nan and training diverged! Reloading from best checkpoint w/ reduced LR'
-                    # logging.info(msg)
-                    # msg += f'\n{self.expt_name}'
-                    # try:
-                    #     send_message(message)
-                    # except Exception as e:
-                    #     logging.info(e)
-                    # return True, self.optimizer.param_groups[0]["lr"], epoch
 
                 if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
                     self.lr_scheduler.step(epoch + i / self.train_size - self.args.lr_scheduler_epoch_offset)
@@ -974,7 +966,6 @@ class Experiment:
                 break 
 
         logging.info(f'Total training time: {self.stats["train_time"]}')
-        return False, None, None
 
     def test(self, saved_stats: Optional[dict] = None):
         """

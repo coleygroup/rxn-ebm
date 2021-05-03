@@ -201,7 +201,7 @@ def parse_args():
     parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
     parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
     parser.add_argument("--attention_dropout", help="Attention dropout for Transformer", type=float, default=0.1)
-    parser.add_argument("--preembed_size", help="Preembedding layer hidden size(s)", type=int, nargs='+', default=[90])
+    parser.add_argument("--preembed_size", help="Preembedding layer hidden size(s)", type=int, nargs='+')
 
     return parser.parse_args()
 
@@ -275,103 +275,39 @@ def main_dist(
         vocab=vocab,
         root=root
     )
-    diverged = False
     if not args.do_not_train and args.do_pretrain:
         logging.info("Start pretraining")
-        diverged, last_LR, last_epoch = experiment.train_distributed()
+        experiment.train_distributed()
 
     if not args.do_not_train and args.do_finetune:
         assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
         logging.info("Start finetuning")
-        diverged, last_LR, last_epoch = experiment.train_distributed()
+        experiment.train_distributed()
 
-    if diverged: # reload checkpoint w/ halved LR
-        del experiment.model, experiment.train_loader, experiment.val_loader, experiment.test_loader
-        del experiment
-        torch.cuda.empty_cache()
+    if args.do_test:
+        logging.info("Start testing")
+        if args.do_compute_graph_feat and experiment.train_loader is not None and not args.test_on_train:
+            del experiment.train_loader # free up memory
+            gc.collect()
+            torch.cuda.empty_cache()
+        experiment.test_distributed()
 
-        try: # to fix logger double/triple printing issue 
-            while logger.handlers:
-                logger.handlers.pop()
-        except:
-            pass
-        try:
-            logger.removeHandler(fh)
-            logger.removeHandler(sh)
-        except:
-            pass
-
-        args.new_lr = last_LR * 0.4
+    if args.do_get_energies_and_acc and gpu == 0:
+        # reload best checkpoint & use just 1 GPU to run
+        args.ddp = False
         args.old_expt_name = args.expt_name
-        args.expt_name += '_reload'
-        args.date_trained = str(args.checkpoint_folder)[-10:]
+        # args.date_trained = str(args.checkpoint_folder)[-10:]
         args.load_checkpoint = True
-        if begin_epoch is None:
-            begin_epoch = 0
-        args.epochs -= last_epoch - begin_epoch + 1
-        args.load_epoch = last_epoch - 2 # reload from 2 epochs before (1 epoch before = the epoch that diverged)
-        args.port += 1 # change port to avoid TCP error
-        args.port %= 65535 # to make sure it's still < 65535
+        args.load_epoch = None # to load best checkpoint based on val top-1
+        args.do_test = True
+        args.do_not_train = True
+        args.test_on_train = True
+        args.testing_best_ckpt = True
+        # args.random_seed += 100 # just to get more diverse random examples of predictions, shouldn't affect anything else
 
-        if gpu == 0:
-            try:
-                main(args)
-            except Exception as e:
-                # something went wrong in reloading checkpoint to resume training w/ reduced LR. 
-                # most likely, it means model diverged during the first epoch, so there is no stats file & checkpoint to reload from
-                # in which case, it's fine, just continue
-                tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                print("".join(tb_str))
-
-            # just in case, reload that missed checkpoint & check
-            if args.do_get_energies_and_acc:
-                args.ddp = False
-                args.old_expt_name = args.expt_name[:-7] # remove '_reload' x 1
-                args.expt_name = args.expt_name.replace('_reload', '_check')
-                args.date_trained = str(args.checkpoint_folder)[-10:]
-                args.load_checkpoint = True
-                args.do_test = True
-                args.do_not_train = True
-                args.test_on_train = False # don't eval on train to save some time
-                args.load_epoch = last_epoch - 1
-                args.testing_best_ckpt = True # turn flag on to avoid changing args.load_epoch again
-
-                setup_logger(args)
-                try:
-                    main(args)
-                except Exception as e:
-                    tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                    print("".join(tb_str))
-
-    else:
-        if args.do_test:
-            logging.info("Start testing")
-            if args.do_compute_graph_feat and experiment.train_loader is not None and not args.test_on_train:
-                del experiment.train_loader # free up memory
-                gc.collect()
-                torch.cuda.empty_cache()
-            experiment.test_distributed()
-
-        if args.do_get_energies_and_acc and gpu == 0:
-            # reload best checkpoint & use just 1 GPU to run
-            args.ddp = False
-            args.old_expt_name = args.expt_name
-            args.date_trained = str(args.checkpoint_folder)[-10:]
-            args.load_checkpoint = True
-            args.load_epoch = None # to load best checkpoint based on val top-1
-            args.do_test = True
-            args.do_not_train = True
-            args.test_on_train = True
-            args.testing_best_ckpt = True
-            # args.random_seed += 100 # just to get more diverse random examples of predictions, shouldn't affect anything else
-
-            logging.info(f'Reloading expt: {args.expt_name}')
-            try:
-                main(args)
-            except Exception as e:
-                tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                print("".join(tb_str))
-
+        logging.info(f'Reloading expt: {args.expt_name}')
+        main(args)
+        
 def main(args):
     model_utils.seed_everything(args.random_seed) # seed before even initializing model
     
@@ -416,8 +352,6 @@ def main(args):
             logging.info(f"Not loading from checkpoint, creating model {args.model_name}")
         if args.model_name == "FeedforwardEBM" or args.model_name == "FeedforwardTriple3indiv3prod1cos":
             model = FF.FeedforwardTriple3indiv3prod1cos(args)
-        elif args.model_name == "FeedforwardMixture":
-            model = FF.FeedforwardMixture(args)
 
         elif args.model_name == "GraphEBM":                     # Graph to energy
             model = G2E.G2E(args)
@@ -487,84 +421,31 @@ def main(args):
             dataparallel = False
 
         logging.info("Setting up experiment")
-        if args.do_train_mixture:
-            experiment = expt_mixture.Experiment(
-                args=args,
-                model=model,
-                model_name=args.model_name,
-                model_args=model_args,
-                augmentations=None,
-                onthefly=False,
-                load_checkpoint=args.load_checkpoint,
-                saved_optimizer=saved_optimizer,
-                saved_stats=saved_stats,
-                begin_epoch=begin_epoch,
-                debug=True,
-                vocab=None,
-                gpu=None, # not doing DDP
-                root=args.root
-            )
-        else:
-            experiment = expt.Experiment(
-                args=args,
-                model=model,
-                model_name=args.model_name,
-                model_args=model_args,
-                augmentations=augmentations,
-                onthefly=args.onthefly,
-                load_checkpoint=args.load_checkpoint,
-                saved_optimizer=saved_optimizer,
-                saved_stats=saved_stats,
-                begin_epoch=begin_epoch,
-                debug=True,
-                vocab=vocab,
-                gpu=None, # not doing DDP
-                root=args.root
-            )
-        diverged = False
+        experiment = expt.Experiment(
+            args=args,
+            model=model,
+            model_name=args.model_name,
+            model_args=model_args,
+            augmentations=augmentations,
+            onthefly=args.onthefly,
+            load_checkpoint=args.load_checkpoint,
+            saved_optimizer=saved_optimizer,
+            saved_stats=saved_stats,
+            begin_epoch=begin_epoch,
+            debug=True,
+            vocab=vocab,
+            gpu=None, # not doing DDP
+            root=args.root
+        )
         if not args.do_not_train and args.do_pretrain:
             logging.info("Start pretraining")
-            diverged, last_LR, last_epoch = experiment.train()
+            experiment.train()
 
         if not args.do_not_train and args.do_finetune:
             assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
             logging.info("Start finetuning")
-            diverged, last_LR, last_epoch = experiment.train()
-        
-        if not args.do_not_train and args.do_train_mixture:
-            assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
-            logging.info("Start training mixture model")
             experiment.train()
-        
-        if diverged:
-            args.new_lr = last_LR * 0.4
-            args.old_expt_name = args.expt_name
-            args.expt_name += '_reload'
-            args.date_trained = str(args.checkpoint_folder)[-10:]
-            args.load_checkpoint = True
-            args.epochs -= last_epoch + 1 # need to add 1 bcos epochs are 0-indexed
-            args.load_epoch = last_epoch - 2 # reload from 2 epochs before, just to be safe
-            
-            try:
-                main(args)
-            except Exception as e:
-                # something went wrong in reloading checkpoint to resume training w/ reduced LR. 
-                # most likely, it means model diverged during the first epoch, so there is no stats file & checkpoint to reload from
-                # in which case, it's fine, just let the exception run
-                print(e)
-            
-            if args.do_get_energies_and_acc:
-                args.old_expt_name = args.expt_name.replace('_reload', '') # remove all 'reload'
-                args.date_trained = str(args.checkpoint_folder)[-10:]
-                args.load_checkpoint = True
-                args.do_test = True
-                args.do_not_train = True
-                args.test_on_train = True
-                args.load_epoch = str(last_epoch - 1)
-                args.testing_best_ckpt = True # turn flag on to avoid changing args.load_epoch
 
-                main(args)
-        
         else:
             if args.do_test:
                 if not args.test_on_train:
@@ -574,22 +455,12 @@ def main(args):
                 logging.info("Start testing")
                 experiment.test()
 
-            if args.do_get_energies_and_acc and args.do_train_mixture:
-                phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
-                for phase in phases_to_eval:
-                    experiment.get_preds_and_loss(
-                        phase=phase, save_preds=True
-                    )
-
-                for phase in phases_to_eval:
-                    logging.info(f"\nGetting {phase} accuracies")
-                    experiment.get_acc(phase=phase)
-
-            elif args.do_get_energies_and_acc and not args.testing_best_ckpt:
+            if args.do_get_energies_and_acc and not args.testing_best_ckpt:
                 # reload best checkpoint & use just 1 GPU to run
                 args.ddp = False
-                args.old_expt_name = args.expt_name
-                args.date_trained = str(args.checkpoint_folder)[-10:]
+                if args.old_expt_name is None: # user did not provide, means we are training from scratch, not loading a checkpoint
+                    args.old_expt_name = args.expt_name
+                # args.date_trained = str(args.checkpoint_folder)[-10:]
                 args.load_checkpoint = True
                 args.load_epoch = None # to load best checkpoint based on val top-1
                 args.do_test = True
