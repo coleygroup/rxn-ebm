@@ -317,7 +317,7 @@ def main(args):
         logging.info(vars(args))
 
     # hard-coded
-    saved_model, saved_optimizer, saved_stats, saved_stats_filename = None, None, None, None
+    saved_model, saved_optimizer, saved_stats = None, None, None
     begin_epoch = 0
     augmentations = {} # deprecated
     vocab = {}

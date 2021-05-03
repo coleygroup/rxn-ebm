@@ -18,34 +18,11 @@ import multiprocessing
 from rdkit import RDLogger
 import rdkit.Chem as Chem
 
-import joblib
-import contextlib
-@contextlib.contextmanager
-def tqdm_joblib(tqdm_object):
-    # https://stackoverflow.com/questions/24983493/tracking-progress-of-joblib-parallel-execution
-    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
-    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
+from utils import without_rdkit_log, tqdm_joblib
 
-        def __call__(self, *args, **kwargs):
-            tqdm_object.update(n=self.batch_size)
-            return super().__call__(*args, **kwargs)
-
-    old_batch_callback = joblib.parallel.BatchCompletionCallBack
-    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
-    try:
-        yield tqdm_object
-    finally:
-        joblib.parallel.BatchCompletionCallBack = old_batch_callback
-        tqdm_object.close()  
-        
 def parse_args():
     parser = argparse.ArgumentParser("gen_retroxpert.py")
     parser.add_argument('-f') # filler for COLAB
-    
-    parser.add_argument("--parallelize", help="whether to parallelize over all available cores", action="store_true")
-
     parser.add_argument("--log_file", help="log_file", type=str, default="gen_retroxpert")
     parser.add_argument("--data_folder", help="data folder", type=str)
     parser.add_argument("--input_csv_prefix", help="file prefix of CSV file from retroxpert", type=str,
@@ -197,7 +174,6 @@ def process_csv(
     beam_size: int = 200,
     input_csv_prefix: str = 'retroxpert_raw_200topk_200maxk_200beam',
     output_csv_prefix: str = 'retroxpert_200topk_200maxk_200beam',
-    parallelize: bool = False,
     phases: Optional[List[str]] = ['train', 'valid', 'test'],
     data_folder: Optional[os.PathLike] = Path('../rxnebm/data/cleaned_data/')
 ):
@@ -216,40 +192,25 @@ def process_csv(
         with open(data_folder / f"{input_csv_prefix}_{phase}.csv", "r") as csv_file:
             csv_reader = csv.DictReader(csv_file)
             if phase == 'train':
-                if parallelize:
-                    num_cores = len(os.sched_getaffinity(0))
-                    logging.info(f'Parallelizing over {num_cores} cores')
-                    with tqdm_joblib(tqdm(desc="Processing predictions", total=csv_length)) as progress_bar:
-                        results = Parallel(n_jobs=num_cores)(
-                                        delayed(process_train_helper)(row, phase_topk) for row in csv_reader
-                                    )
-                        phase_rows, phase_ranks, dup_count = zip(*results)
-                        phase_rows, phase_ranks, dup_count = list(phase_rows), list(phase_ranks), list(dup_count)
-                        dup_count = sum(dup_count)
-                else:
-                    for row in tqdm(csv_reader):
-                        this_row, true_rank, this_dup_count = process_train_helper(row, phase_topk)
-                        phase_rows.append(this_row)
-                        phase_ranks.append(true_rank)
-                        dup_count += this_dup_count
-                       
+                num_cores = len(os.sched_getaffinity(0))
+                logging.info(f'Parallelizing over {num_cores} cores')
+                with tqdm_joblib(tqdm(desc="Processing predictions", total=csv_length)) as progress_bar, without_rdkit_log() as no_rdkit_log:
+                    results = Parallel(n_jobs=num_cores)(
+                                    delayed(process_train_helper)(row, phase_topk) for row in csv_reader
+                                )
+                    phase_rows, phase_ranks, dup_count = zip(*results)
+                    phase_rows, phase_ranks, dup_count = list(phase_rows), list(phase_ranks), list(dup_count)
+                    dup_count = sum(dup_count)
             else:
-                if parallelize:
-                    num_cores = len(os.sched_getaffinity(0)) # multiprocessing.cpu_count()
-                    logging.info(f'Parallelizing over {num_cores} cores')
-                    with tqdm_joblib(tqdm(desc="Processing predictions", total=csv_length)) as progress_bar:
-                        results = Parallel(n_jobs=num_cores)(
-                                        delayed(process_test_helper)(row, phase_topk) for row in csv_reader
-                                    )
-                        phase_rows, phase_ranks, dup_count = zip(*results)
-                        phase_rows, phase_ranks, dup_count = list(phase_rows), list(phase_ranks), list(dup_count)
-                        dup_count = sum(dup_count)
-                else:
-                    for row in tqdm(csv_reader):
-                        this_row, true_rank, this_dup_count = process_test_helper(row, phase_topk)
-                        phase_rows.append(this_row)
-                        phase_ranks.append(true_rank)
-                        dup_count += this_dup_count
+                num_cores = len(os.sched_getaffinity(0)) # multiprocessing.cpu_count()
+                logging.info(f'Parallelizing over {num_cores} cores')
+                with tqdm_joblib(tqdm(desc="Processing predictions", total=csv_length)) as progress_bar, without_rdkit_log() as no_rdkit_log:
+                    results = Parallel(n_jobs=num_cores)(
+                                    delayed(process_test_helper)(row, phase_topk) for row in csv_reader
+                                )
+                    phase_rows, phase_ranks, dup_count = zip(*results)
+                    phase_rows, phase_ranks, dup_count = list(phase_rows), list(phase_ranks), list(dup_count)
+                    dup_count = sum(dup_count)
 
         dup_count /= len(phase_rows)
         logging.info(f'Avg # dups per rxn_smi: {dup_count}')
@@ -323,8 +284,6 @@ def process_csv(
 if __name__ == '__main__':
     args = parse_args() 
 
-    RDLogger.DisableLog("rdApp.warning")
-
     os.makedirs(Path(__file__).resolve().parents[1] / "logs/gen_retroxpert/", exist_ok=True)
     dt = datetime.strftime(datetime.now(), "%y%m%d-%H%Mh")
 
@@ -347,7 +306,6 @@ if __name__ == '__main__':
         topk=args.topk, 
         maxk=args.maxk,
         beam_size=args.beam_size,
-        parallelize=args.parallelize,
         phases=args.phases,
         data_folder=args.data_folder,
         input_csv_prefix=args.input_csv_prefix,
