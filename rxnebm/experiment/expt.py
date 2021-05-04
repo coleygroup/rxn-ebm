@@ -905,10 +905,10 @@ class Experiment:
                     is_best = True
             
             if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
-                if self.rank == 0 and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                if (self.rank is None or self.rank == 0) and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
                     self._checkpoint_model_and_opt(current_epoch=epoch)
             else: # for G2E/S2E, models are small, is ok to save regularly
-                if self.rank == 0 and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                if (self.rank is None or self.rank == 0) and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
                     self._checkpoint_model_and_opt(current_epoch=epoch)
 
             self._update_stats()

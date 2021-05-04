@@ -47,8 +47,8 @@ def parse_args():
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default=date.today().strftime("%d_%m_%Y"))
     parser.add_argument("--load_epoch", help="epoch to load from", type=int)
     parser.add_argument("--testing_best_ckpt", help="helper arg indicating if we are just testing best ckpt. You shouldn't need to touch this", action="store_true")
-    parser.add_argument("--expt_name", help="experiment name", type=str, default="")
-    parser.add_argument("--old_expt_name", help="old experiment name", type=str, default="")
+    parser.add_argument("--expt_name", help="experiment name", type=str)
+    parser.add_argument("--old_expt_name", help="old experiment name", type=str)
     parser.add_argument("--checkpoint_folder", help="checkpoint folder",
                         type=str, default=expt_utils.setup_paths("LOCAL"))
     parser.add_argument("--root", help="input data folder, if None it will be set to default rxnebm/data/cleaned_data/", type=str)
