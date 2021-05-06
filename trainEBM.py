@@ -52,6 +52,7 @@ def parse_args():
     parser.add_argument("--checkpoint_folder", help="checkpoint folder",
                         type=str, default=expt_utils.setup_paths("LOCAL"))
     parser.add_argument("--root", help="input data folder, if None it will be set to default rxnebm/data/cleaned_data/", type=str)
+    parser.add_argument("--torch_anomaly", help='whether to set torch.autograd.set_detect_anomaly(True)', action="store_true")
     # distributed arguments
     parser.add_argument("--dataparallel", help="whether to do dataparallel training", action="store_true")
     parser.add_argument("--ddp", help="whether to do DDP training", action="store_true")
@@ -309,9 +310,12 @@ def main_dist(
         
 def main(args):
     model_utils.seed_everything(args.random_seed) # seed before even initializing model
+
+    if args.torch_anomaly: # to debug nan loss
+        torch.autograd.set_detect_anomaly(True)
     
     """train EBM from scratch"""
-    if not args.ddp:
+    if not args.ddp: # if ddp, we should only log from main process (0), not from all processes
         logging.info("Logging args")
         logging.info(vars(args))
 
@@ -356,14 +360,12 @@ def main(args):
             model = G2E.G2E(args)
         elif args.model_name == "GraphEBM_Cross":               # Graph to energy, cross attention pool for r and p atoms
             model = G2E.G2ECross(args)
-        elif args.model_name == "GraphEBM_sep":                 # Graph to energy, separate encoders
-            raise NotImplementedError('No longer implemented. Use GraphEBM_sep_FFout')
         elif args.model_name == "GraphEBM_projBoth":            # Graph to energy, project both reactants & products w/ dot product output
             model = G2E.G2E_projBoth(args)
-        elif args.model_name == "GraphEBM_sep_projBoth_FFout":  # Graph to energy, separate encoders + projections, feedforward output
+        elif args.model_name == "GraphEBM_projBoth_FFout":      # Graph to energy, project both reactants & products, feedforward output
+            model = G2E.G2E_projBoth(args)
+        elif args.model_name == "GraphEBM_sep_projBoth_FFout":  # Graph to energy, separate MPN encoders + projections, feedforward output
             model = G2E.G2E_sep_projBoth_FFout(args)
-        elif args.model_name == "GraphEBM_sep_FFout":           # Graph to energy, separate encoders, feedforward output
-            model = G2E.G2E_sep_FFout(args)
             
         elif args.model_name == "TransformerEBM":               # Sequence to energy
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
