@@ -362,8 +362,8 @@ def main(args):
             model = G2E.G2ECross(args)
         elif args.model_name == "GraphEBM_projBoth":            # Graph to energy, project both reactants & products w/ dot product output
             model = G2E.G2E_projBoth(args)
-        elif args.model_name == "GraphEBM_projBoth_FFout":      # Graph to energy, project both reactants & products, feedforward output
-            model = G2E.G2E_projBoth(args)
+        elif args.model_name == "GraphEBM_projBoth_FFout":      # Graph to energy, project both reactants & products, concat then feedforward output
+            model = G2E.G2E_projBoth_FFout(args)
         elif args.model_name == "GraphEBM_sep_projBoth_FFout":  # Graph to energy, separate MPN encoders + projections, feedforward output
             model = G2E.G2E_sep_projBoth_FFout(args)
             
