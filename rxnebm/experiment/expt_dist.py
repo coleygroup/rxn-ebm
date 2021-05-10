@@ -638,7 +638,7 @@ class Experiment:
         Does backprop if training 
         """
         self.model.zero_grad()
-        energies = self.model(batch, probs)  # size N x K
+        energies = self.model(batch)  # size N x K
         # replace all-zero vectors with float('inf'), making those gradients 0 on backprop
         energies = torch.where(mask, energies, torch.tensor([float('inf')], device=mask.device))
         if backprop:

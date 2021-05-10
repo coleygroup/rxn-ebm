@@ -62,7 +62,7 @@ def parse_args():
                         help='number of gpus per node')
     parser.add_argument('-nr', '--nr', default=0, type=int,
                         help='ranking within the nodes')
-    parser.add_argument("--port (highly recommended to specify it yourself, just pick a random number between 0 and 65530)", type=int, default=random.randint(0, 65530))
+    parser.add_argument("--port", help="(highly recommended to specify it yourself, just pick a random number between 0 and 65530)", type=int, default=random.randint(0, 65530))
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--mol_smi_filename", help="do not change", type=str,
