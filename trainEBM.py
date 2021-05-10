@@ -15,6 +15,7 @@ from functools import partial
 from datetime import datetime, date
 from rdkit import RDLogger
 from typing import Optional, Dict, List, Union
+from pathlib import Path
 
 from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_dist, expt_mixture, expt_utils

@@ -843,21 +843,16 @@ class ReactionDatasetSMILES(Dataset):
             # for transformer, preprocessing is light so we do onthefly
             logging.info(f"No graph features required, computing negatives from scratch")
             self.get_smiles_and_masks()
-            #### DEBUGGING ####
-            # with open(self.root / f'rxn_smi_with_negs_{self.phase}.pickle', 'wb') as f:
-            #     pickle.dump(self._rxn_smiles_with_negatives, f, protocol=4)
-            # with open(self.root / f'masks_{self.phase}.pickle', 'wb') as f:
-            #     pickle.dump(self._masks, f, protocol=4)
 
     def __getitem__(self, idx) -> Tuple[List, List[bool], int, np.ndarray]:
         if torch.is_tensor(idx):
             idx = idx.tolist()
         
-        K = self.args.minibatch_size if self.phase == 'train' else self.args.minibatch_eval 
-        if self.prob_data is not None:
-            probs = self.prob_data[idx][:K]
-        else:
-            probs = np.zeros(K)     # for compatibility w/ dataset_utils.collate_fn
+        # K = self.args.minibatch_size if self.phase == 'train' else self.args.minibatch_eval 
+        # if self.prob_data is not None:
+        #     probs = self.prob_data[idx][:K]
+        # else:
+        #     probs = np.zeros(K)     # for compatibility w/ dataset_utils.collate_fn
 
         if self.args.do_compute_graph_feat:
             minibatch_mol_index = self.minibatch_mol_indexes[idx]
@@ -882,9 +877,9 @@ class ReactionDatasetSMILES(Dataset):
 
                 minibatch_graph_features.append(graph_feature)
 
-            return minibatch_graph_features, self._masks[idx], idx, probs
+            return minibatch_graph_features, self._masks[idx], idx #, probs
         else:
-            return self._rxn_smiles_with_negatives[idx], self._masks[idx], idx, probs
+            return self._rxn_smiles_with_negatives[idx], self._masks[idx], idx #, probs
 
     def __len__(self):
         return len(self._rxn_smiles_with_negatives)

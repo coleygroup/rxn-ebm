@@ -664,7 +664,7 @@ class G2E(nn.Module):
         )
         return nn.Sequential(*ffn)
 
-    def forward(self, batch, probs: Optional[torch.Tensor]=None):
+    def forward(self, batch): # probs: Optional[torch.Tensor]=None
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,
@@ -802,7 +802,7 @@ class G2ECross(nn.Module):
 
         return self.SegmentEmbed(one_hot_idx)
 
-    def forward(self, batch, probs: Optional[torch.Tensor] = None):
+    def forward(self, batch): # probs: Optional[torch.Tensor] = None
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,
@@ -924,7 +924,7 @@ class G2E_projBoth(nn.Module):
             )
         return nn.Sequential(*ffn)
 
-    def forward(self, batch, probs: Optional[torch.Tensor]=None):
+    def forward(self, batch): # probs: Optional[torch.Tensor]=None
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,
@@ -1093,7 +1093,7 @@ class G2E_projBoth_FFout(nn.Module):
             )
         return nn.Sequential(*ffn)
 
-    def forward(self, batch, probs: Optional[torch.Tensor]=None):
+    def forward(self, batch): # probs: Optional[torch.Tensor]=None)
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,
@@ -1279,7 +1279,7 @@ class G2E_sep_projBoth_FFout(nn.Module):
             )
         return nn.Sequential(*ffn)
 
-    def forward(self, batch, probs: Optional[torch.Tensor]=None):
+    def forward(self, batch): # probs: Optional[torch.Tensor]=None
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,
