@@ -14,7 +14,8 @@ class GLNProposer(Proposer):
     @staticmethod
     def build_model(gln_config: Dict) -> RetroGLN:
         model = RetroGLN(dropbox=gln_config["dropbox"],
-                         model_dump=gln_config["model_path"])
+                         model_dump=gln_config["model_path"],
+                         args=gln_config["args"])
 
         return model
 

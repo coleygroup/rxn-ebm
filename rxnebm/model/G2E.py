@@ -942,11 +942,15 @@ class G2E_projBoth(nn.Module):
         hatom, hmol = self.encoder(graph_tensors=graph_tensors,
                                    scopes=scopes)
 
+        nancount = 0
         if self.mol_pool_type == "sum":
             hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]
             for h in hmol:
                 if torch.isnan(torch.sum(h, (0, 1))):
-                    print('nan in hmol')
+                    nancount += 1
+                    print(f'nan in hmol, nancount {nancount}')
+                if nancount > 3:
+                    raise ValueError('nan in hmol more than 3 times')
                     
         elif self.mol_pool_type == "mean":
             hmol = [torch.mean(h, dim=0, keepdim=True) for h in hmol]

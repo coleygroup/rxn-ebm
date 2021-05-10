@@ -84,6 +84,15 @@ def gen_proposals(
         save checkpoint of proposed precursor smiles every N prod_smiles
     '''
     gln_config["model_path"] = model_path
+    arg_file = os.path.join(model_path, 'args.pkl')
+    with open(arg_file, 'rb') as f:
+        gln_config["args"] = pickle.load(f)
+    gln_config["args"].model_path = model_path
+    gln_config["args"].atom_file = gln_config["atom_file"]
+    gln_config["args"].processed_data_path = gln_config["processed_data_path"]
+    gln_config["args"].model_name = gln_config["model_name"]
+    logging.info(f"gln_config: \n{gln_config}\n")
+
     proposer = GLNProposer(gln_config)
 
     clean_rxnsmis = {} 
@@ -125,6 +134,7 @@ def gen_proposals(
                "scores": ndarray of topk scores}]
     """
     return
+
 
 def compile_into_csv(
                 topk: int = 50,
@@ -275,6 +285,155 @@ def compile_into_csv(
     logging.info(f'Saved proposals as a dataframe in {output_folder}!')
     return
 
+def compile_into_csv_canoprecs(
+                topk: int = 50,
+                maxk: int = 100,
+                beam_size: Optional[int] = 50,
+                phases: Optional[List[str]] = ['train', 'valid', 'test'],
+                input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
+                input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped_canon',
+                output_folder: Optional[Union[str, bytes, os.PathLike]] = None
+                ):
+    for phase in phases:
+        logging.info(f'Processing {phase} of {phases}')
+
+        if (output_folder / 
+            f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle'
+        ).exists(): # file already exists
+            with open(output_folder / 
+                f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}.pickle', 'rb'
+            ) as handle:
+                proposals_phase = pickle.load(handle) 
+        else:
+            raise RuntimeError('Error! Could not locate and load GLN proposed smiles file') 
+        
+        with open(input_folder / f'{input_file_prefix}_{phase}.pickle', 'rb') as handle:
+            clean_rxnsmi_phase = pickle.load(handle)
+ 
+        proposed_precs_phase, prod_smiles_phase, rcts_smiles_phase = [], [], []
+        proposed_precs_phase_withdups = [] # true representation of model predictions, for calc_accs() 
+        prod_smiles_mapped_phase = [] # helper for analyse_proposed() 
+        phase_topk = topk if phase == 'train' else maxk
+        dup_count = 0
+        for rxn_smi in tqdm(clean_rxnsmi_phase, desc='Processing rxn_smi'):     
+            prod_smi = rxn_smi.split('>>')[-1]
+            prod_mol = Chem.MolFromSmiles(prod_smi)
+            [atom.ClearProp('molAtomMapNumber') for atom in prod_mol.GetAtoms()]
+            prod_smi_nomap = Chem.MolToSmiles(prod_mol, True)
+            # Sometimes stereochem takes another canonicalization...(more for reactants, but just in case)
+            prod_smi_nomap = Chem.MolToSmiles(Chem.MolFromSmiles(prod_smi_nomap), True)
+            prod_smiles_phase.append(prod_smi_nomap)
+            prod_smiles_mapped_phase.append(prod_smi)
+            
+            # value for each prod_smi is a dict, where key = 'reactants' retrieves the predicted precursors
+            precursors = proposals_phase[prod_smi]['reactants']
+            
+            # remove duplicate predictions
+            seen = []
+            for prec in precursors: # canonicalize all predictions
+                prec = Chem.MolToSmiles(Chem.MolFromSmiles(prec), True)
+                if prec not in seen:
+                    seen.append(prec)
+                else:
+                    dup_count += 1
+
+            if len(seen) < phase_topk:
+                seen.extend(['9999'] * (phase_topk - len(seen)))
+            else:
+                seen = seen[:phase_topk]
+            proposed_precs_phase.append(seen)
+            proposed_precs_phase_withdups.append(precursors)
+
+            rcts_smi = rxn_smi.split('>>')[0]
+            rcts_mol = Chem.MolFromSmiles(rcts_smi)
+            [atom.ClearProp('molAtomMapNumber') for atom in rcts_mol.GetAtoms()]
+            rcts_smi_nomap = Chem.MolToSmiles(rcts_mol, True)
+            # Sometimes stereochem takes another canonicalization...
+            rcts_smi_nomap = Chem.MolToSmiles(Chem.MolFromSmiles(rcts_smi_nomap), True)
+            rcts_smiles_phase.append(rcts_smi_nomap)
+        dup_count /= len(clean_rxnsmi_phase)
+        logging.info(f'Avg # dups per product: {dup_count}')
+
+        logging.info('\nCalculating ranks before removing duplicates')
+        _ = calc_accs( 
+            [phase],
+            clean_rxnsmi_phase,
+            rcts_smiles_phase,
+            proposed_precs_phase_withdups,
+        ) # just to calculate accuracy
+
+        logging.info('\nCalculating ranks after removing duplicates')
+        ranks_dict = calc_accs(
+                    [phase],
+                    clean_rxnsmi_phase,
+                    rcts_smiles_phase,
+                    proposed_precs_phase
+                )
+        ranks_phase = ranks_dict[phase]
+        # if training data: remove ground truth prediction from proposals
+        if phase == 'train':
+            logging.info('\n(For training only) Double checking accuracy after removing ground truth predictions')
+            _ = calc_accs(
+                    [phase],
+                    clean_rxnsmi_phase,
+                    rcts_smiles_phase,
+                    proposed_precs_phase
+                )
+
+        analyse_proposed(
+            prod_smiles_phase,
+            prod_smiles_mapped_phase,
+            proposals_phase,
+        )
+
+        combined = {} 
+        zipped = []
+        for rxn_smi, prod_smi, rcts_smi, rank_of_true_precursor, proposed_rcts_smi in zip(
+            clean_rxnsmi_phase,
+            prod_smiles_phase,
+            rcts_smiles_phase,
+            ranks_phase,
+            proposed_precs_phase,
+        ):
+            result = []
+            result.extend([rxn_smi, prod_smi, rcts_smi, rank_of_true_precursor])
+            result.extend(proposed_rcts_smi)
+            zipped.append(result)
+
+        combined[phase] = zipped
+        logging.info('Zipped all info for each rxn_smi into a list for dataframe creation!')
+
+        temp_dataframe = pd.DataFrame(
+            data={
+                'zipped': combined[phase]
+            }
+        )
+        
+        phase_dataframe = pd.DataFrame(
+            temp_dataframe['zipped'].to_list(),
+            index=temp_dataframe.index
+        )
+        
+        if phase == 'train': # true precursor has been removed from the proposals, so whatever is left are negatives
+            proposed_col_names = [f'neg_precursor_{i}' for i in range(1, phase_topk + 1)]
+        else: # validation/testing, we don't assume true precursor is present & we also do not remove them if present
+            proposed_col_names = [f'cand_precursor_{i}' for i in range(1, phase_topk + 1)]
+            # logging.info(f'len(proposed_col_names): {len(proposed_col_names)}')
+        base_col_names = ['orig_rxn_smi', 'prod_smi', 'true_precursors', 'rank_of_true_precursor']
+        base_col_names.extend(proposed_col_names)
+        phase_dataframe.columns = base_col_names
+        
+        # logging.info(f'Shape of {phase} dataframe: {phase_dataframe.shape}')
+
+        phase_dataframe.to_csv(
+            output_folder / 
+            f'GLN_{topk}topk_{maxk}maxk_{beam_size}beam_canoprecs_{phase}.csv',
+            index=False
+        )
+
+    logging.info(f'Saved proposals as a dataframe in {output_folder}!')
+    return
+
 def calc_accs( 
             phases : List[str],
             clean_rxnsmi_phase : List[str],
@@ -373,6 +532,7 @@ def parse_args():
                         default="50k_clean_rxnsmi_noreagent_allmapped_canon")
     parser.add_argument("--output_folder", help="output folder", type=str)
     parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="LOCAL")
+    parser.add_argument("--cano_precs", help="whether to canonicalize precs just in case", action="store_true")
 
     parser.add_argument("--propose", help='Whether to generate proposals (or just compile)', action="store_true")
     parser.add_argument("--train", help="Whether to generate and/or compile train preds", action="store_true")
@@ -472,13 +632,24 @@ if __name__ == "__main__":
         )
 
     if args.compile:
-        compile_into_csv(
-            topk=args.topk,
-            maxk=args.maxk,
-            beam_size=args.beam_size,
-            phases=phases,
-            input_folder=input_folder,
-            input_file_prefix=args.input_file_prefix,
-            output_folder=output_folder
-        )
- 
+        if args.cano_precs:
+            compile_into_csv_canoprecs(
+                topk=args.topk,
+                maxk=args.maxk,
+                beam_size=args.beam_size,
+                phases=phases,
+                input_folder=input_folder,
+                input_file_prefix=args.input_file_prefix,
+                output_folder=output_folder
+            )
+        else: 
+            compile_into_csv(
+                topk=args.topk,
+                maxk=args.maxk,
+                beam_size=args.beam_size,
+                phases=phases,
+                input_folder=input_folder,
+                input_file_prefix=args.input_file_prefix,
+                output_folder=output_folder
+            )
+    
