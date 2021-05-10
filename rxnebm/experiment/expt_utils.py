@@ -40,7 +40,7 @@ def setup_paths(
             root = Path(__file__).resolve().parents[1] / "checkpoints"
         else:
             root = Path(root)
-        checkpoint_folder = Path(root) / date_trained
+        checkpoint_folder = root / date_trained
         os.makedirs(checkpoint_folder, exist_ok=True)
         print(f"created checkpoint_folder: {checkpoint_folder}")
         # scores_folder, cleaned_data_folder, raw_data_folder = None, None, None

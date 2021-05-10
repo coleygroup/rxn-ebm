@@ -49,8 +49,8 @@ def parse_args():
     parser.add_argument("--testing_best_ckpt", help="helper arg indicating if we are just testing best ckpt. You shouldn't need to touch this", action="store_true")
     parser.add_argument("--expt_name", help="experiment name", type=str)
     parser.add_argument("--old_expt_name", help="old experiment name", type=str)
-    parser.add_argument("--checkpoint_folder", help="checkpoint folder",
-                        type=str, default=expt_utils.setup_paths("LOCAL"))
+    parser.add_argument("--checkpoint_folder", help="checkpoint folder", type=str)
+    parser.add_argument("--checkpoint_root", help="checkpoint root (it is a subset of checkpoint_folder: checkpoint_folder = checkpoint_root / date_trained)", type=str)
     parser.add_argument("--root", help="input data folder, if None it will be set to default rxnebm/data/cleaned_data/", type=str)
     parser.add_argument("--torch_anomaly", help='whether to set torch.autograd.set_detect_anomaly(True)', action="store_true")
     # distributed arguments
@@ -61,7 +61,7 @@ def parse_args():
                         help='number of gpus per node')
     parser.add_argument('-nr', '--nr', default=0, type=int,
                         help='ranking within the nodes')
-    parser.add_argument("--port", type=int, default=random.randint(0, 65530))
+    parser.add_argument("--port (highly recommended to specify it yourself, just pick a random number between 0 and 65530)", type=int, default=random.randint(0, 65530))
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--mol_smi_filename", help="do not change", type=str,
@@ -328,11 +328,18 @@ def main(args):
     if isinstance(args.encoder_hidden_size, list) and args.model_name.split('_')[0] == 'GraphEBM':
         assert len(args.encoder_hidden_size) == 1, 'MPN encoder_hidden_size must be a single integer!'
         args.encoder_hidden_size = args.encoder_hidden_size[0]
+
+    if args.checkpoint_folder is None: # checkpoint_root & folder are usually None, unless you want to store checkpoints somewhere else
+        args.checkpoint_folder = expt_utils.setup_paths("LOCAL", root=args.checkpoint_root)
+    else:
+        args.checkpoint_folder = Path(args.checkpoint_folder)
+    
     if args.load_checkpoint:
         if not args.ddp:
             logging.info("Loading from checkpoint")
-        old_checkpoint_folder = expt_utils.setup_paths(
-            "LOCAL", load_trained=True, date_trained=args.date_trained
+        old_checkpoint_folder = expt_utils.setup_paths( # checkpoint_root is usually None, unless you want to store checkpoints somewhere else
+            # we DO require that checkpoints to be loaded are in the same root folder as checkpoints to be saved, for simplicity's sake
+            "LOCAL", load_trained=True, date_trained=args.date_trained, root=args.checkpoint_root
         )
         saved_stats_filename = f'{args.model_name}_{args.old_expt_name}_stats.pkl'
         saved_model, saved_optimizer, saved_stats = expt_utils.load_model_opt_and_stats(
