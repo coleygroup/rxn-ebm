@@ -476,7 +476,7 @@ if __name__ == "__main__":
             beam_size=args.beam_size,
             phase=args.phase_to_merge, 
             start_idxs=[int(num) if num != '' else None for num in args.chunk_start_idxs.split(',')], # [0, 12000, 15000, 30000] 
-            end_idxs=[int(num) if num != '' else None for num in args.chunk_start_idxs.split(',')], # [12000, 15000, 30000, None], 
+            end_idxs=[int(num) if num != '' else None for num in args.chunk_end_idxs.split(',')], # [12000, 15000, 30000, None], 
             output_folder=output_folder
         )
 
