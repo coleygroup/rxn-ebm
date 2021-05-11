@@ -19,27 +19,7 @@ from rdkit import RDLogger
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
 
-import joblib
-import contextlib
-@contextlib.contextmanager
-def tqdm_joblib(tqdm_object):
-    # https://stackoverflow.com/questions/24983493/tracking-progress-of-joblib-parallel-execution
-    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
-    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-
-        def __call__(self, *args, **kwargs):
-            tqdm_object.update(n=self.batch_size)
-            return super().__call__(*args, **kwargs)
-
-    old_batch_callback = joblib.parallel.BatchCompletionCallBack
-    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
-    try:
-        yield tqdm_object
-    finally:
-        joblib.parallel.BatchCompletionCallBack = old_batch_callback
-        tqdm_object.close()  
+from utils import tqdm_joblib 
 
 def merge_proposers(
         proposers : List[str],
@@ -50,6 +30,7 @@ def merge_proposers(
         phases: Optional[List[str]] = ['train', 'valid', 'test'],
         rxnsmi_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped_canon',
         input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
+        output_file_prefix: Optional[Union[str, bytes, os.PathLike]] = None,
         output_folder: Optional[Union[str, bytes, os.PathLike]] = None,
         seed: Optional[int] = None,
     ):
@@ -176,7 +157,7 @@ def merge_proposers(
             precs_this_rxn, precs_this_rxn_withdups = [], []
             if input_mode == 'pickle':
                 for proposer in proposers:
-                    if proposer == 'GLN_retrain' or proposer == 'GLN':
+                    if proposer == 'GLN':
                         curr_precs = proposals_phase_dict[proposer][prod_smi_map]['reactants']
                     elif proposer == 'MT':
                         results = proposals_phase_dict[proposer][prod_smi_map]
@@ -203,7 +184,7 @@ def merge_proposers(
 
             elif input_mode == 'csv':
                 for proposer in proposers:
-                    if proposer in ['GLN_retrain', 'GLN', 'retrosim', 'retroxpert', 'union']:
+                    if proposer in ['GLN', 'retrosim', 'retroxpert', 'union']:
                         curr_precs = proposals_phase_dict[proposer][prod_smi_nomap]
                     elif proposer == 'MT':
                         raise NotImplementedError
@@ -297,22 +278,28 @@ def merge_proposers(
         base_col_names.extend(proposed_col_names)
         phase_dataframe.columns = base_col_names
 
-        output_prefix = ''
-        for proposer, topk, maxk in zip(
-            proposers, topks, maxks
-        ):
-            output_prefix += f'{proposer}_{topk}topk_{maxk}maxk_'
-        if seed:
+        if output_file_prefix is None:
+            output_file_prefix = ''
+            for proposer, topk, maxk in zip(
+                proposers, topks, maxks
+            ):
+                output_file_prefix += f'{proposer}_{topk}topk_{maxk}maxk_'
+            if seed:
+                phase_dataframe.to_csv(
+                    output_folder / f'{output_file_prefix}noGT_{seed}_{phase}.csv',
+                    index=False
+                )
+            else:
+                phase_dataframe.to_csv(
+                    output_folder / f'{output_file_prefix}noGT_{phase}.csv',
+                    index=False
+                )
+        else: # user provided output_file_prefix, means they know exactly what they want
+            logging.info(f'Saving to output_file_prefix {output_file_prefix}')
             phase_dataframe.to_csv(
-                output_folder / f'{output_prefix}noGT_{seed}_{phase}.csv',
-                index=False
-            )
-        else:
-            phase_dataframe.to_csv(
-                output_folder / f'{output_prefix}noGT_{phase}.csv',
-                index=False
-            )
-
+                    output_folder / f'{output_file_prefix}_{phase}.csv',
+                    index=False
+                )
     logging.info(f'Saved proposals as a dataframe in {output_folder}!')
     return
 
@@ -396,7 +383,7 @@ def analyse_proposed(
         for prod_smi_nomap, prod_smi_map in zip(prod_smiles_phase, prod_smiles_mapped_phase):
             precursors_count = 0
             for proposer, proposals in proposals_phase_dict.items():
-                if proposer == 'GLN_retrain' or proposer == 'GLN':
+                if proposer == 'GLN':
                     curr_precs = proposals[prod_smi_map]['reactants']  
                     precursors_count += len(curr_precs)
                 elif proposer == 'MT':
@@ -426,7 +413,7 @@ def analyse_proposed(
         for prod_smi_nomap, prod_smi_map in zip(prod_smiles_phase, prod_smiles_mapped_phase):
             precursors_count = 0
             for proposer, proposals in proposals_phase_dict.items():
-                if proposer == 'GLN_retrain' or proposer == 'GLN' or proposer == 'retrosim' or proposer == 'retroxpert':
+                if proposer == 'GLN' or proposer == 'retrosim' or proposer == 'retroxpert':
                     curr_precs = proposals[prod_smi_nomap]
                     precursors_count += len(curr_precs)
                 elif proposer == 'MT':
@@ -465,14 +452,15 @@ def parse_args():
     parser.add_argument("--input_folder", help="input folder", type=str)
     parser.add_argument("--seed", help="seed used for trained model", type=int)
     parser.add_argument("--proposed_smi_file_prefixes", 
-                        help="List of file prefixes of proposed smiles (comma separated) \
+                        help="List of input file prefixes of proposed smiles (comma separated) \
                         in same order as --proposers", 
                         type=str,
-                        default="GLN_retrain_cano_200topk_200maxk_200beam,retrosim_200maxtest_200maxprec,retroxpert_200topk_200maxk_200beam")
+                        default="GLN_200topk_200maxk_noGT_19260817,retrosim_200topk_200maxk_noGT,retroxpert_200topk_200maxk_noGT_0")
     parser.add_argument("--input_mode", help="input mode ['csv', 'pickle']", type=str, default='csv')
     parser.add_argument("--rxnsmi_file_prefix", help="file prefix of atom-mapped rxn smiles", type=str,
                         default="50k_clean_rxnsmi_noreagent_allmapped_canon")
     parser.add_argument("--output_folder", help="output folder", type=str)
+    parser.add_argument("--output_file_prefix", help="output file prefix", type=str)
     parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="LOCAL")
 
     parser.add_argument("--train", help="Whether to compile train preds", action="store_true")
@@ -481,8 +469,8 @@ def parse_args():
 
     parser.add_argument("--proposers", 
                         help="List of proposers (comma separated) \
-                        in same order as --proposed_smi_file_prefixes ['GLN_retrain', 'GLN', 'retrosim', 'retroxpert']", 
-                        type=str, default='GLN_retrain,retrosim,retroxpert')
+                        in same order as --proposed_smi_file_prefixes ['GLN', 'retrosim', 'retroxpert', 'neuralsym']", 
+                        type=str, default='GLN,retrosim,retroxpert')
     parser.add_argument("--topks", help="List of topk's (comma separated) in same order as --proposers", type=str)
     parser.add_argument("--maxks", help="List of maxk's (comma separated) in same order as --proposers", type=str)
     return parser.parse_args()
@@ -541,5 +529,6 @@ if __name__ == "__main__":
         input_mode=args.input_mode,
         rxnsmi_file_prefix=args.rxnsmi_file_prefix,
         output_folder=output_folder,
+        output_file_prefix=args.output_file_prefix,
         seed=args.seed
     ) 
