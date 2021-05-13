@@ -963,14 +963,9 @@ class Experiment:
 
         logging.info(f'Total training time: {self.stats["train_time"]}')
 
-    def test(self, saved_stats: Optional[dict] = None):
+    def test(self):
         """
         Evaluates the model on the test set
-        Parameters
-        ---------
-        saved_stats: Optional[dict]
-            Test statistics will be stored inside this stats file
-            Used to load existing stats file when loading a trained model from checkpoint
         """
         self.model.eval()
         test_loss, test_correct_preds = 0, defaultdict(int)
@@ -1140,27 +1135,16 @@ class Experiment:
             for k in self.k_to_test:
                 self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size # self.test_size
 
-        if saved_stats:
-            self.stats = saved_stats
-        if len(self.stats.keys()) <= 2:
-            raise RuntimeError(
-                "self.stats only has 2 keys or less. If loading checkpoint, you need to provide load_stats!"
-            )
-
-        self.stats["test_loss"] = test_loss / epoch_test_size # self.test_size 
-        logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
-        self.stats["test_topk_accs"] = self.test_topk_accs
+        logging.info(f'\nTest loss: {stest_loss / epoch_test_size:.4f}')
         message = f"{self.expt_name}\n"
         for k in self.k_to_test:
-            this_topk_message = f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%'
+            this_topk_message = f'Test top-{k} accuracy: {100 * self.test_topk_accs[k]:.3f}%'
             logging.info(this_topk_message)
             message += this_topk_message + '\n'
         try:
             send_message(message)
         except Exception as e:
             pass
-
-        torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
     def get_energies_and_loss_distributed(
         self,

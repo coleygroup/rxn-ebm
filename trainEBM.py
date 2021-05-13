@@ -331,7 +331,7 @@ def main(args):
         args.encoder_hidden_size = args.encoder_hidden_size[0]
 
     if args.checkpoint_folder is None: # checkpoint_root & folder are usually None, unless you want to store checkpoints somewhere else
-        args.checkpoint_folder = expt_utils.setup_paths("LOCAL", root=args.checkpoint_root)
+        args.checkpoint_folder = expt_utils.setup_paths(root=args.checkpoint_root)
     else:
         args.checkpoint_folder = Path(args.checkpoint_folder)
     
@@ -340,7 +340,7 @@ def main(args):
             logging.info("Loading from checkpoint")
         old_checkpoint_folder = expt_utils.setup_paths( # checkpoint_root is usually None, unless you want to store checkpoints somewhere else
             # we DO require that checkpoints to be loaded are in the same root folder as checkpoints to be saved, for simplicity's sake
-            "LOCAL", load_trained=True, date_trained=args.date_trained, root=args.checkpoint_root
+            load_trained=True, date_trained=args.date_trained, root=args.checkpoint_root
         )
         saved_stats_filename = f'{args.model_name}_{args.old_expt_name}_stats.pkl'
         saved_model, saved_optimizer, saved_stats = expt_utils.load_model_opt_and_stats(

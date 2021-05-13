@@ -17,7 +17,6 @@ import nmslib
 from rxnebm.model import FF, G2E, S2E, model_utils
 
 def setup_paths(
-    location: str = "LOCAL",
     load_trained: Optional[bool] = False,
     date_trained: Optional[str] = None,
     root: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -35,29 +34,14 @@ def setup_paths(
     else:
         date_trained = date.today().strftime("%d_%m_%Y")
 
-    if location.upper() == "LOCAL" or location.upper() == 'ENGAGING':
-        if root is None:
-            root = Path(__file__).resolve().parents[1] / "checkpoints"
-        else:
-            root = Path(root)
-        checkpoint_folder = root / date_trained
-        os.makedirs(checkpoint_folder, exist_ok=True)
-        print(f"created checkpoint_folder: {checkpoint_folder}")
-        # scores_folder, cleaned_data_folder, raw_data_folder = None, None, None
-
-    elif location.upper() == "COLAB":
-        if root is None:
-            root = Path("/content/gdrive/My Drive/rxn_ebm/checkpoints/")
-        else:
-            root = Path(root)
-        checkpoint_folder = Path(root) / date_trained
-        os.makedirs(checkpoint_folder, exist_ok=True)
-        print(f"created checkpoint_folder: {checkpoint_folder}")
+    if root is None:
+        root = Path(__file__).resolve().parents[1] / "checkpoints"
     else:
-        raise ValueError('Unrecognized location')
-
-    return checkpoint_folder #scores_folder #cleaned_data_folder #raw_data_folder
-
+        root = Path(root)
+    checkpoint_folder = root / date_trained
+    os.makedirs(checkpoint_folder, exist_ok=True)
+    print(f"created checkpoint_folder: {checkpoint_folder}")
+    return checkpoint_folder
 
 def load_or_create_vocab(args):
     """Currently only supports loading. The vocab is small enough that a single universal vocab suffices"""
@@ -117,21 +101,16 @@ def load_model_opt_and_stats(
             )
             print("loaded checkpoint from load_epoch: ", load_epoch)
 
-        if args.model_name == "FeedforwardFingerprint" or args.model_name == 'FeedforwardSingle':
-            saved_model = FF.FeedforwardSingle(args)
-        elif args.model_name == 'FeedforwardTriple3indiv3prod1cos' or args.model_name == "FeedforwardEBM":
+        if args.model_name == 'FeedforwardTriple3indiv3prod1cos' or args.model_name == "FeedforwardEBM":
             saved_model = FF.FeedforwardTriple3indiv3prod1cos(args)
         elif args.model_name == "GraphEBM":                 # Graph to energy
             saved_model = G2E.G2E(args)
         elif args.model_name == "GraphEBM_Cross":           # Graph to energy, cross attention pool for r and p atoms
             saved_model = G2E.G2ECross(args)
-        elif args.model_name == "GraphEBM_sep":                 # Graph to energy, separate encoders
-            raise NotImplementedError('No longer implemented. Use GraphEBM_sep_FFout')
         elif args.model_name == "GraphEBM_projBoth":        # Graph to energy, project both reactants & products w/ dot product output
             saved_model = G2E.G2E_projBoth(args)
         elif args.model_name == "GraphEBM_sep_projBoth_FFout":        # Graph to energy, separate encoders + projections, feedforward output
             saved_model = G2E.G2E_sep_projBoth_FFout(args)
-            # print('Created model GraphEBM_sep_projBoth_FFout')
         elif args.model_name == "GraphEBM_sep_FFout":        # Graph to energy, separate encoders, feedforward output
             saved_model = G2E.G2E_sep_FFout(args)
         elif args.model_name == "TransformerEBM":
@@ -139,10 +118,7 @@ def load_model_opt_and_stats(
             vocab = load_or_create_vocab(args)
             saved_model = S2E.S2E(args, vocab, **saved_stats["model_args"])
         else:
-            raise ValueError("Only FeedforwardSingle, FeedforwardTriple3indiv3prod1cos, \
-                             GraphEBM, GraphEBM_projBoth, GraphEBM_sep_projBoth_FFout, \
-                             GraphEBM_sep_FFout, GraphEBM_sep \
-                             and TransformerEBM are supported currently!")
+            raise ValueError("Unrecognized model name")
 
         # override bug in name of optimizer when saving checkpoint
         saved_stats["train_args"]["optimizer"] = model_utils.get_optimizer(optimizer_name)

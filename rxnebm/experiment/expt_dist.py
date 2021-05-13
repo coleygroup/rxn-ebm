@@ -1044,7 +1044,7 @@ class Experiment:
         if self.rank == 0:
             logging.info(f'Total training time: {self.stats["train_time"]}')
 
-    def test_distributed(self, saved_stats: Optional[dict] = None):
+    def test_distributed(self):
         """
         Evaluates the model on the test set
         Parameters
@@ -1071,7 +1071,7 @@ class Experiment:
             epoch_test_size = 0
             for i, batch in enumerate(test_loader):
                 batch_data = batch[0]
-                if not isinstance(batch_data, tuple): # not sure what's the purpose of this
+                if not isinstance(batch_data, tuple):
                     batch_data = batch_data.cuda(non_blocking=True)
                 if self.model_name == 'TransformerEBM':
                     batch_data = (batch_data, 'test')
@@ -1239,28 +1239,18 @@ class Experiment:
                 
             for k in self.k_to_test:
                 self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size
-
-        if saved_stats:
-            self.stats = saved_stats
-        if len(self.stats.keys()) <= 2:
-            raise RuntimeError(
-                "self.stats only has 2 keys or less. If loading checkpoint, you need to provide load_stats!"
-            )
         dist.barrier()
-        self.stats["test_loss"] = test_loss / epoch_test_size 
-        self.stats["test_topk_accs"] = self.test_topk_accs
         message = f"{self.expt_name}\n"
         if self.rank == 0:
-            logging.info(f'\nTest loss: {self.stats["test_loss"]:.4f}')
+            logging.info(f'\nTest loss: {test_loss / epoch_test_size:.4f}')
             for k in self.k_to_test:
-                this_topk_message = f'Test top-{k} accuracy: {100 * self.stats["test_topk_accs"][k]:.3f}%'
+                this_topk_message = f'Test top-{k} accuracy: {100 * self.test_topk_accs[k]:.3f}%'
                 logging.info(this_topk_message)
                 message += this_topk_message + '\n'
             try:
                 send_message(message)
             except Exception as e:
                 pass
-            torch.save(self.stats, self.stats_filename) # override existing train stats w/ train+test stats
 
     def get_energies_and_loss_distributed(
         self,
