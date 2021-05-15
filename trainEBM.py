@@ -18,7 +18,7 @@ from typing import Optional, Dict, List, Union
 from pathlib import Path
 
 from rxnebm.data import dataset
-from rxnebm.experiment import expt, expt_dist, expt_mixture, expt_utils
+from rxnebm.experiment import expt, expt_dist, expt_utils
 from rxnebm.model import FF, G2E, S2E, model_utils
 
 torch.backends.cudnn.benchmark = False # turn off for G2E
@@ -36,9 +36,7 @@ def parse_args():
     # mode & metadata
     parser.add_argument("--model_name", help="model name", type=str, default="FeedforwardEBM")
     parser.add_argument("--do_not_train", help="do not do any training? (to just test/get energies)", action="store_true")
-    parser.add_argument("--do_pretrain", help="whether to pretrain (vs. finetune)", action="store_true")
     parser.add_argument("--do_finetune", help="whether to finetune (vs. pretrain)", action="store_true")
-    parser.add_argument("--do_train_mixture", help="whether training mixture model", action="store_true")
     parser.add_argument("--do_test", help="whether to test after training", action="store_true")
     parser.add_argument("--do_get_energies_and_acc", help="whether to test after training", action="store_true")
     parser.add_argument("--do_compute_graph_feat", help="whether to compute graph features", action="store_true")
@@ -46,16 +44,14 @@ def parse_args():
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
     parser.add_argument("--test_on_train", help="whether to evaluate on the training data", action="store_true")
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default=date.today().strftime("%d_%m_%Y"))
-    parser.add_argument("--load_epoch", help="epoch to load from", type=int)
+    parser.add_argument("--load_epoch", help="epoch to load from (optional, if not given, always loads best checkpoint based on validation top-1 accuracy", 
+                        type=int)
     parser.add_argument("--testing_best_ckpt", help="helper arg indicating if we are just testing best ckpt. You shouldn't need to touch this", action="store_true")
     parser.add_argument("--expt_name", help="experiment name", type=str)
     parser.add_argument("--old_expt_name", help="old experiment name", type=str)
-    parser.add_argument("--checkpoint_folder", help="checkpoint folder", type=str)
-    parser.add_argument("--checkpoint_root", help="checkpoint root (it is a subset of checkpoint_folder: checkpoint_folder = checkpoint_root / date_trained)", type=str)
+    parser.add_argument("--checkpoint_root", help="checkpoint root (it is a component of checkpoint_folder: checkpoint_folder = checkpoint_root / date_trained)", type=str)
     parser.add_argument("--root", help="input data folder, if None it will be set to default rxnebm/data/cleaned_data/", type=str)
-    parser.add_argument("--torch_anomaly", help='whether to set torch.autograd.set_detect_anomaly(True)', action="store_true")
     # distributed arguments
-    parser.add_argument("--dataparallel", help="whether to do dataparallel training", action="store_true")
     parser.add_argument("--ddp", help="whether to do DDP training", action="store_true")
     parser.add_argument('-n', '--nodes', default=1, type=int)
     parser.add_argument('-g', '--gpus', default=1, type=int,
@@ -65,48 +61,21 @@ def parse_args():
     parser.add_argument("--port", help="(highly recommended to specify it yourself, just pick a random number between 0 and 65530)", type=int, default=random.randint(0, 65530))
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
-    parser.add_argument("--mol_smi_filename", help="do not change", type=str,
-                        default="50k_mol_smis.pickle")
-    parser.add_argument("--smi_to_fp_dict_filename", help="do not change", type=str,
-                        default="50k_mol_smi_to_sparse_fp_idx.pickle")
-    parser.add_argument("--fp_to_smi_dict_filename", help="do not change", type=str,
-                        default="50k_sparse_fp_idx_to_mol_smi.pickle")
-    parser.add_argument("--mol_fps_filename", help="do not change", type=str,
-                        default="50k_count_mol_fps.npz")
-    parser.add_argument("--search_index_filename", help="do not change", type=str,
-                        default="50k_cosine_count.bin")
-    parser.add_argument("--mut_smis_filename", help="do not change", type=str,
-                        default="50k_neg150_rad2_maxsize3_mutprodsmis.pickle")
-    parser.add_argument("--rxn_smis_file_prefix", help="do not change", type=str,
-                        default="50k_clean_rxnsmi_noreagent")
-    parser.add_argument("--path_to_energies",
-                        help="do not change (folder to store array of energy values for train & test data)", type=str)
     parser.add_argument("--proposals_csv_file_prefix",
                         help="do not change (CSV file containing proposals from retro models)", type=str)
     parser.add_argument("--vocab_file", help="vocab file for Transformer encoder", type=str, default=None)
     parser.add_argument("--precomp_file_prefix",
                         help="precomputed augmentation file prefix, expt.py will append f'_{phase}.npz' to the end",
                         type=str)
-    parser.add_argument("--prob_file_prefix",
-                        help="npy file of probabilities/scores from retro model",
-                        type=str)
     parser.add_argument("--cache_suffix",
                         help="additional suffix for G2E cache files",
                         type=str, default=None)
-    parser.add_argument("--prodfps_file_prefix",
-                        help="npz file of product fingerprints",
-                        type=str)
-    parser.add_argument("--labels_file_prefix",
-                        help="npy file of labels for mixture of experts",
-                        type=str)
     # fingerprint params
     parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
     parser.add_argument("--rctfp_size", help="reactant fp size", type=int, default=16384)
     parser.add_argument("--prodfp_size", help="product fp size", type=int, default=16384)
     parser.add_argument("--difffp_size", help="product fp size", type=int, default=16384)
-    parser.add_argument("--fp_radius", help="fp radius", type=int, default=3)
     parser.add_argument("--rxn_type", help="aggregation type", type=str, default="hybrid_all")
-    parser.add_argument("--fp_type", help="fp type", type=str, default="count")
     # training params
     parser.add_argument("--loss_type", help="type of EBM loss ['log', 'hinge', 'ReLU']", type=str, default="log")
     parser.add_argument("--loss_margin", help="margin for hinge loss, provide multiple values for differential margin [top-2,top-3_to_5,top-5_to_10]etc.", 
@@ -121,17 +90,13 @@ def parse_args():
     parser.add_argument("--max_seq_len", help="max sequence length for smiles representation", type=int, default=256)
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
-    parser.add_argument("--milestone_lr", help="Epochs for MultiStepLR", type=int, nargs='+')
-    parser.add_argument("--milestone_gamma", help="Gamma for MultiStepLR", type=float, default=0.4)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
     parser.add_argument("--weight_decay", help="weight decay", type=float, default=0)
     parser.add_argument("--warmup_epochs", help="Num epochs to warm up LR (currently linearly) to given LR", 
                         type=int, default=0)
     parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < --lr_floor", 
                         action="store_true", default=False)
-    parser.add_argument("--lr_floor", help="LR below which training will stop", type=float, default=1e-7)
-    parser.add_argument("--lr_min", help="minimum learning rate (CosineAnnealingWarmRestarts)", 
-                        type=float, default=0)
+    parser.add_argument("--lr_floor", help="LR below which training will stop", type=float, default=1e-8)
     parser.add_argument("--new_lr", help="new learning rate after reloading checkpoint", 
                         type=float)
     parser.add_argument("--lr_cooldown", help="epochs to wait before resuming normal operation (ReduceLROnPlateau)",
@@ -147,38 +112,16 @@ def parse_args():
     parser.add_argument("--lr_scheduler_patience",
                         help="num. of epochs with no improvement after which to reduce LR (ReduceLROnPlateau)",
                         type=int, default=0)
-    parser.add_argument("--lr_scheduler_T_0",
-                        help="num. of iters (epochs) for first restart (CosineAnnealingWarmRestarts)",
-                        type=int, default=8)
-    parser.add_argument("--lr_scheduler_epoch_offset",
-                        help="num. of epochs to offset (CosineAnnealingWarmRestarts)",
-                        type=int, default=0)
-    parser.add_argument("--lr_scheduler_last_batch",
-                        help="num. of batches to offset / has been computed (OneCycleLR)",
-                        type=int, default=-1)
-    parser.add_argument("--lr_scheduler_last_epoch",
-                        help="last epoch, only applicable when reloading an existing checkpoint (MultiStepLR)",
-                        type=int, default=-1)
-    parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") # type=bool, default=True) 
+    parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") 
     parser.add_argument("--early_stop_criteria",
                         help="criteria for early stopping ['loss', 'acc', top1_acc', 'top5_acc', 'top10_acc', 'top50_acc']",
                         type=str, default='top1_acc')
     parser.add_argument("--early_stop_patience",
                         help="num. of epochs tolerated without improvement in criteria before early stop",
                         type=int, default=2)
-    parser.add_argument("--early_stop_min_delta",
-                        help="min. improvement in criteria needed to not early stop", type=float, default=1e-4)
-    parser.add_argument("--num_workers", help="num. of workers (0 to 8)", type=int, default=0)
-    parser.add_argument("--checkpoint", help="whether to save model checkpoints", action="store_true") # type=bool, default=True)
+    parser.add_argument("--checkpoint", help="whether to save model checkpoints", action="store_true")
     parser.add_argument("--checkpoint_every", help="to save model weights every N epochs", type=int, default=1)
     parser.add_argument("--random_seed", help="random seed", type=int, default=0)
-    parser.add_argument("--pin_memory", 
-                        help="whether to pin memory to speed up CPU to GPU transfer (will fail for certain cases, like TransformerEBM)", 
-                        action="store_true")
-    parser.add_argument("--drop_last",
-                        help="Whether to drop last minibatch in train/valid/test dataloader",
-                        action="store_true")
-    parser.add_argument("--pos_weight", help="pos weight for BCEWithLogitsLoss (mixture model)", type=float, default=1)
     # model params, G2E/FF/S2E args
     parser.add_argument("--encoder_hidden_size", help="MPN/FFN/Transformer encoder_hidden_size(s)", 
                         type=int, nargs='+', default=256)
@@ -227,7 +170,6 @@ def main_dist(
         augmentations: dict,
         onthefly: Optional[bool] = False,
         debug: Optional[bool] = True,
-        dataparallel: Optional[bool] = False,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
         load_checkpoint: Optional[bool] = False,
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
@@ -269,7 +211,6 @@ def main_dist(
         augmentations=augmentations,
         onthefly=args.onthefly,
         load_checkpoint=args.load_checkpoint,
-        dataparallel=False,
         saved_optimizer=saved_optimizer,
         saved_stats=saved_stats,
         begin_epoch=begin_epoch,
@@ -277,45 +218,25 @@ def main_dist(
         vocab=vocab,
         root=root
     )
-    if not args.do_not_train and args.do_pretrain:
-        logging.info("Start pretraining")
-        experiment.train_distributed()
-
     if not args.do_not_train and args.do_finetune:
         assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
         logging.info("Start finetuning")
         experiment.train_distributed()
 
-    if args.do_test:
-        logging.info("Start testing")
-        if args.do_compute_graph_feat and experiment.train_loader is not None and not args.test_on_train:
-            del experiment.train_loader # free up memory
-            gc.collect()
-            torch.cuda.empty_cache()
-        experiment.test_distributed()
-
-    if args.do_get_energies_and_acc and gpu == 0:
+    if (args.do_test or args.do_get_energies_and_acc) and gpu == 0:
         # reload best checkpoint & use just 1 GPU to run
         args.ddp = False
         args.old_expt_name = args.expt_name
-        # args.date_trained = str(args.checkpoint_folder)[-10:]
         args.load_checkpoint = True
         args.load_epoch = None # to load best checkpoint based on val top-1
-        args.do_test = True
         args.do_not_train = True
         args.testing_best_ckpt = True
-        # args.random_seed += 100 # just to get more diverse random examples of predictions, shouldn't affect anything else
 
         logging.info(f'Reloading expt: {args.expt_name}')
         main(args)
         
 def main(args):
-    model_utils.seed_everything(args.random_seed) # seed before even initializing model
-
-    if args.torch_anomaly: # to debug nan loss
-        torch.autograd.set_detect_anomaly(True)
-    
-    """train EBM from scratch"""
+    model_utils.seed_everything(args.random_seed) # seed before even initializing model    
     if not args.ddp: # if ddp, we should only log from main process (0), not from all processes
         logging.info("Logging args")
         logging.info(vars(args))
@@ -330,11 +251,7 @@ def main(args):
         assert len(args.encoder_hidden_size) == 1, 'MPN encoder_hidden_size must be a single integer!'
         args.encoder_hidden_size = args.encoder_hidden_size[0]
 
-    if args.checkpoint_folder is None: # checkpoint_root & folder are usually None, unless you want to store checkpoints somewhere else
-        args.checkpoint_folder = expt_utils.setup_paths(root=args.checkpoint_root)
-    else:
-        args.checkpoint_folder = Path(args.checkpoint_folder)
-    
+    args.checkpoint_folder = expt_utils.setup_paths(root=args.checkpoint_root)
     if args.load_checkpoint:
         if not args.ddp:
             logging.info("Loading from checkpoint")
@@ -404,7 +321,6 @@ def main(args):
                 augmentations,
                 args.onthefly,
                 True, # debug
-                False, # dataparallel
                 args.root,
                 args.load_checkpoint,
                 saved_optimizer,
@@ -414,20 +330,13 @@ def main(args):
                 )
             )
     else:
-        if torch.cuda.device_count() > 1 and args.dataparallel:
-            logging.info(f'Using {torch.cuda.device_count()} GPUs!!!')
-            dataparallel = True
-            model = nn.DataParallel(model)
-        elif torch.cuda.device_count() > 1:
+        if torch.cuda.device_count() > 1:
             logging.info(f'Using only 1 GPU out of {torch.cuda.device_count()} GPUs! \
-                You should either do --ddp (recommended) or --dataparallel training!')
-            dataparallel = False
+                You should include --ddp for distributed data parallel training!')
         elif torch.cuda.is_available():
             logging.info(f"Using 1 GPU out of 1 GPU! Where're the rest?")
-            dataparallel = False
         else:
             logging.info(f'Using CPU! Warning! Training will be slowwwwww')
-            dataparallel = False
 
         logging.info("Setting up experiment")
         experiment = expt.Experiment(
@@ -446,16 +355,25 @@ def main(args):
             gpu=None, # not doing DDP
             root=args.root
         )
-        if not args.do_not_train and args.do_pretrain:
-            logging.info("Start pretraining")
-            experiment.train()
-
         if not args.do_not_train and args.do_finetune:
             assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
             logging.info("Start finetuning")
             experiment.train()
 
-        if args.do_test:
+        if (args.do_get_energies_and_acc or args.do_test) and not args.testing_best_ckpt:
+            # reload best checkpoint & use just 1 GPU to run
+            args.ddp = False
+            if args.old_expt_name is None: # user did not provide, means we are training from scratch, not loading a checkpoint
+                args.old_expt_name = args.expt_name
+            args.load_checkpoint = True
+            args.load_epoch = None # to load best checkpoint based on val top-1
+            args.do_not_train = True
+            args.testing_best_ckpt = True # turn flag on
+
+            logging.info(f'Reloading expt: {args.expt_name}')
+            main(args) # reload
+
+        if args.testing_best_ckpt and args.do_test: # only do testing on best val top-1 ckpt
             if not args.test_on_train:
                 del experiment.train_loader # free up memory
                 gc.collect()
@@ -463,27 +381,10 @@ def main(args):
             logging.info("Start testing")
             experiment.test()
 
-        if args.do_get_energies_and_acc and not args.testing_best_ckpt:
-            # reload best checkpoint & use just 1 GPU to run
-            args.ddp = False
-            if args.old_expt_name is None: # user did not provide, means we are training from scratch, not loading a checkpoint
-                args.old_expt_name = args.expt_name
-            # args.date_trained = str(args.checkpoint_folder)[-10:]
-            args.load_checkpoint = True
-            args.load_epoch = None # to load best checkpoint based on val top-1
-            args.do_test = True
-            args.do_not_train = True
-            args.testing_best_ckpt = True # turn flag on
-
-            logging.info(f'Reloading expt: {args.expt_name}')
-            main(args)
-
-        elif args.do_get_energies_and_acc and args.testing_best_ckpt:
+        if args.testing_best_ckpt and args.do_get_energies_and_acc:
             phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
             for phase in phases_to_eval:
-                experiment.get_energies_and_loss(
-                    phase=phase, save_energies=True, path_to_energies=args.path_to_energies
-                )
+                experiment.get_energies_and_loss(phase=phase)
 
             # just print accuracies to compare experiments
             for phase in phases_to_eval:

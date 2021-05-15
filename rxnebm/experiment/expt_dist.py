@@ -34,8 +34,6 @@ ReLU = nn.ReLU()
 
 class Experiment:
     """
-    TODO: wandb/tensorboard for hyperparameter tuning
-
     Parameters
     ----------
     representation : str ['fingerprint', 'smiles']
@@ -57,7 +55,6 @@ class Experiment:
         onthefly: Optional[bool] = False,
         debug: Optional[bool] = True,
         gpu: Optional[str] = None, # https://github.com/yangkky/distributed_tutorial/blob/master/ddp_tutorial.md
-        dataparallel: Optional[bool] = False,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
         load_checkpoint: Optional[bool] = False,
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
@@ -76,20 +73,17 @@ class Experiment:
         self.early_stop = args.early_stop
         if self.early_stop:
             self.early_stop_criteria = args.early_stop_criteria
-            self.early_stop_min_delta = args.early_stop_min_delta
             self.early_stop_patience = args.early_stop_patience
             self.min_val_loss = float("+inf")  
             self.max_val_acc = float("-inf") 
             self.wait = 0  # counter for _check_earlystop()
         else:
             self.early_stop_criteria = args.early_stop_criteria # still needed to track best_epoch
-            self.early_stop_min_delta = None
             self.early_stop_patience = None
             self.min_val_loss = float("+inf") # still needed to track best_epoch
             self.max_val_acc = float("-inf") # still needed to track best_epoch
             self.wait = None
 
-        self.num_workers = args.num_workers
         self.checkpoint = args.checkpoint
         self.checkpoint_every = args.checkpoint_every
         self.random_seed = args.random_seed
@@ -105,8 +99,6 @@ class Experiment:
         self.expt_name = args.expt_name
         self.augmentations = augmentations
         self.representation = args.representation
-        if self.representation != 'fingerprint' and 'bit' in augmentations:
-            raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
         logging.info(f"\nInitialising experiment: {self.expt_name}")
         logging.info(f"Augmentations: {self.augmentations}")
 
@@ -126,7 +118,6 @@ class Experiment:
         self.model = model
         self.model_name = model_name # self.model.model_repr
         self.model_args = model_args
-        self.dataparallel = dataparallel  # affects how checkpoint is saved & how weights should be loaded
 
         if saved_optimizer is not None:
             self.optimizer_name = str(self.args.optimizer).split(' ')[0]
@@ -135,12 +126,6 @@ class Experiment:
         self.lr_scheduler_name = args.lr_scheduler
 
         self._collate_args()
-
-        self.rxn_smis_filenames = defaultdict(str)
-        if self.args.do_pretrain:
-            for phase in ['train', 'valid', 'test']:
-                self.rxn_smis_filenames[phase] = f"{self.args.rxn_smis_file_prefix}_{phase}.pickle"
-
         self.proposals_data = {}
         self.proposals_csv_filenames = defaultdict(str)
         if self.args.do_finetune:
@@ -150,21 +135,9 @@ class Experiment:
                     self.proposals_data[phase] = pd.read_csv(self.root / self.proposals_csv_filenames[phase], index_col=None, dtype='str')
                     self.proposals_data[phase] = self.proposals_data[phase].drop(['orig_rxn_smi'], axis=1).values
 
-        # take into account original probs/scores from retro models
-        self.prob_filenames = defaultdict(str)
-        if self.args.prob_file_prefix: # will be loaded in Dataset file
-            logging.info(f'Loading probs file {self.args.prob_file_prefix}')
-            for phase in ['train', 'valid', 'test']:
-                self.prob_filenames[phase] = self.args.prob_file_prefix + f"_{phase}.npy"
-
         if self.representation == 'fingerprint':
             self._init_fp_dataloaders(
                 precomp_file_prefix=args.precomp_file_prefix,
-                onthefly=onthefly,
-                smi_to_fp_dict_filename=args.smi_to_fp_dict_filename,
-                fp_to_smi_dict_filename=args.fp_to_smi_dict_filename,
-                mol_fps_filename=args.mol_fps_filename,
-                search_index_filename=args.search_index_filename,
             )
             self.maxk = self.train_loader.dataset.data.shape[-1] // self.train_loader.dataset.input_dim
         elif self.representation == "smiles":
@@ -239,15 +212,6 @@ class Experiment:
         if self.args.new_lr is not None:
             for g in self.optimizer.param_groups:
                 g['lr'] = self.args.new_lr
-        if self.args.milestone_lr is not None:
-            self.milestone = model_utils.get_lr_scheduler('MultiStepLR')(
-                                        optimizer=self.optimizer,
-                                        milestones=self.args.milestone_lr,
-                                        gamma=self.args.milestone_gamma,
-                                        last_epoch=self.args.lr_scheduler_last_epoch,
-                                        )
-        else:
-            self.milestone = None
         if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
             if self.args.lr_scheduler_criteria == 'acc':
@@ -263,28 +227,9 @@ class Experiment:
                                         patience=self.args.lr_scheduler_patience,
                                         cooldown=self.args.lr_cooldown,
                                         verbose=True
-                                        ) 
-        elif self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
-            logging.info(f'Initialising {self.lr_scheduler_name}')
-            self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                                        optimizer=self.optimizer, 
-                                        T_0=self.args.lr_scheduler_T_0,
-                                        eta_min=self.args.lr_min,
-                                        )
-        elif self.lr_scheduler_name == 'OneCycleLR':
-            logging.info(f'Initialising {self.lr_scheduler_name}')
-            self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                                        optimizer=self.optimizer,
-                                        max_lr=self.learning_rate,
-                                        epochs=self.epochs,
-                                        steps_per_epoch=self.train_size // self.batch_size,
-                                        last_epoch=self.args.lr_scheduler_last_batch
                                         )
         else:
             self.lr_scheduler = None 
-        # NOTE/TODO: lr_scheduler.load_state_dict(checkpoint['scheduler'])
-        # https://github.com/KaiyangZhou/deep-person-reid/blob/master/torchreid/utils/torchtools.py#L104
-        # https://discuss.pytorch.org/t/how-to-save-and-load-lr-scheduler-stats-in-pytorch/20208/2
 
         if saved_stats is None:
             raise ValueError("load_checkpoint requires saved_stats!")
@@ -304,15 +249,6 @@ class Experiment:
     def _init_optimizer_and_stats(self): 
         logging.info("Initialising optimizer & stats...")
         self.optimizer = model_utils.get_optimizer(self.optimizer_name)(self.model.parameters(), lr=self.learning_rate)
-        if self.args.milestone_lr is not None:
-            self.milestone = model_utils.get_lr_scheduler('MultiStepLR')(
-                                        optimizer=self.optimizer,
-                                        milestones=self.args.milestone_lr,
-                                        gamma=self.args.milestone_gamma,
-                                        last_epoch=-1, # fresh experiment, so always start from the default -1
-                                        )
-        else:
-            self.milestone = None
         if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
             if self.args.lr_scheduler_criteria == 'acc':
@@ -328,22 +264,6 @@ class Experiment:
                                         patience=self.args.lr_scheduler_patience,
                                         cooldown=self.args.lr_cooldown,
                                         verbose=True
-                                        )
-        elif self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
-            logging.info(f'Initialising {self.lr_scheduler_name}')
-            self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                                        optimizer=self.optimizer, 
-                                        T_0=self.args.lr_scheduler_T_0,
-                                        eta_min=self.args.lr_min,
-                                        )
-        elif self.lr_scheduler_name == 'OneCycleLR':
-            logging.info(f'Initialising {self.lr_scheduler_name}')
-            self.lr_scheduler = model_utils.get_lr_scheduler(self.lr_scheduler_name)(
-                                        optimizer=self.optimizer,
-                                        max_lr=self.learning_rate,
-                                        epochs=self.epochs,
-                                        steps_per_epoch=self.train_size // self.batch_size,
-                                        last_epoch=self.args.lr_scheduler_last_batch
                                         )
         else:
             logging.info('Not using any LR Scheduler!')
@@ -363,31 +283,11 @@ class Experiment:
     def _init_fp_dataloaders(
         self,
         precomp_file_prefix: str,
-        onthefly: bool,
-        smi_to_fp_dict_filename: str,
-        fp_to_smi_dict_filename: str,
-        mol_fps_filename: str,
-        search_index_filename: str,
     ):
         logging.info("Initialising dataloaders...")
-        if "cos" in self.augmentations:
-            worker_init_fn = expt_utils._worker_init_fn_nmslib
-        else:
-            worker_init_fn = expt_utils._worker_init_fn_default
-
-        augmented_data = None
-        precomp_rxnfp_filenames = defaultdict(str)
-        if onthefly and args.do_pretrain:
-                augmented_data = dataset.AugmentedDataFingerprints(
-                    self.augmentations,
-                    smi_to_fp_dict_filename,
-                    fp_to_smi_dict_filename,
-                    mol_fps_filename,
-                    search_index_filename,
-                )
-        else: # precomputed rxn fp files (augmented data / retro proposals)
-            for phase in ["train", "valid", "test"]:
-                precomp_rxnfp_filenames[phase] = precomp_file_prefix + f"_{phase}.npz"
+        precomp_rxnfp_filenames = defaultdict(str) # precomputed rxn fp files (retro proposals)
+        for phase in ["train", "valid", "test"]:
+            precomp_rxnfp_filenames[phase] = precomp_file_prefix + f"_{phase}.npz"
 
         if self.args.rxn_type == "sep":
             input_dim = self.args.rctfp_size + self.args.prodfp_size
@@ -401,11 +301,6 @@ class Experiment:
         train_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
             precomp_rxnfp_filename=precomp_rxnfp_filenames["train"],
-            proposals_csv_filename=self.proposals_csv_filenames["train"],
-            rxn_smis_filename=self.rxn_smis_filenames["train"],
-            onthefly=onthefly,
-            augmented_data=augmented_data,
-            prob_filename=self.prob_filenames['train'],
             root=self.root
         )
         if self.gpu is not None: # train_sampler is needed in self.train_distributed() so we have to save it as an attribute
@@ -419,11 +314,7 @@ class Experiment:
         self.train_loader = DataLoader(
             train_dataset,
             self.batch_size,
-            num_workers=self.num_workers,
-            worker_init_fn=worker_init_fn,
             shuffle=True if self.train_sampler is None else False,
-            pin_memory=self.args.pin_memory,
-            drop_last=self.args.drop_last,
             sampler=self.train_sampler
         )
         self.train_size = len(train_dataset)
@@ -431,11 +322,6 @@ class Experiment:
         val_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
             precomp_rxnfp_filename=precomp_rxnfp_filenames["valid"],
-            proposals_csv_filename=self.proposals_csv_filenames["valid"],
-            rxn_smis_filename=self.rxn_smis_filenames["valid"],
-            onthefly=onthefly,
-            augmented_data=augmented_data,
-            prob_filename=self.prob_filenames['valid'],
             root=self.root
         )
         if self.gpu is not None:
@@ -449,11 +335,7 @@ class Experiment:
         self.val_loader = DataLoader(
             val_dataset,
             self.args.batch_size_eval,
-            num_workers=self.num_workers,
-            worker_init_fn=worker_init_fn,
             shuffle=False,
-            pin_memory=self.args.pin_memory,
-            drop_last=self.args.drop_last,
             sampler=self.val_sampler
         )
         self.val_size = len(val_dataset)
@@ -461,11 +343,6 @@ class Experiment:
         test_dataset = dataset.ReactionDatasetFingerprints(
             input_dim=input_dim,
             precomp_rxnfp_filename=precomp_rxnfp_filenames["test"],
-            proposals_csv_filename=self.proposals_csv_filenames["test"],
-            rxn_smis_filename=self.rxn_smis_filenames["test"],
-            onthefly=onthefly,
-            augmented_data=augmented_data,
-            prob_filename=self.prob_filenames['test'],
             root=self.root
         )
         if self.gpu is not None:
@@ -479,28 +356,19 @@ class Experiment:
         self.test_loader = DataLoader(
             test_dataset,
             self.args.batch_size_eval,
-            num_workers=self.num_workers,
-            worker_init_fn=worker_init_fn,
             shuffle=False,
-            pin_memory=self.args.pin_memory,
-            drop_last=self.args.drop_last,
             sampler=self.test_sampler
         )
         self.test_size = len(test_dataset)
         del train_dataset, val_dataset, test_dataset
 
-    def _get_smi_dl(self, phase: str, shuffle: bool = False):
-        rxn_smis_filename, proposals_csv_filename = None, None
-        
+    def _get_smi_dl(self, phase: str, shuffle: bool = False):        
         _data = dataset.ReactionDatasetSMILES(
             self.args,
             phase=phase,
             augmentations=self.augmentations,
-            # precomp_rxnsmi_filename=None, # TODO? add later if needed
-            rxn_smis_filename=self.rxn_smis_filenames[phase],
             proposals_csv_filename=self.proposals_csv_filenames[phase],
             onthefly=True,
-            prob_filename=self.prob_filenames[phase],
             root=self.root
         )
 
@@ -524,11 +392,8 @@ class Experiment:
         _loader = DataLoader(
             _data,
             batch_size=self.batch_size if phase == 'train' else self.args.batch_size_eval,
-            num_workers=self.num_workers,
             shuffle=shuffle,
-            pin_memory=self.args.pin_memory,
             collate_fn=collate_fn,
-            drop_last=self.args.drop_last,
             sampler=_sampler
         )
 
@@ -548,7 +413,7 @@ class Experiment:
 
     def _check_earlystop(self, current_epoch):
         if self.early_stop_criteria == 'loss': 
-            if self.min_val_loss - self.val_losses[-1] < self.early_stop_min_delta:
+            if self.min_val_loss - self.val_losses[-1] < 0
                 if self.early_stop_patience <= self.wait:
                     logging.info(
                         f"\nEarly stopped at the end of epoch: {current_epoch}, \
@@ -559,7 +424,7 @@ class Experiment:
                     self.to_break = 1  # will break loop
                 else:
                     self.wait += 1
-                    logging.info(f"\nDecrease in val loss < early stop min delta {self.early_stop_min_delta}, \
+                    logging.info(f"\nDecrease in val loss < 0, \
                                 patience count: {self.wait}")
             else:
                 self.wait = 0
@@ -569,7 +434,7 @@ class Experiment:
             k = int(self.early_stop_criteria.split('_')[0][-1:])
             val_acc_to_compare = self.val_topk_accs[k][-1] 
 
-            if self.max_val_acc - val_acc_to_compare > self.early_stop_min_delta:
+            if self.max_val_acc - val_acc_to_compare > 0:
                 if self.early_stop_patience <= self.wait:
                     message = f"\nEarly stopped at the end of epoch: {current_epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
@@ -587,7 +452,7 @@ class Experiment:
                 else:
                     self.wait += 1
                     logging.info(
-                        f'\nIncrease in top-{k} val acc < early stop min delta {self.early_stop_min_delta}, \
+                        f'\nIncrease in top-{k} val acc < 0, \
                         \npatience count: {self.wait} \
                         \n')
             else:
@@ -612,7 +477,7 @@ class Experiment:
         torch.save(self.stats, self.stats_filename)
 
     def _checkpoint_model_and_opt(self, current_epoch: int):
-        if self.dataparallel or self.gpu is not None:
+        if self.gpu is not None:
             model_state_dict = self.model.module.state_dict()
         else:
             model_state_dict = self.model.state_dict()
@@ -642,25 +507,8 @@ class Experiment:
         # replace all-zero vectors with float('inf'), making those gradients 0 on backprop
         energies = torch.where(mask, energies, torch.tensor([float('inf')], device=mask.device))
         if backprop:
-            # if loss_type == 'log':
             # for training only: positives are the 0-th index of each minibatch (row)
             loss = (energies[:, 0] + torch.logsumexp(-energies, dim=1)).sum()
-
-            # elif loss_type == 'hinge':
-            #     # two choices: 1, just choose most offending incorrect energy (using min I guess)
-            #     # 2, backprop energy diff of energies from all minibatch negatives (DOING NOW)
-            #     if len(margin) == 1: # no differential margin
-            #         diff = energies[:, 0].unsqueeze(-1) - energies[:, 1:] + margin[0]
-            #         loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
-            #     elif len(margin) == 2: # top-1 vs top-2+
-            #         diff_top1 = energies[:, 0].unsqueeze(-1) - energies[:, 1] + margin[0]
-            #         diff_top2 = energies[:, 0].unsqueeze(-1) - energies[:, 2:] + margin[1]
-            #         loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-            #         loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
-
-            # elif loss_type == 'ReLU':
-            #     loss = ReLU(energies[:, 0].unsqueeze(-1) - energies[:, 1:]).sum()
-
             self.optimizer.zero_grad()
             loss.backward()
             if self.args.grad_clip > 0:
@@ -700,13 +548,6 @@ class Experiment:
                 if self.model_name == 'TransformerEBM':
                     batch_data = (batch_data, 'train')
                 batch_mask = batch[1].cuda(non_blocking=True)
-                # if self.args.prob_file_prefix:
-                #     batch_probs = batch[3].cuda(non_blocking=True)
-                #     batch_loss, batch_energies = self._one_batch(
-                #         batch_data, batch_mask, batch_probs, backprop=True,
-                #         loss_type=self.args.loss_type, margin=self.args.loss_margin
-                #     )
-                # else:
                 batch_loss, batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=True,
                     loss_type=self.args.loss_type, margin=self.args.loss_margin
@@ -733,11 +574,6 @@ class Experiment:
                 dist.all_reduce(train_batch_size, dist.ReduceOp.SUM)
                 train_batch_size = train_batch_size.item()
                 epoch_train_size += train_batch_size
-
-                if self.lr_scheduler_name == 'CosineAnnealingWarmRestarts':
-                    self.lr_scheduler.step(epoch + i / self.train_size - self.args.lr_scheduler_epoch_offset)
-                elif self.lr_scheduler_name == 'OneCycleLR':
-                    self.lr_scheduler.step()
                     
                 for k in self.k_to_calc: # various top-k accuracies
                     # index with lowest energy is what the model deems to be the most feasible rxn 
@@ -786,13 +622,6 @@ class Experiment:
                     if self.model_name == 'TransformerEBM':
                         batch_data = (batch_data, 'valid')
                     batch_mask = batch[1].cuda(non_blocking=True)
-                    # if self.args.prob_file_prefix:
-                    #     batch_probs = batch[3].cuda(non_blocking=True)
-                    #     batch_energies = self._one_batch(
-                    #         batch_data, batch_mask, batch_probs, backprop=False,
-                    #         loss_type=self.args.loss_type, margin=self.args.loss_margin
-                    #     )
-                    # else:
                     batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False,
                         loss_type=self.args.loss_type, margin=self.args.loss_margin
@@ -804,136 +633,74 @@ class Experiment:
                     epoch_val_size += val_batch_size
 
                     # for validation/test data, true rxn may not be present!
-                    # only provide for finetuning step on retro proposals
-                    if self.args.do_finetune:
-                        batch_idx = batch[2] # List
-                        batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
-                        batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
-                        batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                        # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
-                        # (bcos nothing in the numerator, loss is undefined)
-                        # if self.args.loss_type == 'log':
-                        loss_numerator = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                            batch_true_ranks_valid
-                        ]
-                        loss_denominator = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                            :
-                        ]
-                        batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
+                    batch_idx = batch[2] # List
+                    batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
+                    batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
+                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
+                    # (bcos nothing in the numerator, loss is undefined)
+                    loss_numerator = batch_energies[
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                        batch_true_ranks_valid
+                    ]
+                    loss_denominator = batch_energies[
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                        :
+                    ]
+                    batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
 
-                        # elif self.args.loss_type in ['hinge', 'ReLU']:
-                        #     # a bit tricky as we need to 'delete' the column idxs corresponding to the positive energy in each row
-                        #     energies_pos = batch_energies[
-                        #         np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                        #         batch_true_ranks_valid
-                        #     ]
+                    for k in self.k_to_calc:
+                        # index with lowest energy is what the model deems to be the most feasible rxn
+                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
+                        batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
+                        dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+                        batch_correct_preds = batch_correct_preds.item()
 
-                        #     energies_valid = batch_energies[
-                        #         np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                        #         :
-                        #     ]
-                        #     columns = np.array(list(range(energies_valid.shape[1]))).reshape(-1, energies_valid.shape[1])
-                        #     mask = columns != batch_true_ranks_valid.reshape(-1, 1)
-                        #     energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
+                        val_correct_preds[k] += batch_correct_preds
+                        dist.barrier()
+                        if k == 1:
+                            running_top1_acc = val_correct_preds[k] / epoch_val_size
+                            if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                                try:
+                                    for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
+                                        if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
+                                            rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                            rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                            rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                            rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                            rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+                                            rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+                                            rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+                                            rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
 
-                        #     if self.args.loss_type == 'hinge':
-                        #         if len(self.args.loss_margin) == 1: # no differential margin
-                        #             diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
-                        #             batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
-                        #         elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                        #             diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
-                        #             diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
-                        #             batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                        #             batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
-                        #     else: # ReLU
-                        #         batch_loss = ReLU(energies_pos.unsqueeze(-1) - energies_neg).sum()
-
-                        for k in self.k_to_calc:
-                            # index with lowest energy is what the model deems to be the most feasible rxn
-                            batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
-                            batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
-                            batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
-                            dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
-                            batch_correct_preds = batch_correct_preds.item()
-
-                            val_correct_preds[k] += batch_correct_preds
+                                            rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
+                                            rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
+                                            rxn_cand_precs = self.proposals_data['valid'][batch_idx[rxn_idx], 3:]
+                                            rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                            rxn_orig_prec = rxn_cand_precs[0]
+                                            rxn_orig_prec2 = rxn_cand_precs[1]
+                                            rxn_orig_prec3 = rxn_cand_precs[2]
+                                            logging.info(f'\ntrue product:                          \t\t\t\t{rxn_true_prod}')
+                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+                                            if rxn_true_energy == 'NaN':
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
+                                            else:
+                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
+                                            break
+                                except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
+                                    tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                                    logging.info("".join(tb_str))
+                                    logging.info('\nIndex out of range (last minibatch)')
                             dist.barrier()
-                            if k == 1:
-                                running_top1_acc = val_correct_preds[k] / epoch_val_size
-                                if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                                    try:
-                                        for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                            if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
-                                                rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                                rxn_true_rank = batch_true_ranks_array[rxn_idx]
-                                                rxn_pred_rank = batch_preds[rxn_idx, 0].item()
-                                                rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
-                                                rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
-                                                rxn_orig_energy = batch_energies[rxn_idx, 0].item()
-                                                rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
-                                                rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
-
-                                                rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
-                                                rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
-                                                rxn_cand_precs = self.proposals_data['valid'][batch_idx[rxn_idx], 3:]
-                                                rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
-                                                rxn_orig_prec = rxn_cand_precs[0]
-                                                rxn_orig_prec2 = rxn_cand_precs[1]
-                                                rxn_orig_prec3 = rxn_cand_precs[2]
-                                                logging.info(f'\ntrue product:                          \t\t\t\t{rxn_true_prod}')
-                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
-                                                if rxn_true_energy == 'NaN':
-                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
-                                                else:
-                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
-                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
-                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
-                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
-                                                break
-                                    except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
-                                        tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                                        logging.info("".join(tb_str))
-                                        logging.info('\nIndex out of range (last minibatch)')
-                                dist.barrier()
-                            elif k == 5:
-                                running_top5_acc = val_correct_preds[k] / epoch_val_size
-                            elif k == 10:
-                                running_top10_acc = val_correct_preds[k] / epoch_val_size
-                    else:       # for pre-training step w/ synthetic data, 0-th index is the positive rxn
-                        # if self.args.loss_type == 'log':
-                        batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item()
-
-                        # elif self.args.loss_type == 'hinge':
-                        #     if len(self.args.loss_margin) == 1: # no differential margin
-                        #         diff = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:] + self.args.loss_margin[0]
-                        #         batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
-                        #     elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                        #         diff_top1 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1] + self.args.loss_margin[0]
-                        #         diff_top2 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 2:] + self.args.loss_margin[1]
-                        #         batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                        #         batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
-                        
-                        # elif self.args.loss_type == 'ReLU':
-                        #     batch_loss = ReLU(batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:]).sum()
-
-                        # calculate top-k acc assuming true index is 0 (for pre-training step)
-                        for k in self.k_to_calc:
-                            batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
-                            batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
-                            batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
-                            dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
-                            batch_correct_preds = batch_correct_preds.item()
-                            
-                            val_correct_preds[k] += batch_correct_preds
-                            dist.barrier()
-                            if k == 1:
-                                running_top1_acc = val_correct_preds[k] / epoch_val_size
-                            elif k == 5:
-                                running_top5_acc = val_correct_preds[k] / epoch_val_size
-                            elif k == 10:
-                                running_top10_acc = val_correct_preds[k] / epoch_val_size
+                        elif k == 5:
+                            running_top5_acc = val_correct_preds[k] / epoch_val_size
+                        elif k == 10:
+                            running_top10_acc = val_correct_preds[k] / epoch_val_size
+                   
                     if 5 not in self.k_to_calc:
                         running_top5_acc = np.nan
                     if 10 not in self.k_to_calc:
@@ -991,9 +758,6 @@ class Experiment:
                     logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
             else:
                 logging.info(f'\nEpoch {epoch} out of warmup epochs: {self.args.warmup_epochs}')
-
-            if self.milestone is not None:
-                self.milestone.step(epoch)
             
             if 3 in self.train_topk_accs:
                 epoch_top3_train_acc = self.train_topk_accs[3][-1]
@@ -1013,12 +777,6 @@ class Experiment:
             else:
                 epoch_top10_train_acc = np.nan
                 epoch_top10_val_acc = np.nan
-            # if 20 in self.train_topk_accs:
-            #     epoch_top20_train_acc = self.train_topk_accs[20][-1]
-            #     epoch_top20_val_acc = self.val_topk_accs[20][-1]
-            # else:
-            #     epoch_top20_train_acc = np.nan
-            #     epoch_top20_val_acc = np.nan
             if self.rank == 0:
                 message = f"\nEnd of epoch: {epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
@@ -1035,8 +793,6 @@ class Experiment:
                 except Exception as e:
                     logging.info(e)
                     logging.info("Don't worry about this - just a small hack to send messages to Telegram")
-                # top-20 train acc: {epoch_top20_train_acc:.4f},
-                # , top-20 val acc: {epoch_top20_val_acc:.4f} 
                 if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
                     logging.info('Stopping training as learning rate has dropped below 1e-6')
                     break 
@@ -1076,13 +832,6 @@ class Experiment:
                 if self.model_name == 'TransformerEBM':
                     batch_data = (batch_data, 'test')
                 batch_mask = batch[1].cuda(non_blocking=True)
-                # if self.args.prob_file_prefix:
-                #     batch_probs = batch[3].cuda(non_blocking=True)
-                #     batch_energies = self._one_batch(
-                #         batch_data, batch_mask, batch_probs, backprop=False,
-                #         loss_type=self.args.loss_type, margin=self.args.loss_margin
-                #     )
-                # else:
                 batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=False,
                     loss_type=self.args.loss_type, margin=self.args.loss_margin
@@ -1094,136 +843,73 @@ class Experiment:
                 epoch_test_size += test_batch_size
 
                 # for validation/test data, true rxn may not be present!
-                # only provide for finetuning step on retro proposals
-                if self.args.do_finetune:
-                    batch_idx = batch[2]
-                    batch_true_ranks_array = self.proposals_data['test'][batch_idx, 2].astype('int')
-                    batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
-                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
-                    # (bcos nothing in the numerator, loss is undefined)
-                    # if self.args.loss_type == 'log':
-                    loss_numerator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                        batch_true_ranks_valid
-                    ]
-                    loss_denominator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                        :
-                    ]
-                    batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
-                        
-                    # elif self.args.loss_type in ['hinge', 'ReLU']:
-                    #     # a bit tricky as we need to 'delete' the column idxs corresponding to the positive energy in each row
-                    #     energies_pos = batch_energies[
-                    #         np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                    #         batch_true_ranks_valid
-                    #     ]
+                batch_idx = batch[2]
+                batch_true_ranks_array = self.proposals_data['test'][batch_idx, 2].astype('int')
+                batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
+                batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
+                # (bcos nothing in the numerator, loss is undefined)
+                loss_numerator = batch_energies[
+                    np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                    batch_true_ranks_valid
+                ]
+                loss_denominator = batch_energies[
+                    np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                    :
+                ]
+                batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
 
-                    #     energies_valid = batch_energies[
-                    #         np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                    #         :
-                    #     ]
-                    #     columns = np.array(list(range(energies_valid.shape[1]))).reshape(-1, energies_valid.shape[1])
-                    #     mask = columns != batch_true_ranks_valid.reshape(-1, 1)
-                    #     energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
+                for k in self.k_to_test:
+                    # index with lowest energy is what the model deems to be the most feasible rxn
+                    batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
+                    batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+                    batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
+                    dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+                    batch_correct_preds = batch_correct_preds.item()
 
-                    #     if self.args.loss_type == 'hinge':
-                    #         if len(self.args.loss_margin) == 1: # no differential margin
-                    #             diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
-                    #             batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
-                    #         elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                    #             diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
-                    #             diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
-                    #             batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                    #             batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
-                    #     else: # ReLU
-                    #         batch_loss = ReLU(energies_pos.unsqueeze(-1) - energies_neg).sum()
+                    test_correct_preds[k] += batch_correct_preds
+                    if k == 1:
+                        running_top1_acc = test_correct_preds[k] / epoch_test_size
+                        if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                            try:
+                                for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
+                                    if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
+                                        rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                        rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                        rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                        rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                        rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+                                        rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+                                        rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+                                        rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
 
-                    for k in self.k_to_test:
-                        # index with lowest energy is what the model deems to be the most feasible rxn
-                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
-                        batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
-                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
-                        dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
-                        batch_correct_preds = batch_correct_preds.item()
-
-                        test_correct_preds[k] += batch_correct_preds
-                        if k == 1:
-                            running_top1_acc = test_correct_preds[k] / epoch_test_size
-                            if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                                try:
-                                    for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                        if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
-                                            rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                            rxn_true_rank = batch_true_ranks_array[rxn_idx]
-                                            rxn_pred_rank = batch_preds[rxn_idx, 0].item()
-                                            rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
-                                            rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
-                                            rxn_orig_energy = batch_energies[rxn_idx, 0].item()
-                                            rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
-                                            rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
-
-                                            rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
-                                            rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
-                                            rxn_cand_precs = self.proposals_data['test'][batch_idx[rxn_idx], 3:]
-                                            rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
-                                            rxn_orig_prec = rxn_cand_precs[0]
-                                            rxn_orig_prec2 = rxn_cand_precs[1]
-                                            rxn_orig_prec3 = rxn_cand_precs[2]
-                                            logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
-                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
-                                            if rxn_true_energy == 'NaN':
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
-                                            else:
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
-                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
-                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
-                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
-                                            break
-                                except Exception as e:
-                                    tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                                    logging.info("".join(tb_str))
-                                    logging.info('\nIndex out of range (last minibatch)')
-                        elif k == 5:
-                            running_top5_acc = test_correct_preds[k] / epoch_test_size
-                        elif k == 10:
-                            running_top10_acc = test_correct_preds[k] / epoch_test_size
-                        dist.barrier()
-                else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
-                    # if self.args.loss_type == 'log':
-                    batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item() 
-
-                    # elif self.args.loss_type == 'hinge':
-                    #     if len(self.args.loss_margin) == 1: # no differential margin
-                    #         diff = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:] + self.args.loss_margin[0]
-                    #         batch_loss = torch.where((diff>0), diff, torch.tensor([0.], device=diff.device)).sum()
-                    #     elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                    #         diff_top1 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1] + self.args.loss_margin[0]
-                    #         diff_top2 = batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 2:] + self.args.loss_margin[1]
-                    #         batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                    #         batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
-
-                    # elif self.args.loss_type == 'ReLU':
-                    #     batch_loss = ReLU(batch_energies[:, 0].unsqueeze(-1) - batch_energies[:, 1:]).sum()
-
-                    # calculate top-k acc assuming true index is 0 (for pre-training step)
-                    for k in self.k_to_test:
-                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
-                        batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
-                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
-                        dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
-                        batch_correct_preds = batch_correct_preds.item()
-                        
-                        test_correct_preds[k] += batch_correct_preds
-
-                        if k == 1:
-                            running_top1_acc = test_correct_preds[k] / epoch_test_size
-                        elif k == 5:
-                            running_top5_acc = test_correct_preds[k] / epoch_test_size
-                        elif k == 10:
-                            running_top10_acc = test_correct_preds[k] / epoch_test_size
-                        dist.barrier()
+                                        rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
+                                        rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
+                                        rxn_cand_precs = self.proposals_data['test'][batch_idx[rxn_idx], 3:]
+                                        rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                        rxn_orig_prec = rxn_cand_precs[0]
+                                        rxn_orig_prec2 = rxn_cand_precs[1]
+                                        rxn_orig_prec3 = rxn_cand_precs[2]
+                                        logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                        logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+                                        if rxn_true_energy == 'NaN':
+                                            logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
+                                        else:
+                                            logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                        logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                        logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                        logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
+                                        break
+                            except Exception as e:
+                                tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                                logging.info("".join(tb_str))
+                                logging.info('\nIndex out of range (last minibatch)')
+                    elif k == 5:
+                        running_top5_acc = test_correct_preds[k] / epoch_test_size
+                    elif k == 10:
+                        running_top10_acc = test_correct_preds[k] / epoch_test_size
+                    dist.barrier()
+               
                 if 5 not in self.k_to_calc:
                     running_top5_acc = np.nan
                 if 10 not in self.k_to_calc:
@@ -1252,15 +938,6 @@ class Experiment:
             except Exception as e:
                 pass
 
-    def get_energies_and_loss_distributed(
-        self,
-        phase: str = "test",
-        save_energies: Optional[bool] = True,
-        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
-        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
-    ) -> Tuple[Tensor, float]:
-        raise NotImplementedError('Please reload the best checkpoint and run expt.get_energies_and_loss() on a single GPU')
-
     def get_energies_and_loss(
         self,
         phase: str = "test",
@@ -1270,26 +947,6 @@ class Experiment:
     ) -> Tuple[Tensor, float]:
         """
         Gets raw energy values from a trained model on a given dataloader
-
-        Parameters
-        ----------
-        phase : str (Default = 'test') [train', 'test', 'valid']
-            whether to get energies from train/test/val phases
-        save_energies : Optional[bool] (Default = True)
-            whether to save the energy values to disk
-        name_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
-            name of the energy file to be saved
-            if None, defaults to f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
-        path_to_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
-            path to folder in which to save the energy outputs
-            if None, defaults to path/to/rxnebm/energies 
-
-        Returns
-        -------
-        energies : Tensor
-            energies of shape (# rxns, 1 + # neg rxns)
-        loss : float
-            the loss value on the provided dataset
         """
         if phase == "test":
             dataloader = self.test_loader
@@ -1300,7 +957,6 @@ class Experiment:
 
         self.model.eval()
         with torch.no_grad():
-            # for training, we know positive rxn is always the 0th-index, even during finetuning
             if self.args.do_finetune and phase != 'train':
                 energies_combined, true_ranks = [], []
                 loss, epoch_data_size = 0, 0
@@ -1323,36 +979,12 @@ class Experiment:
                     batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator)
-                    # if self.args.loss_type == 'log':
                     loss_numerator = batch_energies[
                         np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
                         batch_true_ranks_valid
                     ]
                     loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], :]
                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
-                    
-                    # elif self.args.loss_type == 'hinge':
-                    #     energies_pos = batch_energies[
-                    #         np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                    #         batch_true_ranks_valid
-                    #     ]
-
-                    #     energies_valid = batch_energies[
-                    #         np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                    #         :
-                    #     ]
-                    #     columns = np.array(list(range(energies_valid.shape[1]))).reshape(-1, energies_valid.shape[1])
-                    #     mask = columns != batch_true_ranks_valid.reshape(-1, 1)
-                    #     energies_neg = energies_valid[torch.tensor(mask)].reshape(-1, energies_valid.shape[1]-1)
-
-                    #     if len(self.args.loss_margin) == 1: # no differential margin
-                    #         diff = energies_pos.unsqueeze(-1) - energies_neg + self.args.loss_margin[0]
-                    #     elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                    #         diff_top1 = energies_pos.unsqueeze(-1) - energies_neg[:, 0] + self.args.loss_margin[0]
-                    #         diff_top2 = energies_pos.unsqueeze(-1) - energies_neg[:, 1:] + self.args.loss_margin[1]
-                    #         batch_loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                    #         batch_loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
-                    
                     loss += batch_loss
 
                     energies_combined.append(batch_energies) 
@@ -1361,7 +993,7 @@ class Experiment:
                 loss /= epoch_data_size
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
                 true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).cpu()
-            else: # pre-training
+            else: # training data
                 energies_combined = []
                 epoch_data_size = 0
                 for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
@@ -1379,18 +1011,7 @@ class Experiment:
                     epoch_data_size += energies.shape[0]
 
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
-
-                # if self.args.loss_type == 'log':
                 loss = (energies_combined[:, 0] + torch.logsumexp(-1 * energies_combined, dim=1)).sum().item()
-
-                # elif self.args.loss_type == 'hinge':
-                #     if len(self.args.loss_margin) == 1: # no differential margin
-                #         diff = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 1:] + self.args.loss_margin[0]
-                #     elif len(self.args.loss_margin) == 2: # top-1 vs top-2+
-                #         diff_top1 = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 1] + self.args.loss_margin[0]
-                #         diff_top2 = energies_combined[:, 0].unsqueeze(-1) - energies_combined[:, 2:] + self.args.loss_margin[1]
-                #         loss = torch.where((diff_top1>0), diff_top1, torch.tensor([0.], device=diff_top1.device)).sum()
-                #         loss += torch.where((diff_top2>0), diff_top2, torch.tensor([0.], device=diff_top2.device)).sum()
                 loss /= epoch_data_size
             logging.info(f"\nLoss on {phase} : {loss:.4f}")
 
