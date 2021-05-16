@@ -366,7 +366,6 @@ class Experiment:
         _data = dataset.ReactionDatasetSMILES(
             self.args,
             phase=phase,
-            augmentations=self.augmentations,
             proposals_csv_filename=self.proposals_csv_filenames[phase],
             onthefly=True,
             root=self.root
@@ -413,7 +412,7 @@ class Experiment:
 
     def _check_earlystop(self, current_epoch):
         if self.early_stop_criteria == 'loss': 
-            if self.min_val_loss - self.val_losses[-1] < 0
+            if self.min_val_loss - self.val_losses[-1] < 0:
                 if self.early_stop_patience <= self.wait:
                     logging.info(
                         f"\nEarly stopped at the end of epoch: {current_epoch}, \

@@ -603,10 +603,7 @@ class G2E(nn.Module):
         self.args = args
         self.mol_pool_type = args.mol_pool_type
 
-        if torch.cuda.is_available() and self.args.dataparallel:
-            self.num_devices = torch.cuda.device_count()
-        else:
-            self.num_devices = 1
+        self.num_devices = 1
         
         if isinstance(args.encoder_hidden_size, list):
             assert len(args.encoder_hidden_size) == 1, 'MPN encoder_hidden_size must be a single integer!'
@@ -758,10 +755,7 @@ class G2ECross(nn.Module):
         self.args = args
         self.mol_pool_type = args.mol_pool_type
 
-        if torch.cuda.is_available() and self.args.dataparallel:
-            self.num_devices = torch.cuda.device_count()
-        else:
-            self.num_devices = 1
+        self.num_devices = 1
 
         self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
@@ -871,10 +865,7 @@ class G2E_projBoth(nn.Module):
         self.args = args
         self.mol_pool_type = args.mol_pool_type
 
-        if torch.cuda.is_available() and self.args.dataparallel:
-            self.num_devices = torch.cuda.device_count()
-        else:
-            self.num_devices = 1
+        self.num_devices = 1
 
         self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
@@ -1007,10 +998,7 @@ class G2E_projBoth_FFout(nn.Module):
         self.args = args
         self.mol_pool_type = args.mol_pool_type
 
-        if torch.cuda.is_available() and self.args.dataparallel:
-            self.num_devices = torch.cuda.device_count()
-        else:
-            self.num_devices = 1
+        self.num_devices = 1
 
         self.encoder = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,
@@ -1172,10 +1160,7 @@ class G2E_sep_projBoth_FFout(nn.Module):
         self.args = args
         self.mol_pool_type = args.mol_pool_type
 
-        if torch.cuda.is_available() and self.args.dataparallel:
-            self.num_devices = torch.cuda.device_count()
-        else:
-            self.num_devices = 1
+        self.num_devices = 1
 
         self.encoder_p = GraphFeatEncoder(n_atom_feat=sum(ATOM_FDIM),
                                         n_bond_feat=BOND_FDIM,

@@ -376,7 +376,6 @@ class Experiment:
         _data = dataset.ReactionDatasetSMILES(
             self.args,
             phase=phase,
-            augmentations=self.augmentations,
             proposals_csv_filename=self.proposals_csv_filenames[phase],
             onthefly=True,
             root=self.root

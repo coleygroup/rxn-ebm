@@ -252,12 +252,10 @@ class ReactionDatasetSMILES(Dataset):
                 logging.info("Pre-computing graphs and features")
                 start = time.time()
 
-                if self.args.do_pretrain:
-                    helper = get_features_per_graph_helper
-                elif self.args.do_finetune:
+                if self.args.do_finetune:
                     helper = get_features_per_graph_helper_finetune
                 else:
-                    raise ValueError("Either --do_pretrain or --do_finetune must be supplied!")
+                    raise ValueError("Only --do_finetune is supported!")
 
                 self.p = Pool(len(os.sched_getaffinity(0)))
                 _features_and_lengths = self.p.map(helper, enumerate(self._rxn_smiles_with_negatives))
