@@ -90,8 +90,6 @@ class ReactionDatasetFingerprints(Dataset):
         root: Optional[Union[str, bytes, os.PathLike]] = None
     ):
         self.input_dim = input_dim # needed to reshape row vector in self.__getitem__()
-        self.onthefly = False  # needed by worker_init_fn
-
         if root is None:
             root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
         else:
@@ -132,69 +130,58 @@ class ReactionDatasetSMILES(Dataset):
         args,
         phase: str,
         proposals_csv_filename: Optional[str] = None,
-        onthefly: bool = False,
         root: Optional[Union[str, bytes, os.PathLike]] = None
     ):
         model_utils.seed_everything(args.random_seed)
-
         self.args = args
         self.phase = phase
         if root:
             self.root = Path(root)
         else:
             self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
-
         self.rxn_smis_filename = proposals_csv_filename
-
         self.p = None # Pool for multiprocessing
 
-        if onthefly:
-            if args.do_finetune:
-                logging.info(f"Converting {self.rxn_smis_filename} into json (list of list)")
-                self.all_smiles = []
-                if self.phase == 'train':
-                    with open(self.root / self.rxn_smis_filename, "r") as csv_file:
-                        csv_reader = csv.DictReader(csv_file)
-                        for i, row in enumerate(tqdm(csv_reader)):
-                            p_smi = row["prod_smi"]
-                            r_smi_true = row["true_precursors"]
-                            smiles = [f"{r_smi_true}>>{p_smi}"]
-                            for j in range(1, self.args.minibatch_size): # go through columns for proposed precursors
-                                cand = row[f"neg_precursor_{j}"]
-                                if cand == r_smi_true:
-                                    continue
-                                if cand.isnumeric() and int(cand) == 9999: # actly can break the loop (but need change if else flow)
-                                    continue
-                                smiles.append(f"{cand}>>{p_smi}")
+        logging.info(f"Converting {self.rxn_smis_filename} into json (list of list)")
+        self.all_smiles = []
+        if self.phase == 'train':
+            with open(self.root / self.rxn_smis_filename, "r") as csv_file:
+                csv_reader = csv.DictReader(csv_file)
+                for i, row in enumerate(tqdm(csv_reader)):
+                    p_smi = row["prod_smi"]
+                    r_smi_true = row["true_precursors"]
+                    smiles = [f"{r_smi_true}>>{p_smi}"]
+                    for j in range(1, self.args.minibatch_size): # go through columns for proposed precursors
+                        cand = row[f"neg_precursor_{j}"]
+                        if cand == r_smi_true:
+                            continue
+                        if cand.isnumeric() and int(cand) == 9999: # actly can break the loop (but need change if else flow)
+                            continue
+                        smiles.append(f"{cand}>>{p_smi}")
 
-                            self.all_smiles.append(smiles)
-                else:
-                    with open(self.root / self.rxn_smis_filename, "r") as csv_file:
-                        csv_reader = csv.DictReader(csv_file)
-                        for i, row in enumerate(tqdm(csv_reader)):
-                            p_smi = row["prod_smi"]
-                            smiles = []
-                            for j in range(1, self.args.minibatch_eval + 1): # go through columns for proposed precursors
-                                cand = row[f"cand_precursor_{j}"]
-                                if cand.isnumeric() and int(cand) == 9999: # actly can break the loop (but need change if else flow) # cand.isnumeric() and 
-                                    continue
-                                smiles.append(f"{cand}>>{p_smi}")
-                            self.all_smiles.append(smiles)
-            else:
-                raise ValueError('only --do_finetune is supported')
-
-            self._rxn_smiles_with_negatives = []
-            self._masks = []
-            self.minibatch_mol_indexes = []
-            self.a_scopes, self.a_scopes_indexes = [], []
-            self.b_scopes, self.b_scopes_indexes = [], []
-            self.a_features, self.a_features_indexes = [], []
-            self.b_features, self.b_features_indexes = [], []
-            self.a_graphs, self.b_graphs = [], []
-            self.precompute()
-
+                    self.all_smiles.append(smiles)
         else:
-            raise NotImplementedError
+            with open(self.root / self.rxn_smis_filename, "r") as csv_file:
+                csv_reader = csv.DictReader(csv_file)
+                for i, row in enumerate(tqdm(csv_reader)):
+                    p_smi = row["prod_smi"]
+                    smiles = []
+                    for j in range(1, self.args.minibatch_eval + 1): # go through columns for proposed precursors
+                        cand = row[f"cand_precursor_{j}"]
+                        if cand.isnumeric() and int(cand) == 9999: # actly can break the loop (but need change if else flow) # cand.isnumeric() and 
+                            continue
+                        smiles.append(f"{cand}>>{p_smi}")
+                    self.all_smiles.append(smiles)
+
+        self._rxn_smiles_with_negatives = []
+        self._masks = []
+        self.minibatch_mol_indexes = []
+        self.a_scopes, self.a_scopes_indexes = [], []
+        self.b_scopes, self.b_scopes_indexes = [], []
+        self.a_features, self.a_features_indexes = [], []
+        self.b_features, self.b_features_indexes = [], []
+        self.a_graphs, self.b_graphs = [], []
+        self.precompute()
 
     def get_smiles_and_masks(self):
         if self.args.do_finetune:
@@ -309,7 +296,7 @@ class ReactionDatasetSMILES(Dataset):
 
                 self.p.shutdown(wait=True)          # equivalent to p.close() then p.join()
         else:
-            # for transformer, preprocessing is light so we do onthefly
+            # for transformer, preprocessing is light so we generate on the fly
             logging.info(f"No graph features required, computing negatives from scratch")
             self.get_smiles_and_masks()
 

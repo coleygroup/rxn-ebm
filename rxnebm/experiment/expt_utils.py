@@ -19,9 +19,9 @@ from rxnebm.model import FF, G2E, S2E, model_utils
 def setup_paths(
     load_trained: Optional[bool] = False,
     date_trained: Optional[str] = None,
-    root: Optional[Union[str, bytes, os.PathLike]] = None,
+    ckpt_root: Optional[Union[str, bytes, os.PathLike]] = None,
 ) -> Union[str, bytes, os.PathLike]:
-    """ TODO: return #scores_folder #cleaned_data_folder #raw_data_folder
+    """
     Parameters
     ----------
     root : Union[str, bytes, os.PathLike] (Default = None)
@@ -34,11 +34,11 @@ def setup_paths(
     else:
         date_trained = date.today().strftime("%d_%m_%Y")
 
-    if root is None:
-        root = Path(__file__).resolve().parents[1] / "checkpoints"
+    if ckpt_root is None:
+        ckpt_root = Path(__file__).resolve().parents[1] / "checkpoints"
     else:
-        root = Path(root)
-    checkpoint_folder = root / date_trained
+        ckpt_root = Path(ckpt_root)
+    checkpoint_folder = ckpt_root / date_trained
     os.makedirs(checkpoint_folder, exist_ok=True)
     print(f"created checkpoint_folder: {checkpoint_folder}")
     return checkpoint_folder

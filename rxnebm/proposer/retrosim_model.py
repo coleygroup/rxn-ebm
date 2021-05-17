@@ -1,3 +1,4 @@
+import contextlib
 import os
 import pickle
 import sys
@@ -6,24 +7,22 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
+import joblib
 import numpy as np
 import pandas as pd
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
 from joblib import Parallel, delayed
-from rdkit import DataStructs
-from tqdm import tqdm
-
 from rdchiral.main import rdchiralReactants, rdchiralReaction, rdchiralRun
+from rdkit import DataStructs
 from rxnebm.proposer.Retrosim_modified.retrosim.data.get_data import (
     get_data_df, split_data_df)
 from rxnebm.proposer.Retrosim_modified.retrosim.utils.draw import (
     ReactionStringToImage, TransformStringToImage)
 from rxnebm.proposer.Retrosim_modified.retrosim.utils.generate_retro_templates import \
     process_an_example
+from tqdm import tqdm
 
-import joblib
-import contextlib
 @contextlib.contextmanager
 def tqdm_joblib(tqdm_object):
     # https://stackoverflow.com/questions/24983493/tracking-progress-of-joblib-parallel-execution

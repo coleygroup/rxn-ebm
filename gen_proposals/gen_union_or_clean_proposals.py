@@ -1,32 +1,29 @@
-import csv
-import pickle 
-import sys
-import logging 
 import argparse
+import csv
+import logging
+import multiprocessing
 import os
+import pickle
+import sys
 from collections import Counter
 from datetime import datetime
-
 from pathlib import Path
 from typing import Dict, List, Optional, Union
+
 import pandas as pd
-from tqdm import tqdm
-
-from joblib import Parallel, delayed
-import multiprocessing
-
-from rdkit import RDLogger
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
+from joblib import Parallel, delayed
+from rdkit import RDLogger
+from tqdm import tqdm
 
-from utils import tqdm_joblib 
+from utils import tqdm_joblib
 
 def merge_proposers(
         proposers : List[str],
         proposed_smi_file_prefixes : List[str],
         topks : List[int],
         maxks : List[int],
-        input_mode : str = 'csv',
         phases: Optional[List[str]] = ['train', 'valid', 'test'],
         rxnsmi_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped_canon',
         input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -38,37 +35,43 @@ def merge_proposers(
         logging.info(f'Processing {phase} of {phases}')
 
         proposals_phase_dict, topk_dict, maxk_dict = {}, {}, {}
-        if input_mode == 'pickle':
-            for proposer, file_prefix, topk, maxk in zip(
-                proposers, proposed_smi_file_prefixes, topks, maxks
-                ):
-                if proposer == 'retrosim': # not split into phases
-                    with open(input_folder / f'{file_prefix}.pickle', 'rb') as handle:
-                        proposals_phase_dict[proposer] = pickle.load(handle)
-                else:
-                    with open(input_folder / f'{file_prefix}_{phase}.pickle', 'rb') as handle:
-                        proposals_phase_dict[proposer] = pickle.load(handle)
-                topk_dict[proposer] = topk
-                maxk_dict[proposer] = maxk
+        for proposer, file_prefix, topk, maxk in zip(
+            proposers, proposed_smi_file_prefixes, topks, maxks
+            ):
+            with open(input_folder / f'{file_prefix}_{phase}.csv', 'r') as csv_file:
+                csv_reader = csv.DictReader(csv_file)
+                csv_length = 0
+                for row in csv_reader:
+                    csv_length += 1
 
-        elif input_mode == 'csv':
-            for proposer, file_prefix, topk, maxk in zip(
-                proposers, proposed_smi_file_prefixes, topks, maxks
-                ):
-                with open(input_folder / f'{file_prefix}_{phase}.csv', 'r') as csv_file:
-                    csv_reader = csv.DictReader(csv_file)
-                    csv_length = 0
-                    for row in csv_reader:
-                        csv_length += 1
+            with open(input_folder / f'{file_prefix}_{phase}.csv', 'r') as csv_file:
+                csv_reader = csv.DictReader(csv_file)
+                # need to build dictionary: {prod_smi: proposals}
+                proposals_phase_dict[proposer] = {}
+                prefix = 'neg_precursor' if phase == 'train' else 'cand_precursor'
+                phase_topk = topk if phase == 'train' else maxk
 
-                with open(input_folder / f'{file_prefix}_{phase}.csv', 'r') as csv_file:
-                    csv_reader = csv.DictReader(csv_file)
-                    # need to build dictionary: {prod_smi: proposals}
-                    proposals_phase_dict[proposer] = {}
-                    prefix = 'neg_precursor' if phase == 'train' else 'cand_precursor'
-                    phase_topk = topk if phase == 'train' else maxk
-
-                    def cano_prec_helper(row, phase_topk, prefix):
+                def cano_prec_helper(row, phase_topk, prefix):
+                    rxn_prod_smi = row['prod_smi']
+                    rxn_prod_smi = Chem.MolToSmiles(Chem.MolFromSmiles(rxn_prod_smi), True)
+                    rxn_precs = []
+                    dup_count = 0
+                    for i in range(1, phase_topk + 1):
+                        prec = row[f'{prefix}_{i}']
+                        if str(prec) == '9999':
+                            break
+                        else:
+                            # double canonicalize just in case
+                            prec = Chem.MolToSmiles(Chem.MolFromSmiles(prec), True)
+                            prec = Chem.MolToSmiles(Chem.MolFromSmiles(prec), True)
+                            if prec not in rxn_precs:
+                                rxn_precs.append(prec)
+                            else:
+                                dup_count += 1
+                    return rxn_prod_smi, rxn_precs, dup_count
+                
+                if len(proposers) > 1: # means union
+                    for row in tqdm(csv_reader, desc=f'Reading {proposer} csv', total=csv_length):
                         rxn_prod_smi = row['prod_smi']
                         rxn_prod_smi = Chem.MolToSmiles(Chem.MolFromSmiles(rxn_prod_smi), True)
                         rxn_precs = []
@@ -77,49 +80,29 @@ def merge_proposers(
                             prec = row[f'{prefix}_{i}']
                             if str(prec) == '9999':
                                 break
-                            else:
-                                # double canonicalize just in case
-                                prec = Chem.MolToSmiles(Chem.MolFromSmiles(prec), True)
-                                prec = Chem.MolToSmiles(Chem.MolFromSmiles(prec), True)
+                            else: # assume individual CSV files have already been canonicalized
                                 if prec not in rxn_precs:
                                     rxn_precs.append(prec)
                                 else:
                                     dup_count += 1
-                        return rxn_prod_smi, rxn_precs, dup_count
-                    
-                    if len(proposers) > 1: # means union
-                        for row in tqdm(csv_reader, desc=f'Reading {proposer} csv', total=csv_length):
-                            rxn_prod_smi = row['prod_smi']
-                            rxn_prod_smi = Chem.MolToSmiles(Chem.MolFromSmiles(rxn_prod_smi), True)
-                            rxn_precs = []
-                            dup_count = 0
-                            for i in range(1, phase_topk + 1):
-                                prec = row[f'{prefix}_{i}']
-                                if str(prec) == '9999':
-                                    break
-                                else: # assume individual CSV files have already been canonicalized
-                                    if prec not in rxn_precs:
-                                        rxn_precs.append(prec)
-                                    else:
-                                        dup_count += 1
-                            proposals_phase_dict[proposer][rxn_prod_smi] = rxn_precs
+                        proposals_phase_dict[proposer][rxn_prod_smi] = rxn_precs
 
-                    else: # means just 1, doing cleaning
-                        num_cores = len(os.sched_getaffinity(0))
-                        logging.info(f'Parallelizing over {num_cores} cores')
-                        with tqdm_joblib(tqdm(desc=f'Reading {proposer} csv', total=csv_length)) as progress_bar:
-                            results = Parallel(n_jobs=num_cores)(
-                                            delayed(cano_prec_helper)(row, phase_topk, prefix) 
-                                                for row in csv_reader
-                                        )
-                            all_rxn_prod_smi, all_rxn_precs, dup_count = map(list, zip(*results))
-                            dup_count = sum(dup_count) / csv_length
-                            for i, rxn_prod_smi in enumerate(all_rxn_prod_smi):
-                                proposals_phase_dict[proposer][rxn_prod_smi] = all_rxn_precs[i]
-                    
-                topk_dict[proposer] = topk
-                maxk_dict[proposer] = maxk
-                logging.info(f'Avg # dups per product within {proposer}: {dup_count}')
+                else: # means just 1, doing cleaning
+                    num_cores = len(os.sched_getaffinity(0))
+                    logging.info(f'Parallelizing over {num_cores} cores')
+                    with tqdm_joblib(tqdm(desc=f'Reading {proposer} csv', total=csv_length)) as progress_bar:
+                        results = Parallel(n_jobs=num_cores)(
+                                        delayed(cano_prec_helper)(row, phase_topk, prefix) 
+                                            for row in csv_reader
+                                    )
+                        all_rxn_prod_smi, all_rxn_precs, dup_count = map(list, zip(*results))
+                        dup_count = sum(dup_count) / csv_length
+                        for i, rxn_prod_smi in enumerate(all_rxn_prod_smi):
+                            proposals_phase_dict[proposer][rxn_prod_smi] = all_rxn_precs[i]
+                
+            topk_dict[proposer] = topk
+            maxk_dict[proposer] = maxk
+            logging.info(f'Avg # dups per product within {proposer}: {dup_count}')
 
         with open(input_folder / f'{rxnsmi_file_prefix}_{phase}.pickle', 'rb') as handle:
             clean_rxnsmi_phase = pickle.load(handle)
@@ -155,52 +138,24 @@ def merge_proposers(
 
             # process proposals
             precs_this_rxn, precs_this_rxn_withdups = [], []
-            if input_mode == 'pickle':
-                for proposer in proposers:
-                    if proposer == 'GLN':
-                        curr_precs = proposals_phase_dict[proposer][prod_smi_map]['reactants']
-                    elif proposer == 'MT':
-                        results = proposals_phase_dict[proposer][prod_smi_map]
-                        curr_precs = []
-                        for pred in results[::-1]: # need to reverse
-                            precs, scores = pred
-                            precs = '.'.join(precs)
-                            curr_precs.append(precs)
-                    elif proposer == 'retrosim':
-                        curr_precs = proposals_phase_dict[proposer][prod_smi_nomap]
+            for proposer in proposers:
+                if proposer in ['GLN', 'retrosim', 'retroxpert', 'union']:
+                    curr_precs = proposals_phase_dict[proposer][prod_smi_nomap]
+                elif proposer == 'MT':
+                    raise NotImplementedError
 
-                    # remove duplicate predictions
-                    seen = [] # sadly have to use List instd of Set to preserve order (i.e. rank of proposal)
-                    for prec in curr_precs:
-                        if prec not in seen and prec not in precs_this_rxn:
-                            seen.append(prec)
-                        else:
-                            dup_count += 1 / len(clean_rxnsmi_phase)
+                # remove duplicate predictions
+                seen = [] # sadly have to use List instd of Set to preserve order (i.e. rank of proposal)
+                for prec in curr_precs:
+                    if prec not in seen and prec not in precs_this_rxn:
+                        seen.append(prec)
+                    else:
+                        dup_count += 1 / len(clean_rxnsmi_phase)
 
-                    seen = seen[:phase_topk_dict[proposer]]
+                seen = seen[:phase_topk_dict[proposer]]
 
-                    precs_this_rxn.extend(seen)
-                    precs_this_rxn_withdups.extend(curr_precs)
-
-            elif input_mode == 'csv':
-                for proposer in proposers:
-                    if proposer in ['GLN', 'retrosim', 'retroxpert', 'union']:
-                        curr_precs = proposals_phase_dict[proposer][prod_smi_nomap]
-                    elif proposer == 'MT':
-                        raise NotImplementedError
-
-                    # remove duplicate predictions
-                    seen = [] # sadly have to use List instd of Set to preserve order (i.e. rank of proposal)
-                    for prec in curr_precs:
-                        if prec not in seen and prec not in precs_this_rxn:
-                            seen.append(prec)
-                        else:
-                            dup_count += 1 / len(clean_rxnsmi_phase)
-
-                    seen = seen[:phase_topk_dict[proposer]]
-
-                    precs_this_rxn.extend(seen)
-                    precs_this_rxn_withdups.extend(curr_precs)
+                precs_this_rxn.extend(seen)
+                precs_this_rxn_withdups.extend(curr_precs)
 
             if len(precs_this_rxn) < phase_topk_sum:
                 precs_this_rxn.extend(['9999'] * (phase_topk_sum - len(precs_this_rxn)))
@@ -374,61 +329,29 @@ def analyse_proposed(
                                         Union[Dict, List] # depends on proposer
                                     ]
                                 ],
-        input_mode: str = 'csv'
     ): 
     proposed_counter = Counter()
     total_proposed, min_proposed, max_proposed = 0, float('+inf'), float('-inf')
     key_count = 0
-    if input_mode == 'pickle':
-        for prod_smi_nomap, prod_smi_map in zip(prod_smiles_phase, prod_smiles_mapped_phase):
-            precursors_count = 0
-            for proposer, proposals in proposals_phase_dict.items():
-                if proposer == 'GLN':
-                    curr_precs = proposals[prod_smi_map]['reactants']  
-                    precursors_count += len(curr_precs)
-                elif proposer == 'MT':
-                    results = proposals[prod_smi_map]
-                    curr_precs = []
-                    for pred in results[::-1]: # need to reverse
-                        precs, scores = pred
-                        precs = '.'.join(precs)
-                        curr_precs.append(precs)
-                    precursors_count += len(curr_precs)
-                elif proposer == 'retrosim':
-                    curr_precs = proposals[prod_smi_nomap]
-                    precursors_count += len(curr_precs)
+    for prod_smi_nomap, prod_smi_map in zip(prod_smiles_phase, prod_smiles_mapped_phase):
+        precursors_count = 0
+        for proposer, proposals in proposals_phase_dict.items():
+            if proposer == 'GLN' or proposer == 'retrosim' or proposer == 'retroxpert':
+                curr_precs = proposals[prod_smi_nomap]
+                precursors_count += len(curr_precs)
+            elif proposer == 'MT':
+                raise NotImplementedError
 
-            total_proposed += precursors_count
-            if precursors_count > max_proposed:
-                max_proposed = precursors_count
-                prod_smi_max = prod_smi_nomap
-            if precursors_count < min_proposed:
-                min_proposed = precursors_count
-                prod_smi_min = prod_smi_nomap
+        total_proposed += precursors_count
+        if precursors_count > max_proposed:
+            max_proposed = precursors_count
+            prod_smi_max = prod_smi_nomap
+        if precursors_count < min_proposed:
+            min_proposed = precursors_count
+            prod_smi_min = prod_smi_nomap
 
-            proposed_counter[prod_smi_nomap] = precursors_count
-            key_count += 1
-    
-    elif input_mode == 'csv':
-        for prod_smi_nomap, prod_smi_map in zip(prod_smiles_phase, prod_smiles_mapped_phase):
-            precursors_count = 0
-            for proposer, proposals in proposals_phase_dict.items():
-                if proposer == 'GLN' or proposer == 'retrosim' or proposer == 'retroxpert':
-                    curr_precs = proposals[prod_smi_nomap]
-                    precursors_count += len(curr_precs)
-                elif proposer == 'MT':
-                    raise NotImplementedError
-
-            total_proposed += precursors_count
-            if precursors_count > max_proposed:
-                max_proposed = precursors_count
-                prod_smi_max = prod_smi_nomap
-            if precursors_count < min_proposed:
-                min_proposed = precursors_count
-                prod_smi_min = prod_smi_nomap
-
-            proposed_counter[prod_smi_nomap] = precursors_count
-            key_count += 1
+        proposed_counter[prod_smi_nomap] = precursors_count
+        key_count += 1
 
     logging.info(f'Average precursors proposed per prod_smi: {total_proposed / key_count}')
     logging.info(f'Min precursors: {min_proposed} for {prod_smi_min}')
@@ -456,17 +379,12 @@ def parse_args():
                         in same order as --proposers", 
                         type=str,
                         default="GLN_200topk_200maxk_noGT_19260817,retrosim_200topk_200maxk_noGT,retroxpert_200topk_200maxk_noGT_0")
-    parser.add_argument("--input_mode", help="input mode ['csv', 'pickle']", type=str, default='csv')
     parser.add_argument("--rxnsmi_file_prefix", help="file prefix of atom-mapped rxn smiles", type=str,
                         default="50k_clean_rxnsmi_noreagent_allmapped_canon")
     parser.add_argument("--output_folder", help="output folder", type=str)
     parser.add_argument("--output_file_prefix", help="output file prefix", type=str)
-    parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="LOCAL")
-
-    parser.add_argument("--train", help="Whether to compile train preds", action="store_true")
-    parser.add_argument("--valid", help="Whether to compile valid preds", action="store_true")
-    parser.add_argument("--test", help="Whether to compile test preds", action="store_true")
-
+    parser.add_argument("--phases", help="Phases to generate proposals or compile proposals for, default ['train', 'valid', 'test']", 
+                        type=str, nargs='+', default=['train', 'valid', 'test'])
     parser.add_argument("--proposers", 
                         help="List of proposers (comma separated) \
                         in same order as --proposed_smi_file_prefixes ['GLN', 'retrosim', 'retroxpert', 'neuralsym']", 
@@ -498,24 +416,9 @@ if __name__ == "__main__":
     else:
         input_folder = Path(args.input_folder)
     if args.output_folder is None:
-        if args.location == 'COLAB':
-            output_folder = Path('/content/gdrive/MyDrive/rxn_ebm/datasets/Retro_Reproduction/Union_proposals/')
-            os.makedirs(output_folder, exist_ok=True)
-        else:
-            output_folder = input_folder
+        output_folder = input_folder
     else:
         output_folder = Path(args.output_folder)
-
-    phases = []
-    if args.train:
-        logging.info('Appending train')
-        phases.append('train') 
-    if args.valid:
-        logging.info('Appending valid')
-        phases.append('valid')
-    if args.test:
-        logging.info('Appending test')
-        phases.append('test') 
 
     logging.info(args)
 
@@ -524,9 +427,8 @@ if __name__ == "__main__":
         proposed_smi_file_prefixes=args.proposed_smi_file_prefixes.split(','),
         topks=list(map(int, args.topks.split(','))),
         maxks=list(map(int, args.maxks.split(','))),
-        phases=phases,
+        phases=args.phases,
         input_folder=input_folder,
-        input_mode=args.input_mode,
         rxnsmi_file_prefix=args.rxnsmi_file_prefix,
         output_folder=output_folder,
         output_file_prefix=args.output_file_prefix,

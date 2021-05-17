@@ -38,7 +38,6 @@ class Experiment:
     ----------
     representation : str ['fingerprint', 'smiles']
         which representation to use. affects which version of AugmentedData & ReactionDataset gets called.
-        if not using 'fingerprint', cannot use Bit Augmentor. 
 
     load_checkpoint : Optional[bool] (Default = False)
         whether to load from a previous checkpoint.
@@ -51,8 +50,6 @@ class Experiment:
         model: nn.Module,
         model_name: str,
         model_args: dict,
-        augmentations: dict,
-        onthefly: Optional[bool] = False,
         debug: Optional[bool] = True,
         gpu: Optional[str] = None, # https://github.com/yangkky/distributed_tutorial/blob/master/ddp_tutorial.md
         root: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -85,7 +82,6 @@ class Experiment:
             self.wait = None
 
         self.checkpoint = args.checkpoint
-        self.checkpoint_every = args.checkpoint_every
         self.random_seed = args.random_seed
 
         if root:
@@ -97,10 +93,8 @@ class Experiment:
         self.checkpoint_folder = Path(self.args.checkpoint_folder)
 
         self.expt_name = args.expt_name
-        self.augmentations = augmentations
         self.representation = args.representation
         logging.info(f"\nInitialising experiment: {self.expt_name}")
-        logging.info(f"Augmentations: {self.augmentations}")
 
         if gpu is not None: # doing DistributedDataParallel training
             rank = args.nr * args.gpus + gpu
@@ -136,12 +130,10 @@ class Experiment:
                     self.proposals_data[phase] = self.proposals_data[phase].drop(['orig_rxn_smi'], axis=1).values
 
         if self.representation == 'fingerprint':
-            self._init_fp_dataloaders(
-                precomp_file_prefix=args.precomp_file_prefix,
-            )
+            self._init_fp_dataloaders(precomp_rxnfp_prefix=args.precomp_rxnfp_prefix)
             self.maxk = self.train_loader.dataset.data.shape[-1] // self.train_loader.dataset.input_dim
         elif self.representation == "smiles":
-            self._init_smi_dataloaders(onthefly=onthefly)
+            self._init_smi_dataloaders()
             self.maxk = len(self.train_loader.dataset._rxn_smiles_with_negatives[0])
         else:
             raise NotImplementedError('Please add self.maxk for the current representation; '
@@ -175,8 +167,7 @@ class Experiment:
         self.true_ranks = {} # for self.get_topk_acc (finetuning)
 
     def __repr__(self):
-        return f"Experiment name: {self.expt_name}, \
-                with augmentations: {self.augmentations}" 
+        return f"Experiment name: {self.expt_name}" 
 
     def _collate_args(self): 
         self.train_args = {
@@ -239,7 +230,6 @@ class Experiment:
         self.stats = {
             "train_args": self.train_args, # new, provided as args
             "model_args": self.model_args,
-            "augmentations": self.augmentations, # can be new or same, provided as args
             "train_time": 0, # reset to 0
         }
         if begin_epoch is None:
@@ -273,7 +263,6 @@ class Experiment:
         self.stats = {
             "train_args": self.train_args,
             "model_args": self.model_args,
-            "augmentations": self.augmentations,
             "train_time": 0,
         }
         self.stats_filename = (
@@ -282,12 +271,12 @@ class Experiment:
 
     def _init_fp_dataloaders(
         self,
-        precomp_file_prefix: str,
+        precomp_rxnfp_prefix: str,
     ):
         logging.info("Initialising dataloaders...")
         precomp_rxnfp_filenames = defaultdict(str) # precomputed rxn fp files (retro proposals)
         for phase in ["train", "valid", "test"]:
-            precomp_rxnfp_filenames[phase] = precomp_file_prefix + f"_{phase}.npz"
+            precomp_rxnfp_filenames[phase] = precomp_rxnfp_prefix + f"_{phase}.npz"
 
         if self.args.rxn_type == "sep":
             input_dim = self.args.rctfp_size + self.args.prodfp_size
@@ -367,7 +356,6 @@ class Experiment:
             self.args,
             phase=phase,
             proposals_csv_filename=self.proposals_csv_filenames[phase],
-            onthefly=True,
             root=self.root
         )
 
@@ -401,14 +389,11 @@ class Experiment:
 
         return _loader, _size, _sampler
 
-    def _init_smi_dataloaders(self, onthefly: bool):
+    def _init_smi_dataloaders(self):
         logging.info("Initialising SMILES dataloaders...")
-        if onthefly:
-            self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
-            self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
-            self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
-        else:
-            raise NotImplementedError('Only onthefly available for smi loader')
+        self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
+        self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
+        self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
 
     def _check_earlystop(self, current_epoch):
         if self.early_stop_criteria == 'loss': 
@@ -495,7 +480,6 @@ class Experiment:
 
     def _one_batch(
         self, batch: Tensor, mask: Tensor,
-        loss_type: str = 'log', margin: float = 1,
         probs: Optional[Tensor] = None, backprop: bool = True):
         """
         Passes one batch of samples through model to get energies & loss
@@ -536,11 +520,6 @@ class Experiment:
                 train_loader = self.train_loader
             dist.barrier()
             for i, batch in enumerate(train_loader):
-                if epoch < self.args.warmup_epochs:
-                    total_batches = self.train_size // self.args.batch_size // (self.args.gpus * self.args.nodes)
-                    lr = ((i / total_batches + epoch) / self.args.warmup_epochs) * self.args.learning_rate
-                    self.optimizer.param_groups[0]['lr'] = lr
-
                 batch_data = batch[0]
                 if not isinstance(batch_data, tuple):
                     batch_data = batch_data.cuda(non_blocking=True)
@@ -549,7 +528,6 @@ class Experiment:
                 batch_mask = batch[1].cuda(non_blocking=True)
                 batch_loss, batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=True,
-                    loss_type=self.args.loss_type, margin=self.args.loss_margin
                 )
                 batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
                 dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
@@ -623,7 +601,6 @@ class Experiment:
                     batch_mask = batch[1].cuda(non_blocking=True)
                     batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False,
-                        loss_type=self.args.loss_type, margin=self.args.loss_margin
                     )
                     val_batch_size = batch_energies.shape[0]
                     val_batch_size = torch.tensor([val_batch_size]).cuda(self.gpu, non_blocking=True)
@@ -734,10 +711,10 @@ class Experiment:
                     is_best = True
             
             if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
-                if self.rank == 0 and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                if self.rank == 0 and self.checkpoint and is_best:
                     self._checkpoint_model_and_opt(current_epoch=epoch)
             else: # for G2E/S2E, models are small, is ok to save regularly
-                if self.rank == 0 and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                if self.rank == 0 and self.checkpoint:  # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
                     self._checkpoint_model_and_opt(current_epoch=epoch)
 
             dist.barrier()
@@ -748,15 +725,12 @@ class Experiment:
                 if self.to_break:  # is it time to early stop?
                     break
             
-            if epoch >= self.args.warmup_epochs:
-                if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
-                    if self.args.lr_scheduler_criteria == 'loss':
-                        self.lr_scheduler.step(self.val_losses[-1])
-                    elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
-                        self.lr_scheduler.step(self.val_topk_accs[1][-1])
-                    logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
-            else:
-                logging.info(f'\nEpoch {epoch} out of warmup epochs: {self.args.warmup_epochs}')
+            if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
+                if self.args.lr_scheduler_criteria == 'loss':
+                    self.lr_scheduler.step(self.val_losses[-1])
+                elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
+                    self.lr_scheduler.step(self.val_topk_accs[1][-1])
+                logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
             
             if 3 in self.train_topk_accs:
                 epoch_top3_train_acc = self.train_topk_accs[3][-1]
@@ -833,7 +807,6 @@ class Experiment:
                 batch_mask = batch[1].cuda(non_blocking=True)
                 batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=False,
-                    loss_type=self.args.loss_type, margin=self.args.loss_margin
                 )
                 test_batch_size = batch_energies.shape[0]
                 test_batch_size = torch.tensor([test_batch_size]).cuda(self.gpu, non_blocking=True)
@@ -968,7 +941,6 @@ class Experiment:
                     batch_mask = batch[1].to(self.device)
                     batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False,
-                        loss_type=self.args.loss_type, margin=self.args.loss_margin
                     ) 
 
                     epoch_data_size += batch_energies.shape[0]

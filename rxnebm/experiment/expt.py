@@ -1,26 +1,25 @@
 import argparse
 import logging
 import math
-import traceback
 import os
 import random
 import time
-from functools import partial
+import traceback
 from collections import defaultdict
+from functools import partial
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union, List
+from typing import Dict, List, Optional, Tuple, Union
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import torch
-import torch.nn as nn
 import torch.distributed as dist
-from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm 
-
+import torch.nn as nn
 from rxnebm.data import dataset, dataset_utils
 from rxnebm.experiment import expt_utils
 from rxnebm.model import model_utils
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 Tensor = torch.Tensor
 try:
@@ -34,13 +33,10 @@ ReLU = nn.ReLU()
 
 class Experiment:
     """
-    TODO: wandb/tensorboard for hyperparameter tuning
-
     Parameters
     ----------
     representation : str ['fingerprint', 'smiles']
         which representation to use. affects which version of AugmentedData & ReactionDataset gets called.
-        if not using 'fingerprint', cannot use Bit Augmentor. 
 
     load_checkpoint : Optional[bool] (Default = False)
         whether to load from a previous checkpoint.
@@ -53,8 +49,6 @@ class Experiment:
         model: nn.Module,
         model_name: str,
         model_args: dict,
-        augmentations: dict,
-        onthefly: Optional[bool] = False,
         debug: Optional[bool] = True, 
         gpu: Optional[str] = None,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
@@ -87,7 +81,6 @@ class Experiment:
             self.wait = None
 
         self.checkpoint = args.checkpoint
-        self.checkpoint_every = args.checkpoint_every
         self.random_seed = args.random_seed
 
         if root:
@@ -99,12 +92,8 @@ class Experiment:
         self.checkpoint_folder = Path(self.args.checkpoint_folder)
 
         self.expt_name = args.expt_name
-        self.augmentations = augmentations
         self.representation = args.representation
-        if self.representation != 'fingerprint' and 'bit' in augmentations:
-            raise RuntimeError('Bit Augmentor is only compatible with fingerprint representation!')
         logging.info(f"\nInitialising experiment: {self.expt_name}")
-        logging.info(f"Augmentations: {self.augmentations}")
 
         if gpu is not None: # doing DistributedDataParallel training
             rank = args.nr * args.gpus + gpu
@@ -145,7 +134,7 @@ class Experiment:
             )
             self.maxk = self.train_loader.dataset.data.shape[-1] // self.train_loader.dataset.input_dim
         elif self.representation == "smiles":
-            self._init_smi_dataloaders(onthefly=onthefly)
+            self._init_smi_dataloaders()
             self.maxk = len(self.train_loader.dataset._rxn_smiles_with_negatives[0])
         else:
             raise NotImplementedError('Please add self.maxk for the current representation; '
@@ -179,8 +168,7 @@ class Experiment:
         self.true_ranks = {} # for self.get_topk_acc (finetuning)
 
     def __repr__(self):
-        return f"Experiment name: {self.expt_name}, \
-                with augmentations: {self.augmentations}" 
+        return f"Experiment name: {self.expt_name}"
 
     def _collate_args(self):
         self.train_args = {
@@ -246,7 +234,6 @@ class Experiment:
         self.stats = {
             "train_args": self.train_args, # new, provided as args
             "model_args": self.model_args,
-            "augmentations": self.augmentations, # can be new or same, provided as args
             "train_time": 0, # reset to 0
         }
         if begin_epoch is None:
@@ -283,7 +270,6 @@ class Experiment:
         self.stats = {
             "train_args": self.train_args,
             "model_args": self.model_args,
-            "augmentations": self.augmentations,
             "train_time": 0,
         }
         self.stats_filename = (
@@ -377,7 +363,6 @@ class Experiment:
             self.args,
             phase=phase,
             proposals_csv_filename=self.proposals_csv_filenames[phase],
-            onthefly=True,
             root=self.root
         )
 
@@ -411,14 +396,11 @@ class Experiment:
 
         return _loader, _size, _sampler
 
-    def _init_smi_dataloaders(self, onthefly: bool):
+    def _init_smi_dataloaders(self):
         logging.info("Initialising SMILES dataloaders...")
-        if onthefly:
-            self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
-            self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
-            self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
-        else:
-            raise NotImplementedError('Only onthefly available for smi loader')
+        self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
+        self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
+        self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
 
     def _check_earlystop(self, current_epoch):
         if self.early_stop_criteria == 'loss': 
@@ -505,7 +487,6 @@ class Experiment:
 
     def _one_batch(
         self, batch: Tensor, mask: Tensor,
-        loss_type: str = 'log', margin: List[float] = [1],
         probs: Optional[Tensor] = None, backprop: bool = True):
         """
         Passes one batch of samples through model to get energies & loss
@@ -540,11 +521,6 @@ class Experiment:
             epoch_train_size = 0
             train_loader = tqdm(self.train_loader, desc='training...')
             for i, batch in enumerate(train_loader):
-                if epoch < self.args.warmup_epochs:
-                    total_batches = self.train_size // self.args.batch_size
-                    lr = ((i / total_batches + epoch) / self.args.warmup_epochs) * self.args.learning_rate
-                    self.optimizer.param_groups[0]['lr'] = lr
-
                 batch_data = batch[0]
                 if not isinstance(batch_data, tuple):
                     batch_data = batch_data.to(self.device)
@@ -553,7 +529,6 @@ class Experiment:
                 batch_mask = batch[1].to(self.device)
                 batch_loss, batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=True,
-                    loss_type=self.args.loss_type, margin=self.args.loss_margin
                 )
                 train_loss += batch_loss
                 train_batch_size = batch_energies.shape[0]
@@ -671,7 +646,6 @@ class Experiment:
                             elif k == 10:
                                 running_top10_acc = val_correct_preds[k] / epoch_val_size
                     else:       # for pre-training step w/ synthetic data, 0-th index is the positive rxn
-                        # if self.args.loss_type == 'log':
                         batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item()
                         # calculate top-k acc assuming true index is 0 (for pre-training step)
                         for k in self.k_to_calc:
@@ -712,10 +686,10 @@ class Experiment:
                     is_best = True
             
             if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
-                if (self.rank is None or self.rank == 0) and self.checkpoint and is_best: # and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                if (self.rank is None or self.rank == 0) and self.checkpoint and is_best:
                     self._checkpoint_model_and_opt(current_epoch=epoch)
             else: # for G2E/S2E, models are small, is ok to save regularly
-                if (self.rank is None or self.rank == 0) and self.checkpoint and (epoch - self.begin_epoch) % self.checkpoint_every == 0:
+                if (self.rank is None or self.rank == 0) and self.checkpoint:
                     self._checkpoint_model_and_opt(current_epoch=epoch)
 
             self._update_stats()
@@ -724,15 +698,12 @@ class Experiment:
                 if self.to_break:  # is it time to early stop?
                     break
 
-            if epoch >= self.args.warmup_epochs:
-                if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
-                    if self.args.lr_scheduler_criteria == 'loss':
-                        self.lr_scheduler.step(self.val_losses[-1])
-                    elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
-                        self.lr_scheduler.step(self.val_topk_accs[1][-1])
-                    logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
-            else:
-                logging.info(f'\nEpoch {epoch} out of warmup epochs: {self.args.warmup_epochs}')
+            if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
+                if self.args.lr_scheduler_criteria == 'loss':
+                    self.lr_scheduler.step(self.val_losses[-1])
+                elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
+                    self.lr_scheduler.step(self.val_topk_accs[1][-1])
+                logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
 
             if 3 in self.train_topk_accs:
                 epoch_top3_train_acc = self.train_topk_accs[3][-1]
@@ -799,7 +770,6 @@ class Experiment:
                 batch_mask = batch[1].to(self.device)
                 batch_energies = self._one_batch(
                     batch_data, batch_mask, backprop=False,
-                    loss_type=self.args.loss_type, margin=self.args.loss_margin
                 )
                 test_batch_size = batch_energies.shape[0]
                 epoch_test_size += test_batch_size
@@ -957,7 +927,6 @@ class Experiment:
                     batch_mask = batch[1].to(self.device)
                     batch_energies = self._one_batch(
                         batch_data, batch_mask, backprop=False,
-                        loss_type=self.args.loss_type, margin=self.args.loss_margin
                     ) 
 
                     epoch_data_size += batch_energies.shape[0]

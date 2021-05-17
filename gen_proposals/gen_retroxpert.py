@@ -1,39 +1,33 @@
-# import pickle
-import csv
-import sys
-import logging
 import argparse
+import csv
+import logging
+import multiprocessing
 import os
-from datetime import datetime
+import sys
 from collections import Counter
-
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union
+
 import pandas as pd
+import rdkit.Chem as Chem
+from joblib import Parallel, delayed
+from rdkit import RDLogger
 from tqdm import tqdm
 
-from joblib import Parallel, delayed
-import multiprocessing
+from utils import tqdm_joblib, without_rdkit_log
 
-from rdkit import RDLogger
-import rdkit.Chem as Chem
-
-from utils import without_rdkit_log, tqdm_joblib
 
 def parse_args():
     parser = argparse.ArgumentParser("gen_retroxpert.py")
-    parser.add_argument('-f') # filler for COLAB
     parser.add_argument("--log_file", help="log_file", type=str, default="gen_retroxpert")
     parser.add_argument("--data_folder", help="data folder", type=str)
     parser.add_argument("--input_csv_prefix", help="file prefix of CSV file from retroxpert", type=str,
                         default="retroxpert_raw_200topk_200maxk_200beam")
     parser.add_argument("--output_csv_prefix", help="file prefix of CSV file from retroxpert", type=str,
                         default="retroxpert_200topk_200maxk_200beam")
-
     parser.add_argument("--phases", help="Phases to process", 
                         type=str, nargs='+', default=['train', 'valid', 'test'])
-
-    parser.add_argument("--beam_size", help="Beam size", type=int, default=200)
     parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=200)
     parser.add_argument("--maxk", help="How many top-k proposals to generate and put in valid/test (not guaranteed)", type=int, default=200)
     return parser.parse_args()
@@ -165,13 +159,9 @@ def process_test_helper(row, phase_topk):
     this_row.extend(seen)
     return this_row, true_rank, dup_count
 
-# TODO: incorporate model scores
-# if canonical_prediction_{j} is '', then skip that corresponding index in the scores np array (no significance)
-# save as tuple
 def process_csv(
     topk: int = 50,
     maxk: int = 200,
-    beam_size: int = 200,
     input_csv_prefix: str = 'retroxpert_raw_200topk_200maxk_200beam',
     output_csv_prefix: str = 'retroxpert_200topk_200maxk_200beam',
     phases: Optional[List[str]] = ['train', 'valid', 'test'],
@@ -305,7 +295,6 @@ if __name__ == '__main__':
     process_csv(
         topk=args.topk, 
         maxk=args.maxk,
-        beam_size=args.beam_size,
         phases=args.phases,
         data_folder=args.data_folder,
         input_csv_prefix=args.input_csv_prefix,

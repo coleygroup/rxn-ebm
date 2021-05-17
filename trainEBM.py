@@ -1,21 +1,24 @@
 import argparse
+import gc
 import logging
-import traceback
 import os
-import sys
 import random
+import sys
+import traceback
+
 import torch
-import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
-import gc
+import torch.nn as nn
+
 gc.enable() 
 
+from datetime import date, datetime
 from functools import partial
-from datetime import datetime, date
-from rdkit import RDLogger
-from typing import Optional, Dict, List, Union
 from pathlib import Path
+from typing import Dict, List, Optional, Union
+
+from rdkit import RDLogger
 
 from rxnebm.data import dataset
 from rxnebm.experiment import expt, expt_dist, expt_utils
@@ -35,12 +38,12 @@ def parse_args():
     parser = argparse.ArgumentParser("trainEBM.py")
     # mode & metadata
     parser.add_argument("--model_name", help="model name", type=str, default="FeedforwardEBM")
-    parser.add_argument("--do_not_train", help="do not do any training? (to just test/get energies)", action="store_true")
+    parser.add_argument("--do_not_train", help="do not do any training (to generate graphfeat or just do testing/generate energies)", action="store_true")
     parser.add_argument("--do_finetune", help="whether to finetune (vs. pretrain)", action="store_true")
     parser.add_argument("--do_test", help="whether to test after training", action="store_true")
     parser.add_argument("--do_get_energies_and_acc", help="whether to test after training", action="store_true")
     parser.add_argument("--do_compute_graph_feat", help="whether to compute graph features", action="store_true")
-    parser.add_argument("--onthefly", help="whether to do on-the-fly computation", action="store_true")
+    parser.add_argument("--onthefly", help="whether to do on-the-fly computation (DEPRECATED, REMOVE)", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
     parser.add_argument("--test_on_train", help="whether to evaluate on the training data", action="store_true")
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default=date.today().strftime("%d_%m_%Y"))
@@ -62,10 +65,10 @@ def parse_args():
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--proposals_csv_file_prefix",
-                        help="do not change (CSV file containing proposals from retro models)", type=str)
+                        help="prefix of CSV file containing proposals from retro model", type=str)
     parser.add_argument("--vocab_file", help="vocab file for Transformer encoder", type=str, default=None)
-    parser.add_argument("--precomp_file_prefix",
-                        help="precomputed augmentation file prefix, expt.py will append f'_{phase}.npz' to the end",
+    parser.add_argument("--precomp_rxnfp_prefix",
+                        help="prefix of precomputed reaction fingerprints file",
                         type=str)
     parser.add_argument("--cache_suffix",
                         help="additional suffix for G2E cache files",
@@ -77,9 +80,6 @@ def parse_args():
     parser.add_argument("--difffp_size", help="product fp size", type=int, default=16384)
     parser.add_argument("--rxn_type", help="aggregation type", type=str, default="hybrid_all")
     # training params
-    parser.add_argument("--loss_type", help="type of EBM loss ['log', 'hinge', 'ReLU']", type=str, default="log")
-    parser.add_argument("--loss_margin", help="margin for hinge loss, provide multiple values for differential margin [top-2,top-3_to_5,top-5_to_10]etc.", 
-                        type=float, nargs='+', default=[1])
     parser.add_argument("--batch_size", help="batch_size", type=int, default=128)
     parser.add_argument("--batch_size_eval", help="batch_size", type=int, default=128)
     parser.add_argument("--grad_clip", help="gradient clipping, 0 means no clipping", type=float, default=0)
@@ -92,17 +92,15 @@ def parse_args():
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
     parser.add_argument("--weight_decay", help="weight decay", type=float, default=0)
-    parser.add_argument("--warmup_epochs", help="Num epochs to warm up LR (currently linearly) to given LR", 
-                        type=int, default=0)
     parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < --lr_floor", 
-                        action="store_true", default=False)
+                        action="store_true")
     parser.add_argument("--lr_floor", help="LR below which training will stop", type=float, default=1e-8)
     parser.add_argument("--new_lr", help="new learning rate after reloading checkpoint", 
                         type=float)
-    parser.add_argument("--lr_cooldown", help="epochs to wait before resuming normal operation (ReduceLROnPlateau)",
+    parser.add_argument("--lr_cooldown", help="epochs to wait before resuming normal operation of ReduceLROnPlateau",
                         type=int, default=0)
     parser.add_argument("--lr_scheduler",
-                        help="learning rate schedule ['ReduceLROnPlateau', 'CosineAnnealingWarmRestarts', 'OneCycleLR']", 
+                        help="learning rate schedule ['ReduceLROnPlateau']", 
                         type=str, default="ReduceLROnPlateau")
     parser.add_argument("--lr_scheduler_criteria",
                         help="criteria to reduce LR (ReduceLROnPlateau) ['loss', 'acc']", 
@@ -120,7 +118,6 @@ def parse_args():
                         help="num. of epochs tolerated without improvement in criteria before early stop",
                         type=int, default=2)
     parser.add_argument("--checkpoint", help="whether to save model checkpoints", action="store_true")
-    parser.add_argument("--checkpoint_every", help="to save model weights every N epochs", type=int, default=1)
     parser.add_argument("--random_seed", help="random seed", type=int, default=0)
     # model params, G2E/FF/S2E args
     parser.add_argument("--encoder_hidden_size", help="MPN/FFN/Transformer encoder_hidden_size(s)", 
@@ -146,7 +143,7 @@ def parse_args():
     parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
     parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
     parser.add_argument("--attention_dropout", help="Attention dropout for Transformer", type=float, default=0.1)
-    parser.add_argument("--preembed_size", help="Preembedding layer hidden size(s)", type=int, nargs='+')
+    parser.add_argument("--preembed_size", help="Preembedding layer hidden size(s) (DEPRECATED, REMOVE)", type=int, nargs='+')
 
     return parser.parse_args()
 
@@ -167,8 +164,6 @@ def main_dist(
         model,
         model_name,
         model_args: dict,
-        augmentations: dict,
-        onthefly: Optional[bool] = False,
         debug: Optional[bool] = True,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
         load_checkpoint: Optional[bool] = False,
@@ -208,8 +203,6 @@ def main_dist(
         model=model,
         model_name=args.model_name,
         model_args=model_args,
-        augmentations=augmentations,
-        onthefly=args.onthefly,
         load_checkpoint=args.load_checkpoint,
         saved_optimizer=saved_optimizer,
         saved_stats=saved_stats,
@@ -244,20 +237,19 @@ def main(args):
     # hard-coded
     saved_model, saved_optimizer, saved_stats = None, None, None
     begin_epoch = 0
-    augmentations = {} # deprecated
     vocab = {}
     model_args = {}
     if isinstance(args.encoder_hidden_size, list) and args.model_name.split('_')[0] == 'GraphEBM':
         assert len(args.encoder_hidden_size) == 1, 'MPN encoder_hidden_size must be a single integer!'
         args.encoder_hidden_size = args.encoder_hidden_size[0]
 
-    args.checkpoint_folder = expt_utils.setup_paths(root=args.checkpoint_root)
+    args.checkpoint_folder = expt_utils.setup_paths(ckpt_root=args.checkpoint_root)
     if args.load_checkpoint:
         if not args.ddp:
             logging.info("Loading from checkpoint")
         old_checkpoint_folder = expt_utils.setup_paths( # checkpoint_root is usually None, unless you want to store checkpoints somewhere else
             # we DO require that checkpoints to be loaded are in the same root folder as checkpoints to be saved, for simplicity's sake
-            load_trained=True, date_trained=args.date_trained, root=args.checkpoint_root
+            load_trained=True, date_trained=args.date_trained, ckpt_root=args.checkpoint_root
         )
         saved_stats_filename = f'{args.model_name}_{args.old_expt_name}_stats.pkl'
         saved_model, saved_optimizer, saved_stats = expt_utils.load_model_opt_and_stats(
@@ -318,8 +310,6 @@ def main(args):
                 model,
                 args.model_name,
                 model_args,
-                augmentations,
-                args.onthefly,
                 True, # debug
                 args.root,
                 args.load_checkpoint,
@@ -344,8 +334,6 @@ def main(args):
             model=model,
             model_name=args.model_name,
             model_args=model_args,
-            augmentations=augmentations,
-            onthefly=args.onthefly,
             load_checkpoint=args.load_checkpoint,
             saved_optimizer=saved_optimizer,
             saved_stats=saved_stats,
@@ -360,7 +348,7 @@ def main(args):
             logging.info("Start finetuning")
             experiment.train()
 
-        if (args.do_get_energies_and_acc or args.do_test) and not args.testing_best_ckpt:
+        if not args.testing_best_ckpt and (args.do_get_energies_and_acc or args.do_test):
             # reload best checkpoint & use just 1 GPU to run
             args.ddp = False
             if args.old_expt_name is None: # user did not provide, means we are training from scratch, not loading a checkpoint
@@ -373,35 +361,36 @@ def main(args):
             logging.info(f'Reloading expt: {args.expt_name}')
             main(args) # reload
 
-        if args.testing_best_ckpt and args.do_test: # only do testing on best val top-1 ckpt
-            if not args.test_on_train:
-                del experiment.train_loader # free up memory
-                gc.collect()
-                torch.cuda.empty_cache()
-            logging.info("Start testing")
-            experiment.test()
+        else:
+            if args.testing_best_ckpt and args.do_test: # only do testing on best val top-1 ckpt
+                if not args.test_on_train:
+                    del experiment.train_loader # free up memory
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                logging.info("Start testing")
+                experiment.test()
 
-        if args.testing_best_ckpt and args.do_get_energies_and_acc:
-            phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
-            for phase in phases_to_eval:
-                experiment.get_energies_and_loss(phase=phase)
+            if args.testing_best_ckpt and args.do_get_energies_and_acc:
+                phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
+                for phase in phases_to_eval:
+                    experiment.get_energies_and_loss(phase=phase)
 
-            # just print accuracies to compare experiments
-            for phase in phases_to_eval:
-                logging.info(f"\nGetting {phase} accuracies")
-                message = f"{args.expt_name}\n"
-                for k in [1, 3, 5, 10, 20, 50]:
-                    message = experiment.get_topk_acc(phase=phase, k=k, message=message)
-                try:
-                    send_message(message)
-                except Exception as e:
-                    pass
+                # just print accuracies to compare experiments
+                for phase in phases_to_eval:
+                    logging.info(f"\nGetting {phase} accuracies")
+                    message = f"{args.expt_name}\n"
+                    for k in [1, 3, 5, 10, 20, 50]:
+                        message = experiment.get_topk_acc(phase=phase, k=k, message=message)
+                    try:
+                        send_message(message)
+                    except Exception as e:
+                        pass
 
-            # full accuracies
-            for phase in phases_to_eval:
-                logging.info(f"\nGetting {phase} accuracies")
-                for k in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200]:
-                    experiment.get_topk_acc(phase=phase, k=k)
+                # full accuracies
+                for phase in phases_to_eval:
+                    logging.info(f"\nGetting {phase} accuracies")
+                    for k in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200]:
+                        experiment.get_topk_acc(phase=phase, k=k)
 
 if __name__ == "__main__":
     args = parse_args()

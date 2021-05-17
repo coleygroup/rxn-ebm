@@ -1,19 +1,18 @@
-import pickle 
-import sys
-import logging 
 import argparse
+import logging
 import os
+import pickle
+import sys
 from collections import Counter
 from datetime import datetime
-
 from pathlib import Path
 from typing import Dict, List, Optional, Union
-import pandas as pd
-from tqdm import tqdm
 
-from rdkit import RDLogger
+import pandas as pd
 import rdkit.Chem as Chem
 import rdkit.Chem.AllChem as AllChem
+from rdkit import RDLogger
+from tqdm import tqdm
 
 sys.path.append('.') # to allow importing from rxnebm
 try: #placeholder to just process proposals locally on windows w/o installing gln
@@ -34,7 +33,7 @@ def merge_chunks(
     """ Helper func to combine separatedly computed chunks into a single chunk, for the specified phase
     """
     merged = {} 
-    logging.info(f'Merging start_idxs {start_idxs} and end_idxs {end_idxs}')
+    logging.info(f'Merging start_idxs {start_idxs} and end_idxs {end_idxs} of phase {phase}')
     for start_idx, end_idx in zip(start_idxs, end_idxs):
         with open(output_folder / f'GLN_proposed_smiles_{topk}topk_{maxk}maxk_{beam_size}beam_{phase}_start{start_idx}_end{end_idx}.pickle', 
         'rb') as handle:
@@ -78,8 +77,7 @@ def gen_proposals(
         prefix of the 3 pickle files containing the train/valid/test reaction SMILES strings
     output_folder : Optional[Union[str, bytes, os.PathLike]] (Default = None)
         path to the folder that will contain the output dicts containing GLN's proposals 
-        if None and if location is NOT 'COLAB', this defaults to the same folder as input_data_folder
-        otherwise (i.e. we are at 'COLAB'), it defaults to a hardcoded gdrive folder
+        if None, this defaults to the same folder as input_data_folder
     checkpoint_every : Optional[int] (Default = 4000)
         save checkpoint of proposed precursor smiles every N prod_smiles
     '''
@@ -371,22 +369,18 @@ def analyse_proposed(
     return 
 
 def parse_args():
-    parser = argparse.ArgumentParser("gen_gln.py")
-    parser.add_argument('-f') # filler for COLAB
-    
+    parser = argparse.ArgumentParser("gen_gln.py")    
     parser.add_argument("--log_file", help="log_file", type=str, default="gen_gln")
 
-    parser.add_argument("--model_path", help="model checkpoint folder", type=str)
+    parser.add_argument("--model_path", help="trained GLN model checkpoint folder", type=str)
     parser.add_argument("--input_folder", help="input folder", type=str)
     parser.add_argument("--input_file_prefix", help="input file prefix of atom-mapped rxn smiles", type=str,
                         default="50k_clean_rxnsmi_noreagent_allmapped_canon")
     parser.add_argument("--output_folder", help="output folder", type=str)
-    parser.add_argument("--location", help="location of script ['COLAB', 'LOCAL']", type=str, default="LOCAL")
 
     parser.add_argument("--propose", help='Whether to generate proposals (or just compile)', action="store_true")
-    parser.add_argument("--train", help="Whether to generate and/or compile train preds", action="store_true")
-    parser.add_argument("--valid", help="Whether to generate and/or compile valid preds", action="store_true")
-    parser.add_argument("--test", help="Whether to generate and/or compile test preds", action="store_true")
+    parser.add_argument("--phases", help="Phases to generate proposals or compile proposals for, default ['train', 'valid', 'test']", 
+                        type=str, nargs='+', default=['train', 'valid', 'test'])
     parser.add_argument("--start_idx", help="Start idx (train)", type=int, default=0)
     parser.add_argument("--end_idx", help="End idx (train)", type=int)
     parser.add_argument("--checkpoint_every", help="Save checkpoint of proposed smiles every N product smiles",
@@ -432,25 +426,10 @@ if __name__ == "__main__":
     else:
         input_folder = Path(args.input_folder)
     if args.output_folder is None:
-        if args.location == 'COLAB':
-            output_folder = Path('/content/gdrive/MyDrive/rxn_ebm/datasets/Retro_Reproduction/GLN_proposals/')
-            os.makedirs(output_folder, exist_ok=True)
-        else:
-            output_folder = input_folder
+        output_folder = input_folder
     else:
         output_folder = Path(args.output_folder)
         os.makedirs(output_folder, exist_ok=True)
-
-    phases = [] 
-    if args.train:
-        logging.info('Appending train')
-        phases.append('train') 
-    if args.valid:
-        logging.info('Appending valid')
-        phases.append('valid')
-    if args.test:
-        logging.info('Appending test')
-        phases.append('test') 
 
     logging.info(args)
 
@@ -459,7 +438,7 @@ if __name__ == "__main__":
             maxk=args.maxk,
             topk=args.topk,
             beam_size=args.beam_size,
-            phases=phases,
+            phases=args.phases,
             start_idx=args.start_idx,
             end_idx=args.end_idx, 
             input_folder=input_folder,
@@ -474,7 +453,7 @@ if __name__ == "__main__":
             topk=args.topk,
             maxk=args.maxk,
             beam_size=args.beam_size,
-            phase=args.phase_to_merge, 
+            phase=args.phase_to_merge,
             start_idxs=[int(num) if num != '' else None for num in args.chunk_start_idxs.split(',')], # [0, 12000, 15000, 30000] 
             end_idxs=[int(num) if num != '' else None for num in args.chunk_end_idxs.split(',')], # [12000, 15000, 30000, None], 
             output_folder=output_folder
@@ -485,7 +464,7 @@ if __name__ == "__main__":
             topk=args.topk,
             maxk=args.maxk,
             beam_size=args.beam_size,
-            phases=phases,
+            phases=args.phases,
             input_folder=input_folder,
             input_file_prefix=args.input_file_prefix,
             output_folder=output_folder
