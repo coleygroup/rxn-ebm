@@ -556,7 +556,7 @@ class Experiment:
                 batch_loss = batch_loss.item()
                 train_loss += batch_loss
 
-                if not self.args.torch_anomaly and math.isnan(train_loss): # only terminate if torch anomaly detection is off, otherwise let torch handle it
+                if math.isnan(train_loss): # only terminate if torch anomaly detection is off, otherwise let torch handle it
                     if self.rank == 0:
                         msg = 'Training loss is nan and training diverged! Reloading from best checkpoint w/ reduced LR'
                         logging.info(msg)
