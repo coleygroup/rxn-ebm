@@ -49,7 +49,6 @@ class Experiment:
         model: nn.Module,
         model_name: str,
         model_args: dict,
-        debug: Optional[bool] = True, 
         gpu: Optional[str] = None,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
         load_checkpoint: Optional[bool] = False,
@@ -59,7 +58,6 @@ class Experiment:
         vocab: Dict[str, int] = None,
     ):
         self.args = args
-        self.debug = debug
         self.batch_size = args.batch_size
         self.learning_rate = args.learning_rate
         self.epochs = args.epochs
@@ -121,12 +119,11 @@ class Experiment:
         self._collate_args()
         self.proposals_data = {}
         self.proposals_csv_filenames = defaultdict(str)
-        if self.args.do_finetune:
-            for phase in ['train', 'valid', 'test']:
-                self.proposals_csv_filenames[phase] = self.args.proposals_csv_file_prefix + f"_{phase}.csv"
-                if phase != 'train': # this is just for visualization purpose during val/test
-                    self.proposals_data[phase] = pd.read_csv(self.root / self.proposals_csv_filenames[phase], index_col=None, dtype='str')
-                    self.proposals_data[phase] = self.proposals_data[phase].drop(['orig_rxn_smi'], axis=1).values
+        for phase in ['train', 'valid', 'test']:
+            self.proposals_csv_filenames[phase] = self.args.proposals_csv_file_prefix + f"_{phase}.csv"
+            if phase != 'train': # this is just for visualization purpose during val/test
+                self.proposals_data[phase] = pd.read_csv(self.root / self.proposals_csv_filenames[phase], index_col=None, dtype='str')
+                self.proposals_data[phase] = self.proposals_data[phase].drop(['orig_rxn_smi'], axis=1).values
 
         if self.representation == 'fingerprint':
             self._init_fp_dataloaders(
@@ -581,84 +578,69 @@ class Experiment:
                     epoch_val_size += val_batch_size
 
                     # for validation/test data, true rxn may not be present!
-                    # only provide for finetuning step on retro proposals
-                    if self.args.do_finetune:
-                        batch_idx = batch[2] # List
-                        batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
-                        batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
-                        batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                        
-                        # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
-                        # (bcos nothing in the numerator, loss is undefined)
-                        loss_numerator = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                            batch_true_ranks_valid
-                        ]
-                        loss_denominator = batch_energies[
-                            np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                            :
-                        ]
-                        batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
-                        for k in self.k_to_calc:
-                            # index with lowest energy is what the model deems to be the most feasible rxn
-                            batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
-                            batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
-                            val_correct_preds[k] += batch_correct_preds
+                    batch_idx = batch[2] # List
+                    batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
+                    batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
+                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                    
+                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
+                    # (bcos nothing in the numerator, loss is undefined)
+                    loss_numerator = batch_energies[
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                        batch_true_ranks_valid
+                    ]
+                    loss_denominator = batch_energies[
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                        :
+                    ]
+                    batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
+                    for k in self.k_to_calc:
+                        # index with lowest energy is what the model deems to be the most feasible rxn
+                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
+                        batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+                        val_correct_preds[k] += batch_correct_preds
 
-                            if k == 1:
-                                running_top1_acc = val_correct_preds[k] / epoch_val_size
-                                if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                                    try:
-                                        for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                            if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
-                                                rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                                rxn_true_rank = batch_true_ranks_array[rxn_idx]
-                                                rxn_pred_rank = batch_preds[rxn_idx, 0].item()
-                                                rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
-                                                rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
-                                                rxn_orig_energy = batch_energies[rxn_idx, 0].item()
-                                                rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
-                                                rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
+                        if k == 1:
+                            running_top1_acc = val_correct_preds[k] / epoch_val_size
+                            # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                            try:
+                                for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
+                                    if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
+                                        rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                        rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                        rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                        rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                        rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+                                        rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+                                        rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+                                        rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
 
-                                                rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
-                                                rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
-                                                rxn_cand_precs = self.proposals_data['valid'][batch_idx[rxn_idx], 3:]
-                                                rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
-                                                rxn_orig_prec = rxn_cand_precs[0]
-                                                rxn_orig_prec2 = rxn_cand_precs[1]
-                                                rxn_orig_prec3 = rxn_cand_precs[2]
-                                                logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
-                                                logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
-                                                if rxn_true_energy == 'NaN':
-                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
-                                                else:
-                                                    logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
-                                                logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
-                                                logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
-                                                logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
-                                                break
-                                    except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
-                                        tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                                        logging.info("".join(tb_str))
-                                        logging.info('\nIndex out of range (last minibatch)')
-                            elif k == 5:
-                                running_top5_acc = val_correct_preds[k] / epoch_val_size
-                            elif k == 10:
-                                running_top10_acc = val_correct_preds[k] / epoch_val_size
-                    else:       # for pre-training step w/ synthetic data, 0-th index is the positive rxn
-                        batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item()
-                        # calculate top-k acc assuming true index is 0 (for pre-training step)
-                        for k in self.k_to_calc:
-                            batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
-                            batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
-                            val_correct_preds[k] += batch_correct_preds
-
-                            if k == 1:
-                                running_top1_acc = val_correct_preds[k] / epoch_val_size
-                            elif k == 5:
-                                running_top5_acc = val_correct_preds[k] / epoch_val_size
-                            elif k == 10:
-                                running_top10_acc = val_correct_preds[k] / epoch_val_size
+                                        rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
+                                        rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
+                                        rxn_cand_precs = self.proposals_data['valid'][batch_idx[rxn_idx], 3:]
+                                        rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                        rxn_orig_prec = rxn_cand_precs[0]
+                                        rxn_orig_prec2 = rxn_cand_precs[1]
+                                        rxn_orig_prec3 = rxn_cand_precs[2]
+                                        logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                        logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+                                        if rxn_true_energy == 'NaN':
+                                            logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
+                                        else:
+                                            logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                        logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                        logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                        logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
+                                        break
+                            except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
+                                tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                                logging.info("".join(tb_str))
+                                logging.info('\nIndex out of range (last minibatch)')
+                        elif k == 5:
+                            running_top5_acc = val_correct_preds[k] / epoch_val_size
+                        elif k == 10:
+                            running_top10_acc = val_correct_preds[k] / epoch_val_size
+                    
                     if 5 not in self.k_to_calc:
                         running_top5_acc = np.nan
                     if 10 not in self.k_to_calc:
@@ -775,84 +757,68 @@ class Experiment:
                 epoch_test_size += test_batch_size
 
                 # for validation/test data, true rxn may not be present!
-                # only provide for finetuning step on retro proposals
-                if self.args.do_finetune and self.debug:
-                    batch_idx = batch[2]
-                    batch_true_ranks_array = self.proposals_data['test'][batch_idx, 2].astype('int')
-                    batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
-                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
-                    # (bcos nothing in the numerator, loss is undefined)
-                    loss_numerator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                        batch_true_ranks_valid
-                    ]
-                    loss_denominator = batch_energies[
-                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
-                        :
-                    ]
-                    batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
-                    for k in self.k_to_test:
-                        # index with lowest energy is what the model deems to be the most feasible rxn
-                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
-                        batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
-                        test_correct_preds[k] += batch_correct_preds
+                batch_idx = batch[2]
+                batch_true_ranks_array = self.proposals_data['test'][batch_idx, 2].astype('int')
+                batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
+                batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
+                # (bcos nothing in the numerator, loss is undefined)
+                loss_numerator = batch_energies[
+                    np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                    batch_true_ranks_valid
+                ]
+                loss_denominator = batch_energies[
+                    np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                    :
+                ]
+                batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
+                for k in self.k_to_test:
+                    # index with lowest energy is what the model deems to be the most feasible rxn
+                    batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
+                    batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+                    test_correct_preds[k] += batch_correct_preds
 
-                        if k == 1:
-                            running_top1_acc = test_correct_preds[k] / epoch_test_size
-                            if self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
-                                try:
-                                    for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
-                                        if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
-                                            rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
-                                            rxn_true_rank = batch_true_ranks_array[rxn_idx]
-                                            rxn_pred_rank = batch_preds[rxn_idx, 0].item()
-                                            rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
-                                            rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
-                                            rxn_orig_energy = batch_energies[rxn_idx, 0].item()
-                                            rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
-                                            rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
+                    if k == 1:
+                        running_top1_acc = test_correct_preds[k] / epoch_test_size
+                        # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                        try:
+                            for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
+                                if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
+                                    rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                    rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                    rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                    rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                    rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+                                    rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+                                    rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+                                    rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
 
-                                            rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
-                                            rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
-                                            rxn_cand_precs = self.proposals_data['test'][batch_idx[rxn_idx], 3:]
-                                            rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
-                                            rxn_orig_prec = rxn_cand_precs[0]
-                                            rxn_orig_prec2 = rxn_cand_precs[1]
-                                            rxn_orig_prec3 = rxn_cand_precs[2]
-                                            logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
-                                            logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
-                                            if rxn_true_energy == 'NaN':
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
-                                            else:
-                                                logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
-                                            logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
-                                            logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
-                                            logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
-                                            break
-                                except Exception as e:
-                                    tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
-                                    logging.info("".join(tb_str))
-                                    logging.info('\nIndex out of range (last minibatch)')
-                        elif k == 5:
-                            running_top5_acc = test_correct_preds[k] / epoch_test_size
-                        elif k == 10:
-                            running_top10_acc = test_correct_preds[k] / epoch_test_size
+                                    rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
+                                    rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
+                                    rxn_cand_precs = self.proposals_data['test'][batch_idx[rxn_idx], 3:]
+                                    rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                    rxn_orig_prec = rxn_cand_precs[0]
+                                    rxn_orig_prec2 = rxn_cand_precs[1]
+                                    rxn_orig_prec3 = rxn_cand_precs[2]
+                                    logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                    logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+                                    if rxn_true_energy == 'NaN':
+                                        logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
+                                    else:
+                                        logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                    logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                    logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                    logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
+                                    break
+                        except Exception as e:
+                            tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                            logging.info("".join(tb_str))
+                            logging.info('\nIndex out of range (last minibatch)')
+                    elif k == 5:
+                        running_top5_acc = test_correct_preds[k] / epoch_test_size
+                    elif k == 10:
+                        running_top10_acc = test_correct_preds[k] / epoch_test_size
 
-                else: # for pre-training step w/ synthetic data, 0-th index is the positive rxn
-                    batch_loss = (batch_energies[:, 0] + torch.logsumexp(-batch_energies, dim=1)).sum().item()
-                    # calculate top-k acc assuming true index is 0 (for pre-training step)
-                    for k in self.k_to_test:
-                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1] 
-                        batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0] 
-                        test_correct_preds[k] += batch_correct_preds
-
-                        if k == 1:
-                            running_top1_acc = test_correct_preds[k] / epoch_test_size
-                        elif k == 5:
-                            running_top5_acc = test_correct_preds[k] / epoch_test_size
-                        elif k == 10:
-                            running_top10_acc = test_correct_preds[k] / epoch_test_size
                 if 5 not in self.k_to_calc:
                     running_top5_acc = np.nan
                 if 10 not in self.k_to_calc:
@@ -915,7 +881,7 @@ class Experiment:
         self.model.eval()
         with torch.no_grad():
             # for training, we know positive rxn is always the 0th-index, even during finetuning
-            if self.args.do_finetune and phase != 'train':
+            if phase != 'train':
                 energies_combined, true_ranks = [], []
                 loss, epoch_data_size = 0, 0
                 for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
@@ -951,7 +917,7 @@ class Experiment:
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
                 true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).cpu()
 
-            else: # pre-training
+            else: # training data, the positive (published) reaction is always at the 0-th index
                 energies_combined = []
                 epoch_data_size = 0
                 for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
@@ -985,7 +951,7 @@ class Experiment:
 
         self.stats[f"{phase}_loss_best"] = loss
         self.energies[phase] = energies_combined
-        if self.args.do_finetune and phase != 'train':
+        if phase != 'train':
             self.true_ranks[phase] = true_ranks.unsqueeze(dim=-1)
             return energies_combined, loss, true_ranks
         else:
@@ -1018,7 +984,7 @@ class Experiment:
 
         Also see: self.get_energies_and_loss()
         """
-        if self.args.do_finetune and phase != 'train':
+        if phase != 'train':
             if phase not in self.energies:
                 energies, loss, true_ranks = self.get_energies_and_loss(phase=phase)
             if self.energies[phase].shape[1] >= k: 

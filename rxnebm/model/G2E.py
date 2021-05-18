@@ -297,8 +297,6 @@ class MPNEncoder(nn.Module):
                  node_fdim: int,
                  h_size: int,
                  h_size_inner: Union[int, List[int]] = None, # minhtoo testing
-                 preembed: bool = False, # minhtoo testing
-                 preembed_size: Union[int, List[int]] = 80,
                  depth: int = 3,
                  dropout: float = 0.1,
                  encoder_activation = 'ReLU'
@@ -321,8 +319,6 @@ class MPNEncoder(nn.Module):
         self.h_size = h_size
         self.h_size_inner = h_size_inner
         self.encoder_activation = encoder_activation
-        self.preembed = preembed
-        self.preembed_size = preembed_size
         self.input_size = input_size
         self.rnn_type = rnn_type
         self.depth = depth
@@ -333,31 +329,7 @@ class MPNEncoder(nn.Module):
     def _build_layers(self) -> None:
         """Build layers associated with the MPNEncoder."""
         encoder_activation = model_utils.get_activation_function(self.encoder_activation)
-        if self.preembed:
-            if isinstance(self.preembed_size, int):
-                self.W_emb = nn.Sequential(
-                        nn.Linear(self.input_size, self.preembed_size),
-                    )
-                rnn_input_size = self.preembed_size
-            elif isinstance(self.preembed_size, list) and len(self.preembed_size) == 1:
-                self.W_emb = nn.Sequential(
-                        nn.Linear(self.input_size, self.preembed_size[0]),
-                    )
-                rnn_input_size = self.preembed_size[0]
-            elif isinstance(self.preembed_size, list) and len(self.preembed_size) == 2:
-                self.W_emb = nn.Sequential(
-                        nn.Linear(self.input_size, self.preembed_size[0]),
-                        encoder_activation,
-                        nn.Dropout(self.dropout),
-                        nn.Linear(self.preembed_size[0], self.preembed_size[1]),
-                        encoder_activation,
-                    )
-                rnn_input_size = self.preembed_size[1]
-            else:
-                raise ValueError
-            # then need to change input of RNN to self.preembed_size instead of self.input_size
-        else:
-            rnn_input_size = self.input_size
+        rnn_input_size = self.input_size
 
         if isinstance(self.h_size_inner, list) and len(self.h_size_inner) == 2: # 3 layers
             self.W_o = nn.Sequential(
@@ -417,8 +389,6 @@ class MPNEncoder(nn.Module):
         mask: torch.Tensor,
             Masks on nodes
         """
-        if self.preembed:
-            fmess = self.W_emb(fmess)
         h = self.rnn(fmess, bgraph)
         h = self.rnn.get_hidden_state(h)
         nei_message = index_select_ND(h, 0, agraph)
@@ -445,8 +415,6 @@ class GraphFeatEncoder(nn.Module):
                  rnn_type: str,
                  h_size: int,
                  h_size_inner: Union[int, List[int]] = None,
-                 preembed: bool = False,
-                 preembed_size: Union[int, List[int]] = None,
                  depth: int = 3,
                  dropout: float = 0.1,
                  atom_pool_type: str = "sum",
@@ -471,8 +439,6 @@ class GraphFeatEncoder(nn.Module):
         self.n_bond_feat = n_bond_feat
         self.rnn_type = rnn_type
         self.atom_size = n_atom_feat
-        self.preembed = preembed
-        self.preembed_size = preembed_size
         self.h_size = h_size
         self.h_size_inner = h_size_inner
         self.encoder_activation = encoder_activation
@@ -487,8 +453,6 @@ class GraphFeatEncoder(nn.Module):
         self.encoder = MPNEncoder(rnn_type=self.rnn_type,
                                   input_size=self.n_atom_feat + self.n_bond_feat,
                                   node_fdim=self.atom_size,
-                                  preembed=self.preembed,
-                                  preembed_size=self.preembed_size,
                                   h_size=self.h_size,
                                   h_size_inner=self.h_size_inner,
                                   depth=self.depth,
@@ -514,38 +478,13 @@ class GraphFeatEncoder(nn.Module):
             atom and bond indices for each molecule in the 2D feature list
         """
         fnode, fmess, agraph, bgraph, _ = graph_tensors
-        # logging.info('------------- agraph -------------')
-        # logging.info(agraph)            # [905, 5]
-        # logging.info(agraph.size())
-        # logging.info(agraph[0])
-
-        # logging.info('------------- bgraph -------------')
-        # logging.info(bgraph)            # [1777, 4]
-        # logging.info(bgraph.size())
-        # logging.info(bgraph[0])
-
-        # logging.info('------------- fmess -------------')
-        # logging.info(fmess)             # [1777 ,8]
-        # logging.info(fmess.size())
-        # logging.info(fmess[0])
-
         atom_scope, bond_scope = scopes
 
         # embed graph, note that for directed graph, fmess[any, 0:2] = u, v
         hnode = fnode.clone()
         fmess1 = hnode.index_select(index=fmess[:, 0].long(), dim=0) # [1777, 99]
-        # logging.info('------------- fmess1 -------------')
-        # logging.info(fmess1)
-        # logging.info(fmess1.size())
-        # logging.info(fmess1[0])
-
         fmess2 = fmess[:, 2:].clone()       # [1777, 6]
         hmess = torch.cat([fmess1, fmess2], dim=-1)
-        # logging.info('------------- hmess -------------')
-        # logging.info(hmess)               # [1777, 105]
-        # logging.info(hmess.size())
-        # logging.info(hmess[0])
-
         # encode
         hatom, _ = self.encoder(hnode, hmess, agraph, bgraph, mask=None)
 
@@ -577,22 +516,6 @@ class GraphFeatEncoder(nn.Module):
                                               f"Please use sum/mean/attention")
 
             hmol.append(torch.stack(hmol_single))
-
-        """Deprecated
-        # if isinstance(atom_scope[0], list):
-        if True:
-            for scope in atom_scope:
-                # if not scope:
-                if False:
-                    hmol.append(torch.zeros([1, self.h_size], device=hatom.device))
-                else:
-                    hmol.append(torch.stack([hatom[st:st+le].sum(dim=0) for st, le in scope]))
-
-            # hmol = [torch.stack([hatom[st:st+le].sum(dim=0) for (st, le) in scope])
-            #         for scope in atom_scope]
-        else:
-            hmol = torch.stack([hatom[st:st+le].sum(dim=0) for st, le in atom_scope])
-        """
         return hatom, hmol
 
 
@@ -613,8 +536,6 @@ class G2E(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
-                                        preembed=True if args.preembed_size is not None else False,
-                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         encoder_activation=args.encoder_activation,
@@ -625,13 +546,6 @@ class G2E(nn.Module):
             out_activation, args.out_hidden_sizes, args.out_dropout,
             args.encoder_hidden_size * 4
         )
-
-        if args.do_finetune:
-            logging.info("Setting self.reactant first to False for finetuning")
-            self.reactant_first = False
-        else:
-            logging.info("Setting self.reactant first to True for pretraining")
-            self.reactant_first = True
         logging.info("Initializing weights")
         model_utils.initialize_weights(self)
 
@@ -643,7 +557,7 @@ class G2E(nn.Module):
         input_dim: int,
     ):
         num_layers = len(hidden_sizes)
-        ffn = [nn.Linear(input_dim, hidden_sizes[0])] # could add nn.Dropout(dropout) before this, if we wish
+        ffn = [nn.Linear(input_dim, hidden_sizes[0])]
         for i, layer in enumerate(range(num_layers - 1)):
             ffn.extend(
                 [
@@ -661,50 +575,15 @@ class G2E(nn.Module):
         )
         return nn.Sequential(*ffn)
 
-    def forward(self, batch): # probs: Optional[torch.Tensor]=None
+    def forward(self, batch):
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,
             and K-1 negative rxns on all subsequent columns
         """
         graph_tensors, scopes, batch_size = batch
-
-        # fnode, fmess, agraph, bgraph, _ = graph_tensors
-        # logging.info("-------fnode-------")
-        # logging.info(fnode)
-        # logging.info(fnode[0])
-        # logging.info(fnode[0].size())
-        # logging.info(fnode.size())
-        # logging.info("-------agraph-------")
-        # logging.info(agraph)
-        # logging.info(agraph[0])
-        # logging.info(agraph[0].size())
-        # logging.info(agraph.size())
-
-        # atom_scope, bond_scope = scopes
-        # logging.info("-------atom_scope-------")
-        # logging.info(atom_scope)
-        # logging.info(atom_scope[0])
-        # logging.info("-------bond_scope-------")
-        # logging.info(bond_scope)
-        # logging.info(bond_scope[0])
-
         hatom, hmol = self.encoder(graph_tensors=graph_tensors,
                                    scopes=scopes)
-        # logging.info("-------hatom-------")
-        # logging.info(hatom[0])
-        # logging.info(hatom.size())
-        # logging.info(hatom[0].size())
-        # logging.info("-------hmol-------")
-        # logging.info(hmol[0])
-        # logging.info(len(hmol))
-        # logging.info([h.size() for h in hmol])
-
-        # hatom: [n_atoms, 400], hmol: list of [n_molecules, 400]
-        # n_molecules = batch_size * (r + p_pos + p_negs) = e.g. 2 * (1 + 1 + (5+26)) = 66
-        # want energies to be 2 * 32
-        # list of 66 [n_molecules, 400] => [2, 32]
-
         if self.mol_pool_type == "sum":
             hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]
         elif self.mol_pool_type == "mean":
@@ -712,26 +591,14 @@ class G2E(nn.Module):
         else:
             raise NotImplementedError(f"Unsupported mol_pool_type {self.mol_pool_type}! "
                                       f"Please use sum/mean")
-        # logging.info([h.size() for h in hmol])
 
         batch_pooled_hmols = []
-    
         mols_per_minibatch = len(hmol) // batch_size // self.num_devices  # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
-        # assert mols_per_minibatch == self.args.minibatch_size + 1, \
-        #     f"calculated minibatch size: {mols_per_minibatch-1}, given in args: {self.args.minibatch_size}"
-
-        # logging.info(f"{len(hmol)}, {batch_size}, {mols_per_minibatch}")
         for i in range(batch_size):
-            if self.reactant_first:                         # (1) r + mini_bsz p
-                r_hmol = hmol[i*mols_per_minibatch]                             # [1, h]
-                r_hmols = r_hmol.repeat(mols_per_minibatch - 1, 1)              # [mini_bsz, h]
-                p_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                p_hmols = torch.cat(p_hmols, 0)                                 # [mini_bsz, h]
-            else:
-                p_hmols = hmol[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
-                p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
-                r_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                r_hmols = torch.cat(r_hmols, 0)
+            p_hmols = hmol[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
+            p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
+            r_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
+            r_hmols = torch.cat(r_hmols, 0)
 
             diff = p_hmols - r_hmols # torch.abs(p_hmols - r_hmols)             # [mini_bsz, h]
             prod = r_hmols * p_hmols                                            # [mini_bsz, h]
@@ -743,8 +610,6 @@ class G2E(nn.Module):
 
         batch_pooled_hmols = torch.cat(batch_pooled_hmols, 0)                   # [bsz, mini_bsz, h*4]
         energies = self.output(batch_pooled_hmols)                              # [bsz, mini_bsz, 1]
-        # logging.info("-------energies-------")
-        # logging.info(energies)
         return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]
 
 
@@ -762,8 +627,6 @@ class G2ECross(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
-                                        preembed=True if args.preembed_size is not None else False,
-                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         encoder_activation=args.encoder_activation,
@@ -779,12 +642,6 @@ class G2ECross(nn.Module):
         self.attn_output = nn.Linear(self.h_size * 2, self.h_size)
 
         self.output = nn.Linear(args.encoder_hidden_size, 1)
-        if args.do_finetune:
-            logging.info("Setting self.reactant first to False for finetuning")
-            self.reactant_first = False
-        else:
-            logging.info("Setting self.reactant first to True for pretraining")
-            self.reactant_first = True
         logging.info("Initializing weights")
         model_utils.initialize_weights(self)
 
@@ -813,43 +670,40 @@ class G2ECross(nn.Module):
 
         batch_pooled_hmols = []
         for i in range(batch_size):
-            if self.reactant_first:
-                raise NotImplementedError
-            else:
-                atom_scope_p = atom_scope[i*mols_per_minibatch]
-                atom_scope_r = atom_scope[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
+            atom_scope_p = atom_scope[i*mols_per_minibatch]
+            atom_scope_r = atom_scope[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
 
-                # product atom encodings with segment embedding
-                h_p = []
-                for segment_idx_p, (start, length) in enumerate(atom_scope_p):
-                    segment_embedding = self.segment_embedding("p", segment_idx_p)
-                    h_p.append(hatom[start:start+length] + segment_embedding)
+            # product atom encodings with segment embedding
+            h_p = []
+            for segment_idx_p, (start, length) in enumerate(atom_scope_p):
+                segment_embedding = self.segment_embedding("p", segment_idx_p)
+                h_p.append(hatom[start:start+length] + segment_embedding)
 
-                h_rxn = []
-                for scope in atom_scope_r:
-                    # reactant atom encodings with segment embedding, for each r in the minibatch
-                    h = []
-                    for segment_idx_r, (start, length) in enumerate(scope):
-                        segment_embedding = self.segment_embedding("r", segment_idx_r)
-                        h.append(hatom[start:start + length] + segment_embedding)
-                    h.extend(h_p)               # combine r + p atoms to make it a 'cross-encoder'
-                    h = torch.cat(h, dim=0)
+            h_rxn = []
+            for scope in atom_scope_r:
+                # reactant atom encodings with segment embedding, for each r in the minibatch
+                h = []
+                for segment_idx_r, (start, length) in enumerate(scope):
+                    segment_embedding = self.segment_embedding("r", segment_idx_r)
+                    h.append(hatom[start:start + length] + segment_embedding)
+                h.extend(h_p)               # combine r + p atoms to make it a 'cross-encoder'
+                h = torch.cat(h, dim=0)
 
-                    # Attention pool over all atoms in the reaction
-                    h_mean = h.mean(dim=0)
-                    attn_context = self.elu(self.attn_hidden_1(h))          # [length, h] -> [length, h]
-                    attn_logit = self.attn_hidden_2(attn_context)           # [length, h] -> [length, h]
+                # Attention pool over all atoms in the reaction
+                h_mean = h.mean(dim=0)
+                attn_context = self.elu(self.attn_hidden_1(h))          # [length, h] -> [length, h]
+                attn_logit = self.attn_hidden_2(attn_context)           # [length, h] -> [length, h]
 
-                    attn_weight = torch.exp(attn_logit)
-                    attn_sum = torch.sum(h * attn_weight, dim=0)            # [length, h] -> [h]
-                    attn_pool = attn_sum / attn_weight.sum(dim=0)
+                attn_weight = torch.exp(attn_logit)
+                attn_sum = torch.sum(h * attn_weight, dim=0)            # [length, h] -> [h]
+                attn_pool = attn_sum / attn_weight.sum(dim=0)
 
-                    attn_pool = torch.cat([h_mean, attn_pool])              # [h] -> [h*2]
-                    attn_pool = torch.tanh(self.attn_output(attn_pool))     # [h*2] -> [h]
+                attn_pool = torch.cat([h_mean, attn_pool])              # [h] -> [h*2]
+                attn_pool = torch.tanh(self.attn_output(attn_pool))     # [h*2] -> [h]
 
-                    h_rxn.append(attn_pool)
+                h_rxn.append(attn_pool)
 
-                h_rxn = torch.stack(h_rxn, dim=0)                           # [mini_bsz, h]
+            h_rxn = torch.stack(h_rxn, dim=0)                           # [mini_bsz, h]
 
             batch_pooled_hmols.append(h_rxn)
 
@@ -872,8 +726,6 @@ class G2E_projBoth(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
-                                        preembed=True if args.preembed_size is not None else False,
-                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         encoder_activation=args.encoder_activation,
@@ -886,13 +738,6 @@ class G2E_projBoth(nn.Module):
         self.projection_p = self.build_projection(
             proj_activation, args.proj_hidden_sizes, args.proj_dropout, args.encoder_hidden_size # output_dim = proj_hidden_sizes[-1]
         )
-        
-        if args.do_finetune:
-            logging.info("Setting self.reactant first to False for finetuning")
-            self.reactant_first = False
-        else:
-            logging.info("Setting self.reactant first to True for pretraining")
-            self.reactant_first = True
 
     def build_projection(
         self,
@@ -923,13 +768,7 @@ class G2E_projBoth(nn.Module):
         """
         graph_tensors, scopes, batch_size = batch
 
-        # debug
         fnode, fmess, agraph, bgraph, _ = graph_tensors
-        if torch.isnan(torch.sum(fnode, (0, 1))) or torch.isnan(torch.sum(fmess, (0, 1))) or \
-            torch.isnan(torch.sum(agraph, (0, 1))) or torch.isnan(torch.sum(bgraph, (0, 1))):
-            raise ValueError('nan input found')
-        # atom_scope, bond_scope = scopes # scopes is a list of np.arrays, hard to check efficiently
-
         hatom, hmol = self.encoder(graph_tensors=graph_tensors,
                                    scopes=scopes)
 
@@ -953,16 +792,10 @@ class G2E_projBoth(nn.Module):
     
         mols_per_minibatch = len(hmol) // batch_size // self.num_devices  # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
         for i in range(batch_size):
-            if self.reactant_first:                         # (1) r + mini_bsz p
-                r_hmol = hmol[i*mols_per_minibatch]                             # [1, h]
-                r_hmols = r_hmol.repeat(mols_per_minibatch - 1, 1)              # [mini_bsz, h]
-                p_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                p_hmols = torch.cat(p_hmols, 0)                                 # [mini_bsz, h]
-            else:
-                p_hmols = hmol[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
-                p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
-                r_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                r_hmols = torch.cat(r_hmols, 0)
+            p_hmols = hmol[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
+            p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
+            r_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
+            r_hmols = torch.cat(r_hmols, 0)
 
             pooled_r_hmols = torch.unsqueeze(r_hmols, 0)                        # [1, mini_bsz, h]
             pooled_p_hmols = torch.unsqueeze(p_hmols, 0)                        # [1, mini_bsz, h]
@@ -983,12 +816,7 @@ class G2E_projBoth(nn.Module):
         energies = torch.matmul(
                         torch.transpose(proj_pooled_p_mols, 2, 3),
                         proj_pooled_r_mols
-                    ).squeeze(dim=-1)                                           # [bsz, mini_bsz, 1, d] x [bsz, mini_bsz, d, 1] => [bsz, mini_bsz, 1]
-        
-        # debug
-        if torch.isnan(torch.sum(energies, (0, 1, 2))):
-            print('nan in energies')
-        
+                    ).squeeze(dim=-1)                                           # [bsz, mini_bsz, 1, d] x [bsz, mini_bsz, d, 1] => [bsz, mini_bsz, 1]        
         return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]
 
 class G2E_projBoth_FFout(nn.Module):
@@ -1005,8 +833,6 @@ class G2E_projBoth_FFout(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
-                                        preembed=True if args.preembed_size is not None else False,
-                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         encoder_activation=args.encoder_activation,
@@ -1024,13 +850,6 @@ class G2E_projBoth_FFout(nn.Module):
                 out_activation, args.out_hidden_sizes, args.out_dropout,
                 args.proj_hidden_sizes[-1] * 4
             )
-        
-        if args.do_finetune:
-            logging.info("Setting self.reactant first to False for finetuning")
-            self.reactant_first = False
-        else:
-            logging.info("Setting self.reactant first to True for pretraining")
-            self.reactant_first = True
 
     def build_output(
             self,
@@ -1088,23 +907,11 @@ class G2E_projBoth_FFout(nn.Module):
             and K-1 negative rxns on all subsequent columns
         """
         graph_tensors, scopes, batch_size = batch
-
-        # debug
-        # fnode, fmess, agraph, bgraph, _ = graph_tensors
-        # if torch.isnan(torch.sum(fnode, (0, 1))) or torch.isnan(torch.sum(fmess, (0, 1))) or \
-        #     torch.isnan(torch.sum(agraph, (0, 1))) or torch.isnan(torch.sum(bgraph, (0, 1))):
-        #     raise ValueError('nan input found')
-        # atom_scope, bond_scope = scopes # scopes is a list of np.arrays, hard to check efficiently
-
         hatom, hmol = self.encoder(graph_tensors=graph_tensors,
                                    scopes=scopes)
 
         if self.mol_pool_type == "sum":
-            hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]
-            # for h in hmol:
-            #     if torch.isnan(torch.sum(h, (0, 1))):
-            #         print('nan in hmol')
-                    
+            hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]                    
         elif self.mol_pool_type == "mean":
             hmol = [torch.mean(h, dim=0, keepdim=True) for h in hmol]
         else:
@@ -1115,16 +922,10 @@ class G2E_projBoth_FFout(nn.Module):
     
         mols_per_minibatch = len(hmol) // batch_size // self.num_devices  # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
         for i in range(batch_size):
-            if self.reactant_first:                         # (1) r + mini_bsz p
-                r_hmol = hmol[i*mols_per_minibatch]                             # [1, h]
-                r_hmols = r_hmol.repeat(mols_per_minibatch - 1, 1)              # [mini_bsz, h]
-                p_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                p_hmols = torch.cat(p_hmols, 0)                                 # [mini_bsz, h]
-            else:
-                p_hmols = hmol[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
-                p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
-                r_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                r_hmols = torch.cat(r_hmols, 0)
+            p_hmols = hmol[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
+            p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
+            r_hmols = hmol[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
+            r_hmols = torch.cat(r_hmols, 0)
 
             pooled_r_hmols = torch.unsqueeze(r_hmols, 0)                        # [1, mini_bsz, h]
             pooled_p_hmols = torch.unsqueeze(p_hmols, 0)                        # [1, mini_bsz, h]
@@ -1146,9 +947,6 @@ class G2E_projBoth_FFout(nn.Module):
 
         concat = torch.cat([proj_r_mols, proj_p_mols, diff, prod], dim=-1)      # [bsz, mini_bsz, d*4]
         energies = self.output(concat)                                          # [bsz, mini_bsz, 1]
-        # debug
-        # if torch.isnan(torch.sum(energies, (0, 1, 2))):
-        #     print('nan in energies')
         return energies.squeeze(dim=-1)                                         # [bsz, mini_bsz]
 
 class G2E_sep_projBoth_FFout(nn.Module): 
@@ -1167,8 +965,6 @@ class G2E_sep_projBoth_FFout(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
-                                        preembed=True if args.preembed_size is not None else False,
-                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         encoder_activation=args.encoder_activation,
@@ -1179,8 +975,6 @@ class G2E_sep_projBoth_FFout(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
-                                        preembed=True if args.preembed_size is not None else False,
-                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         encoder_activation=args.encoder_activation,
@@ -1204,14 +998,7 @@ class G2E_sep_projBoth_FFout(nn.Module):
             self.output = self.build_output(
                 out_activation, args.out_hidden_sizes, args.out_dropout,
                 args.encoder_hidden_size * 4
-            )            
-
-        if args.do_finetune:
-            print("Setting self.reactant first to False for finetuning")
-            self.reactant_first = False
-        else:
-            print("Setting self.reactant first to True for pretraining")
-            self.reactant_first = True
+            )
         print("Initializing weights")
         model_utils.initialize_weights(self)
     
@@ -1290,16 +1077,10 @@ class G2E_sep_projBoth_FFout(nn.Module):
     
         mols_per_minibatch = len(hmol_r) // batch_size // self.num_devices  # = (1) r + (mini_bsz) p or (1) p + (mini_bsz) r
         for i in range(batch_size):
-            if self.reactant_first:                         # (1) r + mini_bsz p
-                r_hmol = hmol_r[i*mols_per_minibatch]                           # [1, h]
-                r_hmols = r_hmol.repeat(mols_per_minibatch - 1, 1)              # [mini_bsz, h]
-                p_hmols = hmol_p[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                p_hmols = torch.cat(p_hmols, 0)                                 # [mini_bsz, h]
-            else:
-                p_hmols = hmol_p[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
-                p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
-                r_hmols = hmol_r[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
-                r_hmols = torch.cat(r_hmols, 0)
+            p_hmols = hmol_p[i*mols_per_minibatch]        # (1) p + mini_bsz (r)
+            p_hmols = p_hmols.repeat(mols_per_minibatch - 1, 1)
+            r_hmols = hmol_r[(i*mols_per_minibatch+1):(i+1)*mols_per_minibatch]
+            r_hmols = torch.cat(r_hmols, 0)
 
             pooled_r_hmols = torch.unsqueeze(r_hmols, 0)                        # [1, mini_bsz, h]
             pooled_p_hmols = torch.unsqueeze(p_hmols, 0)                        # [1, mini_bsz, h]

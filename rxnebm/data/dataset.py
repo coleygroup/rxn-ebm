@@ -17,7 +17,6 @@ from typing import List, Optional, Tuple, Union
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from rxnebm.data import augmentors
 from rxnebm.data.dataset_utils import get_features_per_graph, smi_tokenizer
 from rxnebm.model import model_utils
 

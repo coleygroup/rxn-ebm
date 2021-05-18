@@ -15,17 +15,17 @@ The downloaded data is automatically checked and will throw an error if any requ
 See Appendix A for a full description of data preprocessing.
 **Note** we do not automatically download fingerprints and graph features as these files are much larger. Again, see Appendix A for how to download them manually, or generate them yourself.
  
-## Train and test
-Before training, ensure you have 1) the 3 CSV files 2) the 3 precomputed reaction data files (be it fingerprints, rxn_smi, graphs etc.). Refer to Appendix A below for how we generate the reaction data files. If you are reloading a trained checkpoint for whatever reason, you additionally need to provide ```--old_expt_name <name>``` and ```--date_trained <DD_MM_YYYY>```. <br><br>
+## Training
+Before training, ensure you have 1) the 3 CSV files 2) the 3 precomputed reaction data files (be it fingerprints, rxn_smi, graphs etc.). Refer to Appendix A below for how we generate the reaction data files for a proposer. If you are reloading a trained checkpoint for whatever reason, you additionally need to provide ```--old_expt_name <name>```, ```--date_trained <DD_MM_YYYY>``` and ```--load_checkpoint```. <br><br>
 For FF-EBM
 
-    sh scripts/FeedforwardEBM.sh
+    sh scripts/<proposer>/FeedforwardEBM.sh
 For Graph-EBM
 
-    sh scripts/GraphEBM.sh
-For Transformer-EBM
+    sh scripts/<proposer>/GraphEBM.sh
+For Transformer-EBM (note that this yields poor results and we only report results on RetroSim)
 
-    sh scripts/TransformerEBM.sh
+    sh scripts/<proposer>/TransformerEBM.sh
 
 ## Appendix A - Details of data preparation
 ### Cleaner USPTO-50K dataset
@@ -61,7 +61,6 @@ written, it came to our attention that it is important to ensure all the SMILES 
     For atom-mapped rxn_smi, there should be 35/4/4 rxn_smi in train/valid/test that are changed after RDKit canonicalization. Of course, this canonicalization won't be important for non sequence based models; still, it is highly recommended to do this.
     
 ### Re-ranking task: proposal data from retrosynthesis models re-trained on our cleaner USPTO-50K:
-<!-- **Note: Edited in canonicalization step** -->
 
 For each model in our model zoo, we generate the top-K predictions for each product SMILES in our extra-clean dataset. All of these files belong in ```rxnebm/data/cleaned_data ``` 
 1. Retrosim, with top-200 predictions (using 200 maximum precedents for product similarity search): 
@@ -72,9 +71,9 @@ For each model in our model zoo, we generate the top-K predictions for each prod
         
         This step takes 13 hours on an 8 core machine. You only need to run this python script again if you wish to get more than top-200 predictions, or beyond 200 max precedents, or modify the underlying RetroSim model; otherwise, just download it from our Google Drive using ``` download_data.py ```
     
-       As a precautionary measure, we canonicalize all these precursors again and ensure no training reaction has duplicate ground-truth, by uncommenting the lines corresponding to Retrosim in this shell script and running it:
-    
-        ``` bash scripts/clean_proposals.sh ```
+       As a precautionary measure, we canonicalize all these precursors again and ensure no training reaction has duplicate ground-truth, by running:
+
+       ``` bash scripts/retrosim/clean.sh ```
     
     - 3 .npz files of sparse reaction fingerprints ``` retrosim_rxn_fps_{phase}.npz ``` in the [datasets folder](https://drive.google.com/drive/folders/1ISXFL7SuVY_sW3z36hQfpyDMH1KF22nS). 
     
@@ -82,17 +81,49 @@ For each model in our model zoo, we generate the top-K predictions for each prod
         
         ``` python gen_proposals/gen_fps_from_proposals.py --proposer retrosim --topk 50 --maxk 200 ```
 
-        It takes about 8 minutes on a 32 core machine. Please refer to ``` scripts/make_fp.sh ``` for detailed arguments.
+        It takes about 8 minutes on a 32 core machine. Please refer to ``` scripts/retrosim/make_fp.sh ``` and ```gen_proposals/gen_fps_from_proposals.py``` themselves for detailed arguments.
         
-        For fingerprints, we pad with all-zero vectors and mask these during training & testing.
+        Since RetroSim will not generate the full 50/200 proposals for every product, we pad the reaction fingerprints with all-zero vectors for batching and mask these during training & testing.
 
-    - 3 sets of graph features (1 for each phase). Each set consists of: ```cache_feat_index.npz```,        ```cache_feat.npz```, ```cache_mask.pkl```, ```cache_smi.pkl```. Note that these 3 sets in total take up    between 20 to 30 GBs, so ensure you have sufficient space. We again provide them in our Drive, but you can also generate them yourself using:
+    - 3 sets of graph features (1 for each phase). Each set consists of: ```cache_feat_index.npz```,        ```cache_feat.npz```, ```cache_mask.pkl```, ```cache_smi.pkl```. Note that these 3 sets in total take up    between 20 to 30 GBs, so ensure you have sufficient disk space. We again provide them in our Drive, but you can also generate them yourself using:
     
-        ``` bash scripts/make_graphfeat.sh ```
+        ``` bash scripts/retrosim/make_graphfeat.sh ```
 
         It takes about 12 minutes on 32 cores.
 
-    - From current experiments, just training on the top-50 proposals (```--topk 50```) is sufficient and yields the same performance as training on more predictions (e.g. top-100/200); for testing, we still keep the top-200 proposals (```--maxk 200```)
+    - As stated in our paper, just training on the top-50 proposals (```--topk 50```) is sufficient and yields the same performance as training on more predictions (e.g. top-100/200); for testing, we still keep the top-200 proposals (```--maxk 200```) to maximize the chances of the published reaction appearing in those 200 proposals for re-ranking.
+
+    Once either the reaction fingerprints or the graphs have been generated, follow the instructions under ```Training``` above to train the EBMs.
+
+2. GLN, with top-200 predictions (beam_size=200):
+    - First we need to train GLN itself. We already include the 3 CSV files to train GLN, which contains the atom-mapped, canonicalized, extra-clean reaction SMILES from USPTO-50K, in 
+    ``` rxnebm/proposer/gln_openretro/data/gln_schneider50k/ ```.
+        - To make them, just run: <br>
+        ``` python prep_data_for_retro_models.py --output_format gln```
+    - We created a wrapper of the original GLN repo, to ease some issues installing GLN as a package, as well as standardize training, testing & proposing. Our official wrapper, **openretro**, is still under development to be released soon, and we include the GLN portion in this repo at: <br>
+    ``` cd rxnebm/proposer/gln_openretro ```
+    - To install GLN: once you're in ``` gln_openretro ```, run: <br> ``` bash scripts/setup.sh ``` <br> This creates a conda environment called ```gln_openretro```, which you need to activate to train/test/propose with GLN.
+    - To preprocess training data: <br>
+    ``` bash scripts/preprocess.sh ```
+    - To train (takes ~2 hours on 1 RTX2080Ti): <br>
+    ``` bash scripts/train.sh ```
+    Note that you need to specify a training seed, which is set to ```77777777``` by default.
+    - To test (takes ~4 hours on 1 RTX2080Ti, because it tests all 10 checkpoints): <br>
+    ``` bash scripts/test.sh ```
+    Testing is important because it tells you the best checkpoint (by validation top-1 accuracy) to use for proposing. On seed ```77777777```, this should be ```model-6.dump```. <br> 
+    **TODO: try to automate this by returning some value which can be used by propose_and_compile.sh**
+    - To propose, we need to go back up to root with: <br>
+    ``` cd ../../../ ``` <br>
+    Then run (takes ~12 hours on 1 RTX2080Ti): <br>
+    ``` bash scripts/gln/propose_and_compile.sh ``` <br>
+    You may need to modify the ``` gln_seed ``` and ``` best_ckpt ``` arguments within ``` propose_and_compile.sh ```. If your best checkpoint was ```model-6.dump```, then set ```best_ckpt=6```. 
+    - The last step is to generate either the fingerprints or graphs. This step is very similar across all 4 proposers. 
+        - Fingerprints: <br>
+        ``` bash scripts/gln/make_fp.sh ```
+        - Graphs: <br>
+        ``` bash scripts/gln/make_graphfeat.sh ```
+    - Finally, we can train the EBMs on GLN! Whew! That took a while. Alternatively, you can just grab the fingerprints and/or graphs off our Google Drive.
+
 
 <!-- ## Appendix B - Misc details
 This project uses ``` black ``` for auto-formatting to the ``` pep8 ``` style guide, and ``` isort ``` to sort imports. ``` pylint ``` is also used in ``` vscode ``` to lint all code. -->

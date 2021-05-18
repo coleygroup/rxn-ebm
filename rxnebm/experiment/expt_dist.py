@@ -50,7 +50,6 @@ class Experiment:
         model: nn.Module,
         model_name: str,
         model_args: dict,
-        debug: Optional[bool] = True,
         gpu: Optional[str] = None, # https://github.com/yangkky/distributed_tutorial/blob/master/ddp_tutorial.md
         root: Optional[Union[str, bytes, os.PathLike]] = None,
         load_checkpoint: Optional[bool] = False,
@@ -60,7 +59,6 @@ class Experiment:
         vocab: Dict[str, int] = None
     ):
         self.args = args
-        self.debug = debug
         self.batch_size = args.batch_size
         self.learning_rate = args.learning_rate
         self.epochs = args.epochs
@@ -122,12 +120,11 @@ class Experiment:
         self._collate_args()
         self.proposals_data = {}
         self.proposals_csv_filenames = defaultdict(str)
-        if self.args.do_finetune:
-            for phase in ['train', 'valid', 'test']:
-                self.proposals_csv_filenames[phase] = self.args.proposals_csv_file_prefix + f"_{phase}.csv"
-                if phase != 'train': # this is just for visualization purpose during val/test
-                    self.proposals_data[phase] = pd.read_csv(self.root / self.proposals_csv_filenames[phase], index_col=None, dtype='str')
-                    self.proposals_data[phase] = self.proposals_data[phase].drop(['orig_rxn_smi'], axis=1).values
+        for phase in ['train', 'valid', 'test']:
+            self.proposals_csv_filenames[phase] = self.args.proposals_csv_file_prefix + f"_{phase}.csv"
+            if phase != 'train': # this is just for visualization purpose during val/test
+                self.proposals_data[phase] = pd.read_csv(self.root / self.proposals_csv_filenames[phase], index_col=None, dtype='str')
+                self.proposals_data[phase] = self.proposals_data[phase].drop(['orig_rxn_smi'], axis=1).values
 
         if self.representation == 'fingerprint':
             self._init_fp_dataloaders(precomp_rxnfp_prefix=args.precomp_rxnfp_prefix)
@@ -637,7 +634,7 @@ class Experiment:
                         dist.barrier()
                         if k == 1:
                             running_top1_acc = val_correct_preds[k] / epoch_val_size
-                            if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                            if self.rank == 0: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                                 try:
                                     for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
                                         if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
@@ -842,7 +839,7 @@ class Experiment:
                     test_correct_preds[k] += batch_correct_preds
                     if k == 1:
                         running_top1_acc = test_correct_preds[k] / epoch_test_size
-                        if self.rank == 0 and self.debug: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                        if self.rank == 0: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                             try:
                                 for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
                                     if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
@@ -929,7 +926,7 @@ class Experiment:
 
         self.model.eval()
         with torch.no_grad():
-            if self.args.do_finetune and phase != 'train':
+            if phase != 'train':
                 energies_combined, true_ranks = [], []
                 loss, epoch_data_size = 0, 0
                 for batch in tqdm(dataloader, desc='getting raw energy outputs...'):
@@ -998,7 +995,7 @@ class Experiment:
 
         self.stats[f"{phase}_loss_best"] = loss
         self.energies[phase] = energies_combined
-        if self.args.do_finetune and phase != 'train':
+        if phase != 'train':
             self.true_ranks[phase] = true_ranks.unsqueeze(dim=-1)
             return energies_combined, loss, true_ranks
         else:
@@ -1031,7 +1028,7 @@ class Experiment:
 
         Also see: self.get_energies_and_loss()
         """
-        if self.args.do_finetune and phase != 'train':
+        if phase != 'train':
             if phase not in self.energies:
                 energies, loss, true_ranks = self.get_energies_and_loss(phase=phase)
             if self.energies[phase].shape[1] >= k:

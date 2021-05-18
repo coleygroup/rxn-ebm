@@ -38,12 +38,10 @@ def parse_args():
     parser = argparse.ArgumentParser("trainEBM.py")
     # mode & metadata
     parser.add_argument("--model_name", help="model name", type=str, default="FeedforwardEBM")
-    parser.add_argument("--do_not_train", help="do not do any training (to generate graphfeat or just do testing/generate energies)", action="store_true")
-    parser.add_argument("--do_finetune", help="whether to finetune (vs. pretrain)", action="store_true")
+    parser.add_argument("--do_train", help="whether to train", action="store_true")
     parser.add_argument("--do_test", help="whether to test after training", action="store_true")
     parser.add_argument("--do_get_energies_and_acc", help="whether to test after training", action="store_true")
     parser.add_argument("--do_compute_graph_feat", help="whether to compute graph features", action="store_true")
-    parser.add_argument("--onthefly", help="whether to do on-the-fly computation (DEPRECATED, REMOVE)", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
     parser.add_argument("--test_on_train", help="whether to evaluate on the training data", action="store_true")
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default=date.today().strftime("%d_%m_%Y"))
@@ -85,7 +83,7 @@ def parse_args():
     parser.add_argument("--grad_clip", help="gradient clipping, 0 means no clipping", type=float, default=0)
     parser.add_argument("--minibatch_size", help="minibatch size for smiles (training), i.e. max # of proposal rxn_smi allowed per rxn", 
                         type=int, default=32)
-    parser.add_argument("--minibatch_eval", help="minibatch size for smiles (valid/test), i.e. max # of proposal rxn_smi allowed per rxn, for finetuning", 
+    parser.add_argument("--minibatch_eval", help="minibatch size for smiles (valid/test), i.e. max # of proposal rxn_smi allowed per rxn, for training", 
                         type=int, default=32)
     parser.add_argument("--max_seq_len", help="max sequence length for smiles representation", type=int, default=256)
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
@@ -143,7 +141,6 @@ def parse_args():
     parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
     parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
     parser.add_argument("--attention_dropout", help="Attention dropout for Transformer", type=float, default=0.1)
-    parser.add_argument("--preembed_size", help="Preembedding layer hidden size(s) (DEPRECATED, REMOVE)", type=int, nargs='+')
 
     return parser.parse_args()
 
@@ -164,7 +161,6 @@ def main_dist(
         model,
         model_name,
         model_args: dict,
-        debug: Optional[bool] = True,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
         load_checkpoint: Optional[bool] = False,
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
@@ -207,13 +203,12 @@ def main_dist(
         saved_optimizer=saved_optimizer,
         saved_stats=saved_stats,
         begin_epoch=begin_epoch,
-        debug=True,
         vocab=vocab,
         root=root
     )
-    if not args.do_not_train and args.do_finetune:
+    if args.do_train:
         assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
-        logging.info("Start finetuning")
+        logging.info("Start training")
         experiment.train_distributed()
 
     if (args.do_test or args.do_get_energies_and_acc) and gpu == 0:
@@ -222,7 +217,7 @@ def main_dist(
         args.old_expt_name = args.expt_name
         args.load_checkpoint = True
         args.load_epoch = None # to load best checkpoint based on val top-1
-        args.do_not_train = True
+        args.do_train = False
         args.testing_best_ckpt = True
 
         logging.info(f'Reloading expt: {args.expt_name}')
@@ -310,7 +305,6 @@ def main(args):
                 model,
                 args.model_name,
                 model_args,
-                True, # debug
                 args.root,
                 args.load_checkpoint,
                 saved_optimizer,
@@ -338,14 +332,13 @@ def main(args):
             saved_optimizer=saved_optimizer,
             saved_stats=saved_stats,
             begin_epoch=begin_epoch,
-            debug=True,
             vocab=vocab,
             gpu=None, # not doing DDP
             root=args.root
         )
-        if not args.do_not_train and args.do_finetune:
+        if args.do_train:
             assert args.proposals_csv_file_prefix is not None, f"Please provide --proposals_csv_file_prefix!"
-            logging.info("Start finetuning")
+            logging.info("Start training")
             experiment.train()
 
         if not args.testing_best_ckpt and (args.do_get_energies_and_acc or args.do_test):
@@ -355,7 +348,7 @@ def main(args):
                 args.old_expt_name = args.expt_name
             args.load_checkpoint = True
             args.load_epoch = None # to load best checkpoint based on val top-1
-            args.do_not_train = True
+            args.do_train = False
             args.testing_best_ckpt = True # turn flag on
 
             logging.info(f'Reloading expt: {args.expt_name}')
