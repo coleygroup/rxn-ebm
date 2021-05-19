@@ -16,7 +16,7 @@ See Appendix A for a full description of data preprocessing.
 **Note** we do not automatically download fingerprints and graph features as these files are much larger. Again, see Appendix A for how to download them manually, or generate them yourself.
  
 ## Training
-Before training, ensure you have 1) the 3 CSV files 2) the 3 precomputed reaction data files (be it fingerprints, rxn_smi, graphs etc.). Refer to Appendix A below for how we generate the reaction data files for a proposer. If you are reloading a trained checkpoint for whatever reason, you additionally need to provide ```--old_expt_name <name>```, ```--date_trained <DD_MM_YYYY>``` and ```--load_checkpoint```. <br><br>
+Before training, ensure you have 1) the 3 CSV files 2) the 3 precomputed reaction data files (be it fingerprints, rxn_smi, graphs etc.). Refer to below for how we generate the reaction data files for a proposer. If you are reloading a trained checkpoint for whatever reason, you additionally need to provide ```--old_expt_name <name>```, ```--date_trained <DD_MM_YYYY>``` and ```--load_checkpoint```. <br><br>
 For FF-EBM
 
     sh scripts/<proposer>/FeedforwardEBM.sh
@@ -27,16 +27,18 @@ For Transformer-EBM (note that this yields poor results and we only report resul
 
     sh scripts/<proposer>/TransformerEBM.sh
 
-## Appendix A - Details of data preparation
-### Cleaner USPTO-50K dataset
+<!-- ## Appendix A - Details of data preparation -->
+## Cleaner USPTO-50K dataset
 The data was obtained from [the dropbox folder](https://www.dropbox.com/sh/6ideflxcakrak10/AADN-TNZnuGjvwZYiLk7zvwra/schneider50k?dl=0&subfolder_nav_tracking=1) provided by the authors of [GLN](https://github.com/Hanjun-Dai/GLN). 
 We rename these 3 csv files from ```raw_{phase}.csv``` to ```'schneider50k_train.csv'```, ```'schneider50k_test.csv'``` and ```'schneider50k_valid.csv'```, and save them to ```rxnebm/data/original_data``` <br>
 
-For the re-ranking task, we trained four popular & state-of-the-art retrosynthesis models. We use a single, extra-clean USPTO_50k dataset, split roughly into 80/10/10. These are derived from the three ``` schneider50k_{phase}.csv ``` files, using the script ```rxnebm/data/preprocess/clean_smiles.py```, i.e. 
+For the re-ranking task, we trained four different retrosynthesis models. We use a single, extra-clean USPTO_50k dataset, split roughly into 80/10/10. These are derived from the three ``` schneider50k_{phase}.csv ``` files, using the script ```rxnebm/data/preprocess/clean_smiles.py```, i.e. 
 ```
     python -m rxnebm.data.preprocess.clean_smiles
 ```
-This data is included in this repository under ```rxnebm/data/cleaned_data/``` as ```50k_clean_rxnsmi_noreagent_allmapped_cano_{phase}.pickle```, and also in the [Google Drive](https://drive.google.com/drive/folders/1ISXFL7SuVY_sW3z36hQfpyDMH1KF22nS?usp=sharing) sub-folder ```Retro_Reproduction``` 
+This data is included in this repository under ```rxnebm/data/cleaned_data/``` as ```50k_clean_rxnsmi_noreagent_allmapped_cano_{phase}.pickle```, and also in the [Google Drive](https://drive.google.com/drive/folders/1ISXFL7SuVY_sW3z36hQfpyDMH1KF22nS?usp=sharing) sub-folder ```Retro_Reproduction```.  <br> 
+**Note that these 3 .pickle files are extremely important, as we will use them as inputs to generate proposals & ground-truth for each one-step model.**
+
 Specifically, we perform these steps:
 1. Keep all atom mapping
 2. Remove reaction SMILES strings with product molecules that are too small and clearly incorrect. The criteria used was ```len(prod_smi) < 3```. 4 reaction SMILES strings were caught by this criteria, with products: 		
@@ -53,98 +55,136 @@ Specifically, we perform these steps:
     - Train: 39713
     - Valid: 4989
     - Test: 5005
-6. Canonicalization: when it came to sequence models or certain retro models that are sensitive to how the reaction SMILES is
-written, it came to our attention that it is important to ensure all the SMILES are standardized in some way. We simply use RDKit functions to achieve this. After running clean_smiles.py, we run canonicalize.py in the same folder:
+6. Canonicalization: when it came to sequence models or certain template-based models that are sensitive to how the reaction SMILES is written (like RetroXpert, see their github for a major data leak issue), it came to our attention that it is important to ensure all the SMILES are standardized. We simply use RDKit functions to achieve this. After running clean_smiles.py, we run canonicalize.py in the same folder:
     ```
         python -m rxnebm.data.preprocess.canonicalize
     ```
-    For atom-mapped rxn_smi, there should be 35/4/4 rxn_smi in train/valid/test that are changed after RDKit canonicalization. Of course, this canonicalization won't be important for non sequence based models; still, it is highly recommended to do this.
+    <!-- For atom-mapped rxn_smi, there were 35/4/4 rxn_smi in train/valid/test changed due to RDKit canonicalization. -->
     
-### Re-ranking task: proposal data from retrosynthesis models re-trained on our cleaner USPTO-50K:
+## Re-ranking task: proposal data from retrosynthesis models re-trained on our cleaner USPTO-50K:
+For each model in our model zoo, we generate the top-K predictions for each product SMILES in our extra-clean dataset. All of these files belong in ```rxnebm/data/cleaned_data ```.
 
-For each model in our model zoo, we generate the top-K predictions for each product SMILES in our extra-clean dataset. All of these files belong in ```rxnebm/data/cleaned_data ``` 
-1. Retrosim, with top-200 predictions (using 200 maximum precedents for product similarity search): 
-    - 3 CSV files of SMILES strings in the [Retrosim_proposals folder](https://drive.google.com/drive/folders/1HhzBwfa5Oykfxq11qM4oQIuw3ZGjJqYH). 
-        This is first generated by running 
-        
-        ``` python -m rxnebm.proposer.retrosim_model ```
-        
-        This step takes 13 hours on an 8 core machine. You only need to run this python script again if you wish to get more than top-200 predictions, or beyond 200 max precedents, or modify the underlying RetroSim model; otherwise, just download it from our Google Drive using ``` download_data.py ```
+### Retrosim, with top-200 predictions (using 200 maximum precedents for product similarity search): 
+- 3 CSV files of SMILES strings in the [Retrosim_proposals folder](https://drive.google.com/drive/folders/1HhzBwfa5Oykfxq11qM4oQIuw3ZGjJqYH). 
+    This is first generated by running 
     
-       As a precautionary measure, we canonicalize all these precursors again and ensure no training reaction has duplicate ground-truth, by running:
-
-       ``` bash scripts/retrosim/clean.sh ```
+    ``` python -m rxnebm.proposer.retrosim_model ```
     
-    - 3 .npz files of sparse reaction fingerprints ``` retrosim_rxn_fps_{phase}.npz ``` in the [datasets folder](https://drive.google.com/drive/folders/1ISXFL7SuVY_sW3z36hQfpyDMH1KF22nS). 
+    This step takes 13 hours on an 8 core machine. You only need to run this python script again if you wish to get more than top-200 predictions, or beyond 200 max precedents, or modify the underlying RetroSim model; otherwise, just download it from our Google Drive using ``` download_data.py ```
+
+    As a precautionary measure, we canonicalize all these precursors again and ensure no training reaction has duplicate ground-truth, by running:
+
+    ``` bash scripts/retrosim/clean.sh ```
+
+- 3 .npz files of sparse reaction fingerprints ``` retrosim_rxn_fps_{phase}.npz ``` in the [datasets folder](https://drive.google.com/drive/folders/1ISXFL7SuVY_sW3z36hQfpyDMH1KF22nS). 
+
+    This is generated by running
     
-        This is generated by running
-        
-        ``` python gen_proposals/gen_fps_from_proposals.py --proposer retrosim --topk 50 --maxk 200 ```
+    ``` python gen_proposals/gen_fps_from_proposals.py --proposer retrosim --topk 50 --maxk 200 ```
 
-        It takes about 8 minutes on a 32 core machine. Please refer to ``` scripts/retrosim/make_fp.sh ``` and ```gen_proposals/gen_fps_from_proposals.py``` themselves for detailed arguments.
-        
-        Since RetroSim will not generate the full 50/200 proposals for every product, we pad the reaction fingerprints with all-zero vectors for batching and mask these during training & testing.
-
-    - 3 sets of graph features (1 for each phase). Each set consists of: ```cache_feat_index.npz```,        ```cache_feat.npz```, ```cache_mask.pkl```, ```cache_smi.pkl```. Note that these 3 sets in total take up    between 20 to 30 GBs, so ensure you have sufficient disk space. We again provide them in our Drive, but you can also generate them yourself using:
+    It takes about 8 minutes on a 32 core machine. Please refer to ``` scripts/retrosim/make_fp.sh ``` and ```gen_proposals/gen_fps_from_proposals.py``` themselves for detailed arguments.
     
-        ``` bash scripts/retrosim/make_graphfeat.sh ```
+    Since RetroSim will not generate the full 50/200 proposals for every product, we pad the reaction fingerprints with all-zero vectors for batching and mask these during training & testing.
 
-        It takes about 12 minutes on 32 cores.
+- 3 sets of graph features (1 for each phase). Each set consists of: ```cache_feat_index.npz```,        ```cache_feat.npz```, ```cache_mask.pkl```, ```cache_smi.pkl```. Note that these 3 sets in total take up    between 20 to 30 GBs, so ensure you have sufficient disk space. We again provide them in our Drive, but you can also generate them yourself using:
 
-    - As stated in our paper, just training on the top-50 proposals (```--topk 50```) is sufficient and yields the same performance as training on more predictions (e.g. top-100/200); for testing, we still keep the top-200 proposals (```--maxk 200```) to maximize the chances of the published reaction appearing in those 200 proposals for re-ranking.
+    ``` bash scripts/retrosim/make_graphfeat.sh ```
 
-    Once either the reaction fingerprints or the graphs have been generated, follow the instructions under ```Training``` above to train the EBMs.
+    It takes about 12 minutes on 32 cores.
 
-2. GLN, with top-200 predictions (beam_size=200):
-    - First we need to train GLN itself. We already include the 3 CSV files to train GLN, which contains the atom-mapped, canonicalized, extra-clean reaction SMILES from USPTO-50K, in 
-    ``` rxnebm/proposer/gln_openretro/data/gln_schneider50k/ ```.
-        - To make them, just run: <br>
-        ``` python prep_data_for_retro_models.py --output_format gln```
-    - We created a wrapper of the original GLN repo, to ease some issues installing GLN as a package, as well as standardize training, testing & proposing. Our official wrapper, **openretro**, is still under development to be released soon, and we include the GLN portion in this repo at: <br>
-    ``` cd rxnebm/proposer/gln_openretro ```
-    - To install GLN: once you're in ``` gln_openretro ```, run: <br> ``` bash scripts/setup.sh ``` <br> This creates a conda environment called ```gln_openretro```, which you need to activate to train/test/propose with GLN.
-    - To preprocess training data: <br>
-    ``` bash scripts/preprocess.sh ```
-    - To train (takes ~2 hours on 1 RTX2080Ti): <br>
-    ``` bash scripts/train.sh ```
-    Note that you need to specify a training seed, which is set to ```77777777``` by default.
-    - To test (takes ~4 hours on 1 RTX2080Ti, because it tests all 10 checkpoints): <br>
-    ``` bash scripts/test.sh ```
-    Testing is important because it tells you the best checkpoint (by validation top-1 accuracy) to use for proposing. On seed ```77777777```, this should be ```model-6.dump```. <br> 
-    **TODO: try to automate this by returning some value which can be used by propose_and_compile.sh**
-    - To propose, we need to go back up to root with: <br>
-    ``` cd ../../../ ``` <br>
-    Then run (takes ~12 hours on 1 RTX2080Ti): <br>
-    ``` bash scripts/gln/propose_and_compile.sh ``` <br>
-    You may need to modify the ``` gln_seed ``` and ``` best_ckpt ``` arguments within ``` propose_and_compile.sh ```. If your best checkpoint was ```model-6.dump```, then set ```best_ckpt=6```. 
-    - The last step is to generate either the fingerprints or graphs. This step is very similar across all 4 proposers. 
-        - Fingerprints: <br>
-        ``` bash scripts/gln/make_fp.sh ```
-        - Graphs: <br>
-        ``` bash scripts/gln/make_graphfeat.sh ```
-    - Finally, we can train the EBMs on GLN! Whew! That took a while. Alternatively, you can just grab the fingerprints and/or graphs off our Google Drive.
+- As stated in our paper, just training on the top-50 proposals (```--topk 50```) is sufficient and yields the same performance as training on more predictions (e.g. top-100/200); for testing, we still keep the top-200 proposals (```--maxk 200```) to maximize the chances of the published reaction appearing in those 200 proposals for re-ranking.
 
+Once either the reaction fingerprints or the graphs have been generated, follow the instructions under ```Training``` above to train the EBMs.
 
-<!-- ## Appendix B - Misc details
-This project uses ``` black ``` for auto-formatting to the ``` pep8 ``` style guide, and ``` isort ``` to sort imports. ``` pylint ``` is also used in ``` vscode ``` to lint all code. -->
+### GLN, with top-200 predictions (beam_size=200)
+- First we need to train GLN itself. We already include the 3 CSV files to train GLN, which contains the atom-mapped, canonicalized, extra-clean reaction SMILES from USPTO-50K, in 
+``` rxnebm/proposer/gln_openretro/data/gln_schneider50k/ ```.
+    - To generate these yourself, just run: <br>
+    ``` python prep_data_for_retro_models.py --output_format gln```
+    This takes as input the 3 .pickle files generated using ```clean_smiles.py``` above.
 
+- We created a wrapper of the original GLN repo, to ease some issues installing GLN as a package, as well as standardize training, testing & proposing. Our official wrapper, **openretro**, is still under development to be released soon, and we include the GLN portion in this repo at: <br>
+``` cd rxnebm/proposer/gln_openretro ```
+- To install GLN: once you're in ``` gln_openretro ```, run: <br> ``` bash scripts/setup.sh ``` <br> This creates a conda environment called ```gln_openretro```, which you need to activate to train/test/propose with GLN. Note that the GLN authors compiled custom CUDA ops to speed up model training/testing, so you need to install GLN on a GPU machine with CUDA properly set up.
+- To preprocess training data: <br>
+``` bash scripts/preprocess.sh ```
+- To train (takes ~2 hours on 1 RTX2080Ti). Note that you need to specify a training seed. <br>
+``` bash scripts/train.sh <seed> ```, e.g. ``` bash scripts/train.sh 0 ```
 
-<!-- ### Data preprocessing
-The entire data preprocessing pipeline can be run from ``` prep_data_for_EBM.py ```, which performs a series of data cleaning & preprocessing steps, in the following order:
-1. Cleans the raw SMILES strings
-2. Extracts all unique molecule SMILES strings as a list
-3. Converts unique molecule SMILES into a matrix of Morgan count molecular fingerprints.
-4. Generates 2 lookup tables (dictionaries), 1 to map molecular SMILES strings into the corresponding index in that matrix of Morgan count fingerprints, and the other to map the reverse: index (key) -> molecular SMILES (value) 
-5. Builds a nearest-neighbour search index using the [nmslib](https://github.com/DrrDom/crem) package
-6. Generates a (very) large database of [CReM](https://github.com/DrrDom/crem) negatives, mapping each product SMILES string in the dataset (key), to a list of highly similar, mutated product SMILES strings (value). Note that this step can take from 10-13 hours on the USPTO_50k dataset for 150 mutated products / original product, and that CReM does not guarantee the requested number of mutated products. To deal with this, we pad with vectors of all 0's, and implement a simple masking step in our network to ignore these vectors. <br> -->
+- To test (takes ~4 hours on 1 RTX2080Ti, because it tests all 10 checkpoints). Testing is important because it tells you the best checkpoint (by validation top-1 accuracy) to use for proposing. For example, on seed```77777777```, this should be ```model-6.dump```. <br>
+``` bash scripts/test.sh <seed> ```
+**TODO: try to automate this by returning some value which can be used by propose_and_compile.sh**
 
-<!-- ### List of provided data for pre-training: -->
-<!-- For ease of reproducibility, all data is [available on Google Drive](https://drive.google.com/drive/folders/1ISXFL7SuVY_sW3z36hQfpyDMH1KF22nS?usp=sharing). These belong in ```rxnebm/data/cleaned_data ```. -->
-<!-- - three ```50k_clean_rxnsmi_noreagent_{phase}.pickle``` files contain the cleaned reaction SMILES strings from USPTO_50k (generated by ```rxnebm/data/preprocess/clean_smiles.py```)
-- ```50k_mol_smis.pickle``` (list of all unique molecule SMILES, generated by ```rxnebm/data/preprocess/clean_smiles.py```) 
-- ```50k_mol_smi_to_sparse_fp_idx.pickle``` (the lookup table mapping molecular SMILES to Morgan count molecular fingerprints by their index in the sparse matrix ```50k_count_mol_fps.npz```, generated by ```rxnebm/data/preprocess/smi_to_fp.py```) 
-- ```50k_sparse_fp_idx_to_mol_smi.pickle``` (the lookup table mapping Morgan count molecular fingerprints by their index to molecular SMILES, generated by ```rxnebm/data/preprocess/smi_to_fp.py```) 
-- ```50k_count_mol_fps.npz``` (matrix of Morgan count moelcular fingerprints, generated by ```rxnebm/data/preprocess/smi_to_fp.py```) 
-- ```50k_cosine_count.bin``` & ```50k_cosine_count.bin.dat``` (generated by ```rxnebm/data/preprocess/prep_nmslib.py```)
-- ```50k_neg150_rad2_maxsize3_mutprodsmis.pickle``` (generated by ```rxnebm/data/preprocess/prep_crem.py```). ```50k_neg150_rad2_maxsize3_insufficient.pickle``` is an optional (currently unused) dictionary mapping each product SMILES (key) for which CReM could not generate the requested number of mutated molecules, to the number of negatives (value) that CReM could generate. <br>
--  ```50k_rdm_5_cos_5_bit_5_1_1_mut_10_{split}.npz``` (a matrix of positive and augmented negative reaction fingerprints), the syntax being: ```{dataset_name}_rdm_{num_rdm_negs}_cos_{num_cos_negs}_bit_{num_bit_negs}_{num_bits}_{increment_bits}_mut_{num_mut_negs}_{split}.npz``` -->
+- To propose, we need to go back up to root with: <br>
+``` cd ../../../ ``` <br>
+Then run (takes ~12 hours on 1 RTX2080Ti): <br>
+``` bash scripts/gln/propose_and_compile.sh <gln_seed> <best_ckpt> ``` <br>
+You need to provide ``` gln_seed ``` and ``` best_ckpt ``` arguments. For example, if your best checkpoint was ```model-6.dump``` trained on seed ```77777777```, then: <br>
+``` bash scripts/gln/propose_and_compile.sh 77777777 6 ``` <br>
+which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the format ``` GLN_200topk_200maxk_noGT_<seed>_<phase>.csv ```
+- The last step is to generate either the fingerprints or graphs. This step is very similar across all 4 proposers. 
+    - Fingerprints: <br>
+    ``` bash scripts/gln/make_fp.sh <gln_seed> ```
+    - Graphs: <br>
+    ``` bash scripts/gln/make_graphfeat.sh <gln_seed> ```
+- Finally, we can train the EBMs to re-rank GLN! Whew! That took a while. Alternatively, if you just want to reproduce our results, you can just grab the fingerprints and/or graphs of the proposals off our Google Drive.
+
+### RetroXpert, with top-200 predictions (beam_size=200)
+- To train RetroXpert, we include the 3 USPTO-50K CSV files in ``` rxnebm/proposer/retroxpert/data/USPTO50K/canonicalized_csv ```.
+    - To generate these yourself, run: <br>
+    ``` python prep_data_for_retro_models.py --output_format retroxpert```
+    This takes as input the 3 .pickle files generated using ```clean_smiles.py``` above.
+- We cloned the original RetroXpert repo, and added python scripts in order to generate proposals across the entire dataset. We also slightly modified the workflow to include a random seed for training. The folder is at: <br>
+``` cd rxnebm/proposer/retroxpert ``` <br>
+**TODO: remove generation of scores section**
+- To setup the environment for RetroXpert: once you're in ``` retroxpert ```, run: <br> ``` bash scripts/setup.sh ``` <br> This creates a conda environment called ```retroxpert```, which you need to activate to train/test/propose with RetroXpert.
+
+- To preprocess training data. However, there is a slight RDKit bug in the template extraction step, where the same input data can generate different number of templates each time the script is run ``` python extract_semi_template_pattern.py --extract_pattern ```. <br> 
+If you are simply reproducing our results, you do not need to extract the templates again, as we already include it in ``` data/USPTO50K/product_patterns.txt ```, which has 527 templates. So, you just need to run: <br>
+``` bash scripts/preprocess.sh ```<br>, and use 527 as ```<num_templates>``` for later steps.
+However, if you are using your own dataset, then you must extract the templates, by including the ```--extract_pattern``` flag when running ```preprocess.sh```: <br>
+ ```bash scripts/preprocess.sh --extract_pattern```, instead of running it without the flag, and afterwards note down the EXACT number of templates extracted ``` <num_templates ``` as you need to provide this to later scripts. <br>
+- To train EGAT (~6 hours on 1 RTX2080Ti). You need to specify a training seed and number of extracted templates. <br>
+``` bash scripts/train_EGAT.sh <seed> <num_templates> ```, e.g. ``` bash scripts/train_EGAT.sh 0 527 ```
+- To train RGN (~30 hours on 2 RTX2080Ti). You need to specify a training seed. <br>
+``` bash scripts/train_RGN.sh <seed> ```
+- To translate using RGN and test the overall two-step performance (15 mins on 1 RTX2080Ti). We recommend running this step to double-check that the model is trained well without bugs. <br>
+``` bash scripts/translate_RGN.sh <seed> ```
+- The proposal stage contains two sub-steps. In the first sub-step, we directly use the existing RetroXpert code, only with minor modifications, to generate reactant-set predictions and evaluate the top-200 predictions. This sub-step takes ~8.5 hours on 1 RTX2080Ti: <br>
+``` bash scripts/propose.sh <seed> <num_templates> ``` <br>
+- In the second sub-step, because the output format from RetroXpert does not align with the input format we need for the EBM, we further process those top-200 proposals. This includes cleaning up invalid SMILES, de-duplicating proposals and ensuring there is only one ground-truth in each training reaction. This sub-step is much faster, ~10 mins on 8 cores (no GPU needed). <br>
+First, go back to root: <br>
+``` cd ../../../ ``` <br>
+And then run: <br>
+``` bash scripts/retroxpert/compile.sh <retroxpert_seed> ``` <br>
+which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the format ``` retroxpert_200topk_200maxk_noGT_<seed>_<phase>.csv ```
+- The last step is to generate either the fingerprints or graphs using those 3 cleaned CSV files. This step is very similar across all 4 proposers. 
+    - Fingerprints: <br>
+    ``` bash scripts/retroxpert/make_fp.sh <retroxpert_seed> ```
+    - Graphs: <br>
+    ``` bash scripts/retroxpert/make_graphfeat.sh <retroxpert_seed> ```
+- Finally, we can train the EBMs to re-rank RetroXpert!
+
+### NeuralSym, with top-200 predictions
+- To train NeuralSym, we simply use the 3 .pickle files ``` 50k_clean_rxnsmi_noreagent_allmapped_canon_<phase>.pickle ``` generated using ```clean_smiles.py``` above, which contain the extra-cleaned USPTO-50K reactions. They've also been placed in NeuralSym's input data folder ``` rxnebm/proposer/neuralsym/data/ ```.
+- As the original authors did not open-source NeuralSym, we re-implemented it from scratch following their paper and the repo is placed at: <br>
+``` cd rxnebm/proposer/neuralsym ``` <br>
+**TODO: remove generation of scores section**
+- To setup the environment for NeuralSym: once you're in ``` neuralsym ```, run: <br> ``` bash setup.sh ``` <br> This creates a conda environment called ```neuralsym```, which you need to activate to train/test/propose with NeuralSym.
+
+- To preprocess training data into 32681-dim fingerprints. As we've heavily optimized this step, it takes only ~10 mins on 16 cores, and probably ~15-20 mins on 8 cores.  <br>
+``` python prepare_data.py```. <br>
+
+- To train (<5 mins on 1 RTX2080Ti, yep you read that correctly). Note that the accuracies used during training are template-matching accuracies, which are lower than reactant-matching accuracy (the actual metric for evaluating one-step retrosynthesis), because a particular reactant-set can be obtained from a given product through multiple templates. However, calculating template acucracy is faster (batchable) and more convenient. You need to specify a training seed. <br>
+``` bash scripts/train.sh <seed> ```, e.g. ``` bash scripts/train.sh 0 ```
+- We combine the testing and proposing into a single step, as we want to evaluate reactant-matching accuracy. 
+``` bash scripts/propose_and_eval.sh <neuralsym_seed> ``` <br>
+This will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the format ``` neuralsym_200topk_200maxk_noGT_<seed>_<phase>.csv ```
+- Now, go back to root: <br>
+``` cd ../../../ ``` <br>
+The last step is to generate either the fingerprints or graphs using those 3 cleaned CSV files. This step is very similar across all 4 proposers. 
+    - Fingerprints: <br>
+    ``` bash scripts/neuralsym/make_fp.sh <neuralsym_seed> ```
+    - Graphs: <br>
+    ``` bash scripts/neuralsym/make_graphfeat.sh <neuralsym_seed> ```
+- Finally, we can train the EBMs to re-rank NeuralSym!
