@@ -37,10 +37,10 @@ except Exception as e:
 def parse_args():
     parser = argparse.ArgumentParser("trainEBM.py")
     # mode & metadata
-    parser.add_argument("--model_name", help="model name", type=str, default="FeedforwardEBM")
+    parser.add_argument("--model_name", help="model name", type=str)
     parser.add_argument("--do_train", help="whether to train", action="store_true")
-    parser.add_argument("--do_test", help="whether to test after training", action="store_true")
-    parser.add_argument("--do_get_energies_and_acc", help="whether to test after training", action="store_true")
+    parser.add_argument("--do_test", help="whether to evaluate on test data after training", action="store_true")
+    parser.add_argument("--do_get_energies_and_acc", help="whether to do full testing and generate energies on all 3 phases after training", action="store_true")
     parser.add_argument("--do_compute_graph_feat", help="whether to compute graph features", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
     parser.add_argument("--test_on_train", help="whether to evaluate on the training data", action="store_true")
@@ -50,7 +50,7 @@ def parse_args():
     parser.add_argument("--testing_best_ckpt", help="helper arg indicating if we are just testing best ckpt. You shouldn't need to touch this", action="store_true")
     parser.add_argument("--expt_name", help="experiment name", type=str)
     parser.add_argument("--old_expt_name", help="old experiment name", type=str)
-    parser.add_argument("--checkpoint_root", help="checkpoint root (it is a component of checkpoint_folder: checkpoint_folder = checkpoint_root / date_trained)", type=str)
+    parser.add_argument("--checkpoint_root", help="optional, relative path of checkpoint root (it is a component of checkpoint_folder: checkpoint_folder = checkpoint_root / date_trained)", type=str)
     parser.add_argument("--root", help="input data folder, if None it will be set to default rxnebm/data/cleaned_data/", type=str)
     # distributed arguments
     parser.add_argument("--ddp", help="whether to do DDP training", action="store_true")
@@ -59,7 +59,8 @@ def parse_args():
                         help='number of gpus per node')
     parser.add_argument('-nr', '--nr', default=0, type=int,
                         help='ranking within the nodes')
-    parser.add_argument("--port", help="(highly recommended to specify it yourself, just pick a random number between 0 and 65530)", type=int, default=random.randint(0, 65530))
+    parser.add_argument("--port", help="please specify it yourself by just picking a random number between 0 and 65530", 
+                        type=int, default=0)
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
     parser.add_argument("--proposals_csv_file_prefix",
@@ -70,7 +71,7 @@ def parse_args():
                         type=str)
     parser.add_argument("--cache_suffix",
                         help="additional suffix for G2E cache files",
-                        type=str, default=None)
+                        type=str, default='50top_200max_stereo')
     # fingerprint params
     parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
     parser.add_argument("--rctfp_size", help="reactant fp size", type=int, default=16384)
@@ -82,13 +83,13 @@ def parse_args():
     parser.add_argument("--batch_size_eval", help="batch_size", type=int, default=128)
     parser.add_argument("--grad_clip", help="gradient clipping, 0 means no clipping", type=float, default=0)
     parser.add_argument("--minibatch_size", help="minibatch size for smiles (training), i.e. max # of proposal rxn_smi allowed per rxn", 
-                        type=int, default=32)
+                        type=int, default=50)
     parser.add_argument("--minibatch_eval", help="minibatch size for smiles (valid/test), i.e. max # of proposal rxn_smi allowed per rxn, for training", 
-                        type=int, default=32)
+                        type=int, default=200)
     parser.add_argument("--max_seq_len", help="max sequence length for smiles representation", type=int, default=256)
     parser.add_argument("--optimizer", help="optimizer", type=str, default="Adam")
-    parser.add_argument("--epochs", help="num. of epochs", type=int, default=30)
-    parser.add_argument("--learning_rate", help="learning rate", type=float, default=5e-3)
+    parser.add_argument("--epochs", help="num. of epochs", type=int, default=80)
+    parser.add_argument("--learning_rate", help="learning rate", type=float, default=1e-4)
     parser.add_argument("--weight_decay", help="weight decay", type=float, default=0)
     parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < --lr_floor", 
                         action="store_true")
@@ -104,42 +105,42 @@ def parse_args():
                         help="criteria to reduce LR (ReduceLROnPlateau) ['loss', 'acc']", 
                         type=str, default='acc')
     parser.add_argument("--lr_scheduler_factor",
-                        help="factor by which to reduce LR (ReduceLROnPlateau)", type=float, default=0.2)
+                        help="factor by which to reduce LR (ReduceLROnPlateau)", type=float, default=0.3)
     parser.add_argument("--lr_scheduler_patience",
                         help="num. of epochs with no improvement after which to reduce LR (ReduceLROnPlateau)",
-                        type=int, default=0)
+                        type=int, default=1)
     parser.add_argument("--early_stop", help="whether to use early stopping", action="store_true") 
     parser.add_argument("--early_stop_criteria",
                         help="criteria for early stopping ['loss', 'acc', top1_acc', 'top5_acc', 'top10_acc', 'top50_acc']",
                         type=str, default='top1_acc')
     parser.add_argument("--early_stop_patience",
                         help="num. of epochs tolerated without improvement in criteria before early stop",
-                        type=int, default=2)
+                        type=int, default=3)
     parser.add_argument("--checkpoint", help="whether to save model checkpoints", action="store_true")
     parser.add_argument("--random_seed", help="random seed", type=int, default=0)
     # model params, G2E/FF/S2E args
     parser.add_argument("--encoder_hidden_size", help="MPN/FFN/Transformer encoder_hidden_size(s)", 
-                        type=int, nargs='+', default=256)
+                        type=int, nargs='+', default=300)
     parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size(s)", type=int, nargs='+', default=[320])
-    parser.add_argument("--encoder_depth", help="MPN encoder_depth / Transformer num_layers", type=int, default=3)
+    parser.add_argument("--encoder_depth", help="MPN encoder_depth / Transformer num_layers", type=int, default=10)
     parser.add_argument("--encoder_num_heads", help="Transformer num_heads", type=int, default=4)
     parser.add_argument("--encoder_filter_size", help="Transformer filter_size", type=int, default=256)
     parser.add_argument("--encoder_embed_size", help="Transformer embedding size", type=int, default=64)
-    parser.add_argument("--encoder_dropout", help="MPN/FFN/Transformer encoder dropout", type=float, default=0.05)
-    parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="PReLU")
+    parser.add_argument("--encoder_dropout", help="MPN/FFN/Transformer encoder dropout", type=float, default=0.04)
+    parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="ReLU")
     parser.add_argument("--out_hidden_sizes", help="Output layer hidden sizes", type=int, nargs='+', default=[256])
     parser.add_argument("--out_activation", help="Output layer activation", type=str, default="PReLU")
-    parser.add_argument("--out_dropout", help="Output layer dropout", type=float, default=0.2)
+    parser.add_argument("--out_dropout", help="Output layer dropout", type=float, default=0.05)
     parser.add_argument("--encoder_rnn_type", help="RNN type for graph encoder (gru/lstm)", type=str, default="gru")
     parser.add_argument("--atom_pool_type", help="Atom pooling method (sum/mean/attention)",
                         type=str, default="attention")
     parser.add_argument("--mol_pool_type", help="Molecule(s) pooling method (sum/mean)",
                         type=str, default="sum")
     parser.add_argument("--s2e_pool_type", help="Reaction pooling method for Transformer (mean/CLS)",
-                        type=str, default="mean")                  
-    parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+', default=[256])
+                        type=str, default="CLS")                  
+    parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+', default=[256,200])
     parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
-    parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.2)
+    parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.05)
     parser.add_argument("--attention_dropout", help="Attention dropout for Transformer", type=float, default=0.1)
 
     return parser.parse_args()

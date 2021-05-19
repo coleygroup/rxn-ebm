@@ -44,27 +44,8 @@ def get_features_from_smiles(i: int, minibatch_smiles: List[str]) -> Tuple[np.nd
         a_graphs, b_graphs, minibatch_mol_indexes
 
 
-def get_features_per_graph_helper(_args: Tuple[int, List[str]]):
-    i, rxn_smiles = _args
-    if i % 1000 == 0:
-        logging.info(f"Processing {i}th rxn_smi")
-
-    r_smi = rxn_smiles[0].split(">>")[0]
-    p_smis = [rxn_smi.split(">>")[-1] for rxn_smi in rxn_smiles]        # TODO: hardcoded, might be buggy for more crem
-
-    minibatch_smiles = [r_smi]
-    minibatch_smiles.extend(p_smis)
-
-    return get_features_from_smiles(i, minibatch_smiles)
-
-
 def get_features_per_graph_helper_finetune(_args: Tuple[int, List[str]]):
     i, rxn_smiles = _args
-    # if i > 1600 and i < 1700:
-    #     if i % 1 == 0:
-    #         logging.info(f"Processing {i}th rxn_smi")      
-    # elif i % 100 == 0:
-    #     logging.info(f"Processing {i}th rxn_smi")
     if i % 1000 == 0:
         logging.info(f"Processing {i}th rxn_smi")
 
@@ -183,27 +164,24 @@ class ReactionDatasetSMILES(Dataset):
         self.precompute()
 
     def get_smiles_and_masks(self):
-        if self.args.do_finetune:
-            if self.phase == "train":
-                minibatch_size = self.args.minibatch_size
-            else:
-                minibatch_size = self.args.minibatch_eval
-
-            for rxn_smis_with_neg in tqdm(self.all_smiles):
-                # minibatch_size limits number of cand_proposals in finetuning
-                minibatch_smiles = rxn_smis_with_neg[:minibatch_size]
-                # be careful about defining minibatch_size: for valid/test, true rxn not guaranteed
-                while len(minibatch_smiles) < minibatch_size:
-                    minibatch_smiles.append("")
-                minibatch_masks = [bool(smi) for smi in minibatch_smiles]
-                # hardcode, setting "" to "CC"
-                # seems that "" or single atom product will just make the indexing more difficult
-                minibatch_smiles = [smi if smi else "CC" for smi in minibatch_smiles]
-
-                self._rxn_smiles_with_negatives.append(minibatch_smiles)
-                self._masks.append(minibatch_masks)
+        if self.phase == "train":
+            minibatch_size = self.args.minibatch_size
         else:
-            raise ValueError("Only --do_finetune is supported")
+            minibatch_size = self.args.minibatch_eval
+
+        for rxn_smis_with_neg in tqdm(self.all_smiles):
+            # minibatch_size limits number of cand_proposals in finetuning
+            minibatch_smiles = rxn_smis_with_neg[:minibatch_size]
+            # be careful about defining minibatch_size: for valid/test, true rxn not guaranteed
+            while len(minibatch_smiles) < minibatch_size:
+                minibatch_smiles.append("")
+            minibatch_masks = [bool(smi) for smi in minibatch_smiles]
+            # hardcode, setting "" to "CC"
+            # seems that "" or single atom product will just make the indexing more difficult
+            minibatch_smiles = [smi if smi else "CC" for smi in minibatch_smiles]
+
+            self._rxn_smiles_with_negatives.append(minibatch_smiles)
+            self._masks.append(minibatch_masks)
 
     def precompute(self):
         if self.args.do_compute_graph_feat:
@@ -238,11 +216,8 @@ class ReactionDatasetSMILES(Dataset):
                 logging.info("Pre-computing graphs and features")
                 start = time.time()
 
-                if self.args.do_finetune:
-                    helper = get_features_per_graph_helper_finetune
-                else:
-                    raise ValueError("Only --do_finetune is supported!")
-
+                helper = get_features_per_graph_helper_finetune
+                
                 self.p = Pool(len(os.sched_getaffinity(0)))
                 _features_and_lengths = self.p.map(helper, enumerate(self._rxn_smiles_with_negatives))
 
