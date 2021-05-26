@@ -101,22 +101,18 @@ def load_model_opt_and_stats(
             )
             print("loaded checkpoint from load_epoch: ", load_epoch)
 
-        if args.model_name == 'FeedforwardTriple3indiv3prod1cos' or args.model_name == "FeedforwardEBM":
-            saved_model = FF.FeedforwardTriple3indiv3prod1cos(args)
-        elif args.model_name == "GraphEBM":                 # Graph to energy
-            saved_model = G2E.G2E(args)
-        elif args.model_name == "GraphEBM_Cross":           # Graph to energy, cross attention pool for r and p atoms
-            saved_model = G2E.G2ECross(args)
-        elif args.model_name == "GraphEBM_projBoth":        # Graph to energy, project both reactants & products w/ dot product output
-            saved_model = G2E.G2E_projBoth(args)
-        elif args.model_name == "GraphEBM_sep_projBoth_FFout":        # Graph to energy, separate encoders + projections, feedforward output
-            saved_model = G2E.G2E_sep_projBoth_FFout(args)
-        elif args.model_name == "GraphEBM_sep_FFout":        # Graph to energy, separate encoders, feedforward output
-            saved_model = G2E.G2E_sep_FFout(args)
+        if args.model_name == "FeedforwardEBM":
+            saved_model = FF.FeedforwardEBM(args)
+       
+        elif args.model_name == "GraphEBM_1MPN":        # Graph to energy, project both reactants & products w/ dot product output
+            saved_model = G2E.GraphEBM_1MPN(args)
+        elif args.model_name == "GraphEBM_2MPN":        # Graph to energy, separate encoders + projections, feedforward output
+            saved_model = G2E.GraphEBM_2MPN(args)
+            
         elif args.model_name == "TransformerEBM":
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
             vocab = load_or_create_vocab(args)
-            saved_model = S2E.S2E(args, vocab, **saved_stats["model_args"])
+            saved_model = S2E.TransformerEBM(args, vocab, **saved_stats["model_args"])
         else:
             raise ValueError("Unrecognized model name")
 

@@ -33,17 +33,6 @@ except Exception as e:
 ReLU = nn.ReLU()
 
 class Experiment:
-    """
-    Parameters
-    ----------
-    representation : str ['fingerprint', 'smiles']
-        which representation to use. affects which version of AugmentedData & ReactionDataset gets called.
-
-    load_checkpoint : Optional[bool] (Default = False)
-        whether to load from a previous checkpoint.
-        if True: load_optimizer, load_stats & begin_epoch must be provided
-    """
-
     def __init__(
         self,
         args: argparse.Namespace,
@@ -129,7 +118,7 @@ class Experiment:
         if self.representation == 'fingerprint':
             self._init_fp_dataloaders(precomp_rxnfp_prefix=args.precomp_rxnfp_prefix)
             self.maxk = self.train_loader.dataset.data.shape[-1] // self.train_loader.dataset.input_dim
-        elif self.representation == "smiles":
+        elif self.representation in ["smiles", "graph"]:
             self._init_smi_dataloaders()
             self.maxk = len(self.train_loader.dataset._rxn_smiles_with_negatives[0])
         else:
@@ -356,7 +345,7 @@ class Experiment:
             root=self.root
         )
 
-        if self.args.do_compute_graph_feat:
+        if self.representation == 'graph':
             collate_fn = dataset_utils.graph_collate_fn_builder(
                 self.device, debug=False)
         else:
@@ -765,7 +754,7 @@ class Experiment:
                     logging.info("Don't worry about this - just a small hack to send messages to Telegram")
                 if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
                     logging.info('Stopping training as learning rate has dropped below 1e-6')
-                    break 
+                    break
 
         if self.rank == 0:
             logging.info(f'Total training time: {self.stats["train_time"]}')
@@ -911,7 +900,6 @@ class Experiment:
         self,
         phase: str = "test",
         save_energies: Optional[bool] = True,
-        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
         path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
     ) -> Tuple[Tensor, float]:
         """
@@ -987,8 +975,8 @@ class Experiment:
             path_to_energies = Path(__file__).resolve().parents[1] / "energies"
         else:
             path_to_energies = Path(path_to_energies)
-        if name_energies is None:
-            name_energies = f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
+        
+        name_energies = f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
         if save_energies:
             logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
             torch.save(energies_combined, Path(path_to_energies / name_energies))
@@ -1008,19 +996,6 @@ class Experiment:
         message: Optional[str] = "",
     ) -> Tensor:
         """
-        Computes top-k accuracy of trained model in classifying feasible vs infeasible chemical rxns
-        (i.e. minimum energy assigned to label 0 of each training sample)
-
-        Parameters
-        ----------
-        phase : str (Default = 'test') [train', 'test', 'valid']
-            whether to get energies from train/test/valid phases
-        save_energies: bool (Default = True)
-            whether to save the generated energies tensor to disk
-        name_energies: Union[str, bytes, os.PathLike] (Default = None)
-            filename of energies to save as a .pkl file
-            If None, automatically set to 'energies_<phase>_<self.expt_name>'
-
         Returns
         -------
         energies: tensor
@@ -1063,19 +1038,3 @@ class Experiment:
             else:
                 logging.info(f'{k} out of range for dimension 1 on ({phase})')
         return message
-        
-# def accuracy(output, target, topk=(1,)):
-# """Computes the accuracy over the k top predictions for the specified values of k"""
-# with torch.no_grad():
-#     maxk = max(topk)
-#     batch_size = target.size(0)
-
-#     _, pred = output.topk(maxk, 1, True, True)
-#     pred = pred.t()
-#     correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-#     res = []
-#     for k in topk:
-#         correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-#         res.append(correct_k.mul_(100.0 / batch_size))
-#     return res

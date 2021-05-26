@@ -41,7 +41,6 @@ def parse_args():
     parser.add_argument("--do_train", help="whether to train", action="store_true")
     parser.add_argument("--do_test", help="whether to evaluate on test data after training", action="store_true")
     parser.add_argument("--do_get_energies_and_acc", help="whether to do full testing and generate energies on all 3 phases after training", action="store_true")
-    parser.add_argument("--do_compute_graph_feat", help="whether to compute graph features", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
     parser.add_argument("--test_on_train", help="whether to evaluate on the training data", action="store_true")
     parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default=date.today().strftime("%d_%m_%Y"))
@@ -73,7 +72,7 @@ def parse_args():
                         help="additional suffix for G2E cache files",
                         type=str, default='50top_200max_stereo')
     # fingerprint params
-    parser.add_argument("--representation", help="reaction representation", type=str, default="fingerprint")
+    parser.add_argument("--representation", help="reaction representation ['fingerprint', 'smiles', 'graph']", type=str, default="fingerprint")
     parser.add_argument("--rctfp_size", help="reactant fp size", type=int, default=16384)
     parser.add_argument("--prodfp_size", help="product fp size", type=int, default=16384)
     parser.add_argument("--difffp_size", help="product fp size", type=int, default=16384)
@@ -128,7 +127,7 @@ def parse_args():
     parser.add_argument("--encoder_embed_size", help="Transformer embedding size", type=int, default=64)
     parser.add_argument("--encoder_dropout", help="MPN/FFN/Transformer encoder dropout", type=float, default=0.04)
     parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="ReLU")
-    parser.add_argument("--out_hidden_sizes", help="Output layer hidden sizes", type=int, nargs='+', default=[256])
+    parser.add_argument("--out_hidden_sizes", help="Output layer hidden sizes", type=int, nargs='+', default=[600, 300])
     parser.add_argument("--out_activation", help="Output layer activation", type=str, default="PReLU")
     parser.add_argument("--out_dropout", help="Output layer dropout", type=float, default=0.05)
     parser.add_argument("--encoder_rnn_type", help="RNN type for graph encoder (gru/lstm)", type=str, default="gru")
@@ -267,23 +266,17 @@ def main(args):
         if not args.ddp:
             logging.info(f"Not loading from checkpoint, creating model {args.model_name}")
         if args.model_name == "FeedforwardEBM" or args.model_name == "FeedforwardTriple3indiv3prod1cos":
-            model = FF.FeedforwardTriple3indiv3prod1cos(args)
+            model = FF.FeedforwardEBM(args)
 
-        elif args.model_name == "GraphEBM":                     # Graph to energy
-            model = G2E.G2E(args)
-        elif args.model_name == "GraphEBM_Cross":               # Graph to energy, cross attention pool for r and p atoms
-            model = G2E.G2ECross(args)
-        elif args.model_name == "GraphEBM_projBoth":            # Graph to energy, project both reactants & products w/ dot product output
-            model = G2E.G2E_projBoth(args)
-        elif args.model_name == "GraphEBM_projBoth_FFout":      # Graph to energy, project both reactants & products, concat then feedforward output
-            model = G2E.G2E_projBoth_FFout(args)
-        elif args.model_name == "GraphEBM_sep_projBoth_FFout":  # Graph to energy, separate MPN encoders + projections, feedforward output
-            model = G2E.G2E_sep_projBoth_FFout(args)
+        elif args.model_name == "GraphEBM_1MPN":                # GraphEBM, shared MPN for r and p atoms, separately project reactants & products w/ dot product output
+            model = G2E.GraphEBM_1MPN(args)
+        elif args.model_name == "GraphEBM_2MPN":                # GraphEBM, separate MPN for r vs p atoms, separately project reactants & products, feedforward output
+            model = G2E.GraphEBM_2MPN(args)
             
         elif args.model_name == "TransformerEBM":               # Sequence to energy
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
             vocab = expt_utils.load_or_create_vocab(args)
-            model = S2E.S2E(args, vocab)
+            model = S2E.TransformerEBM(args, vocab)
         else:
             raise ValueError(f"Model {args.model_name} not supported!")
 

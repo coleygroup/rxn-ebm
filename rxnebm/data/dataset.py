@@ -104,7 +104,7 @@ class ReactionDatasetFingerprints(Dataset):
 
 
 class ReactionDatasetSMILES(Dataset):
-    """Dataset class for SMILES representation of reactions, should be good for both GNN and Transformer"""
+    """Dataset class for SMILES/Graph representation of reactions, should be good for both GNN and Transformer"""
     def __init__(
         self,
         args,
@@ -184,7 +184,7 @@ class ReactionDatasetSMILES(Dataset):
             self._masks.append(minibatch_masks)
 
     def precompute(self):
-        if self.args.do_compute_graph_feat:
+        if self.args.representation == 'graph':
             # for graph, we want to cache since the pre-processing is very heavy
             cache_smi = self.root / f"{self.rxn_smis_filename}.{self.args.cache_suffix}.cache_smi.pkl"
             cache_mask = self.root / f"{self.rxn_smis_filename}.{self.args.cache_suffix}.cache_mask.pkl"
@@ -278,7 +278,7 @@ class ReactionDatasetSMILES(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
-        if self.args.do_compute_graph_feat:
+        if self.args.representation == 'graph':
             minibatch_mol_index = self.minibatch_mol_indexes[idx]
             minibatch_graph_features = []
 

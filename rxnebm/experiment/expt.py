@@ -32,17 +32,6 @@ except Exception as e:
 ReLU = nn.ReLU()
 
 class Experiment:
-    """
-    Parameters
-    ----------
-    representation : str ['fingerprint', 'smiles']
-        which representation to use. affects which version of AugmentedData & ReactionDataset gets called.
-
-    load_checkpoint : Optional[bool] (Default = False)
-        whether to load from a previous checkpoint.
-        if True: load_optimizer, load_stats & begin_epoch must be provided
-    """
-
     def __init__(
         self,
         args: argparse.Namespace,
@@ -130,7 +119,7 @@ class Experiment:
                 precomp_file_prefix=args.precomp_file_prefix,
             )
             self.maxk = self.train_loader.dataset.data.shape[-1] // self.train_loader.dataset.input_dim
-        elif self.representation == "smiles":
+        elif self.representation in ["smiles", "graph"]:
             self._init_smi_dataloaders()
             self.maxk = len(self.train_loader.dataset._rxn_smiles_with_negatives[0])
         else:
@@ -218,10 +207,7 @@ class Experiment:
                                         verbose=True
                                         )
         else:
-            self.lr_scheduler = None 
-        # NOTE/TODO: lr_scheduler.load_state_dict(checkpoint['scheduler'])
-        # https://github.com/KaiyangZhou/deep-person-reid/blob/master/torchreid/utils/torchtools.py#L104
-        # https://discuss.pytorch.org/t/how-to-save-and-load-lr-scheduler-stats-in-pytorch/20208/2
+            self.lr_scheduler = None
 
         if saved_stats is None:
             raise ValueError("load_checkpoint requires saved_stats!")
@@ -363,7 +349,7 @@ class Experiment:
             root=self.root
         )
 
-        if self.args.do_compute_graph_feat:
+        if self.representation == 'graph':
             collate_fn = dataset_utils.graph_collate_fn_builder(
                 self.device, debug=False)
         else:
@@ -394,7 +380,7 @@ class Experiment:
         return _loader, _size, _sampler
 
     def _init_smi_dataloaders(self):
-        logging.info("Initialising SMILES dataloaders...")
+        logging.info("Initialising SMILES/Graph dataloaders...")
         self.train_loader, self.train_size, self.train_sampler = self._get_smi_dl(phase="train", shuffle=True)
         self.val_loader, self.val_size, self.val_sampler = self._get_smi_dl(phase="valid", shuffle=False)
         self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
@@ -845,7 +831,6 @@ class Experiment:
         self,
         phase: str = "test",
         save_energies: Optional[bool] = True,
-        name_energies: Optional[Union[str, bytes, os.PathLike]] = None,
         path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
     ) -> Tuple[Tensor, float]:
         """
@@ -857,9 +842,6 @@ class Experiment:
             whether to get energies from train/test/val phases
         save_energies : Optional[bool] (Default = True)
             whether to save the energy values to disk
-        name_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
-            name of the energy file to be saved
-            if None, defaults to f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
         path_to_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
             path to folder in which to save the energy outputs
             if None, defaults to path/to/rxnebm/energies 
@@ -943,8 +925,8 @@ class Experiment:
             path_to_energies = Path(__file__).resolve().parents[1] / "energies"
         else:
             path_to_energies = Path(path_to_energies)
-        if name_energies is None:
-            name_energies = f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
+
+        name_energies = f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
         if save_energies:
             logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
             torch.save(energies_combined, Path(path_to_energies / name_energies))
@@ -964,19 +946,6 @@ class Experiment:
         message: Optional[str] = "",
     ) -> Tensor:
         """
-        Computes top-k accuracy of trained model in classifying feasible vs infeasible chemical rxns
-        (i.e. minimum energy assigned to label 0 of each training sample)
-
-        Parameters
-        ----------
-        phase : str (Default = 'test') [train', 'test', 'valid']
-            whether to get energies from train/test/valid phases
-        save_energies: bool (Default = True)
-            whether to save the generated energies tensor to disk
-        name_energies: Union[str, bytes, os.PathLike] (Default = None)
-            filename of energies to save as a .pkl file
-            If None, automatically set to 'energies_<phase>_<self.expt_name>'
-
         Returns
         -------
         energies: tensor
@@ -1026,19 +995,3 @@ class Experiment:
 
     def test_distributed(self, saved_stats: Optional[dict] = None):
         raise NotImplementedError
-      
-# def accuracy(output, target, topk=(1,)):
-# """Computes the accuracy over the k top predictions for the specified values of k"""
-# with torch.no_grad():
-#     maxk = max(topk)
-#     batch_size = target.size(0)
-
-#     _, pred = output.topk(maxk, 1, True, True)
-#     pred = pred.t()
-#     correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-#     res = []
-#     for k in topk:
-#         correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-#         res.append(correct_k.mul_(100.0 / batch_size))
-#     return res

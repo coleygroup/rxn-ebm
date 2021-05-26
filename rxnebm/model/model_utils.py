@@ -39,8 +39,6 @@ def get_activation_function(activation: str) -> nn.Module:
         return nn.ELU()
     elif activation == 'Swish':
         return Swish()
-    elif activation == 'LearnedSwish':
-        return LearnedSwish()
     elif activation == 'Mish':
         return Mish()
     else:
@@ -51,16 +49,7 @@ class Swish(nn.Module):
         super().__init__()
     
     def forward(self, x):
-        return x * torch.sigmoid(x) 
-
-class LearnedSwish(nn.Module):
-    def __init__(self, slope = 1):
-        super().__init__()
-        self.slope = slope * torch.nn.Parameter(torch.ones(1))
-        self.slope.requiresGrad = True # trainable parameter 
-    
-    def forward(self, x):
-        return self.slope * x * torch.sigmoid(x) 
+        return x * torch.sigmoid(x)
 
 class Mish(nn.Module):
     '''
