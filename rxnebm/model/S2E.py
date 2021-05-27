@@ -18,10 +18,9 @@ def sequence_mask(lengths, maxlen: int):
     return mask
 
 
-class S2E(nn.Module):
+class TransformerEBM(nn.Module):
     def __init__(self, args,
-                 vocab: Dict[str, int],
-                 **kwargs):
+                 vocab: Dict[str, int]):
         super().__init__()
         self.model_repr = "TransformerEBM"
         self.args = args
@@ -56,7 +55,7 @@ class S2E(nn.Module):
         logging.info("Initializing weights for transformer")
         model_utils.initialize_weights(self, transformer=True)
 
-    def forward(self, batch, probs: Optional[Tensor] = None):
+    def forward(self, batch):
         """
         batch: a N x K x 1 tensor of N training samples
             each sample contains a positive rxn on the first column,
@@ -65,13 +64,6 @@ class S2E(nn.Module):
         batch, phase = batch
         batch_token_ids, batch_lens, batch_size = batch             # [N * K, t], [N * K]
         enc_in = batch_token_ids.transpose(0, 1).unsqueeze(-1)      # [N * K, t] => [t, N * K, 1]
-        # logging.info("---------------------batch_token_ids-------------------")
-        # logging.info(batch_token_ids.shape)
-        # logging.info("---------------------end_in-------------------")
-        # logging.info(enc_in.shape)
-        # logging.info("---------------------batch_lens-------------------")
-        # logging.info(batch_lens)
-        # logging.info(batch_lens.shape)
         lengths = torch.tensor([self.args.max_seq_len] * batch_lens.shape[0],
                                dtype=torch.long,
                                device=batch_lens.device)
@@ -81,11 +73,6 @@ class S2E(nn.Module):
         seq_masks = sequence_mask(                                  # [N * K] => [t, N * K]
             batch_lens, maxlen=self.args.max_seq_len)
         seq_masks = seq_masks.unsqueeze(-1)                         # [t, N * K] => [t, N * K, 1]
-
-        # mols_per_minibatch = encodings.shape[1] / batch_size
-        # TODO: for multi-GPU training, mols_per_minibatch == self.args.minibatch_size // torch.cuda.device_count()
-        # assert mols_per_minibatch == self.args.minibatch_size, \
-        #     f"calculated minibatch size: {mols_per_minibatch}, given in args: {self.args.minibatch_size}"
 
         encodings = encodings * seq_masks                           # mask out padding
         K = self.args.minibatch_size if phase == 'train' else self.args.minibatch_eval
@@ -109,12 +96,5 @@ class S2E(nn.Module):
         else:
             raise ValueError(f"Unsupported pooling method: {self.pooling_method}")
         
-        if probs is not None:
-            probs = probs.unsqueeze(dim=-1)                         # [N, K] => [N, K, 1]
-            energies = self.output(
-                torch.cat([pooled_encoding, probs], dim=-1)
-                )                                                   # [N, K, h] + [N, K, 1] => [N, K, h+1]
-        else:
-            energies = self.output(pooled_encoding)                 # [N, K, h] => [N, K, 1]
-        # del pooled_encoding, encodings, seq_masks, batch_token_ids
+        energies = self.output(pooled_encoding)                 # [N, K, h] => [N, K, 1]
         return energies.squeeze(dim=-1)                             # [N, K]

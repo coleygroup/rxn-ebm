@@ -37,38 +37,24 @@ class Experiment:
         args: argparse.Namespace,
         model: nn.Module,
         model_name: str,
-        model_args: dict,
         gpu: Optional[str] = None,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
         load_checkpoint: Optional[bool] = False,
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
-        saved_stats: Optional[dict] = None,
-        begin_epoch: Optional[int] = None,
-        vocab: Dict[str, int] = None,
+        vocab: Dict[str, int] = None
     ):
+        logging.info(f"\nInitialising experiment: {args.expt_name}")
         self.args = args
-        self.batch_size = args.batch_size
-        self.learning_rate = args.learning_rate
-        self.epochs = args.epochs
-        self.best_epoch = 0  # will be tracked during training
         self.vocab = vocab
 
-        self.early_stop = args.early_stop
-        if self.early_stop:
-            self.early_stop_criteria = args.early_stop_criteria
-            self.early_stop_patience = args.early_stop_patience
+        if self.args.early_stop:
             self.min_val_loss = float("+inf")  
             self.max_val_acc = float("-inf") 
             self.wait = 0  # counter for _check_earlystop()
         else:
-            self.early_stop_criteria = args.early_stop_criteria # still needed to track best_epoch
-            self.early_stop_patience = None
             self.min_val_loss = float("+inf") # still needed to track best_epoch
             self.max_val_acc = float("-inf") # still needed to track best_epoch
             self.wait = None
-
-        self.checkpoint = args.checkpoint
-        self.random_seed = args.random_seed
 
         if root:
             self.root = Path(root) 
@@ -76,11 +62,6 @@ class Experiment:
         else:
             self.root = Path(__file__).resolve().parents[1] / "data" / "cleaned_data"
             logging.info(f'Using default data root of {self.root}')
-        self.checkpoint_folder = Path(self.args.checkpoint_folder)
-
-        self.expt_name = args.expt_name
-        self.representation = args.representation
-        logging.info(f"\nInitialising experiment: {self.expt_name}")
 
         if gpu is not None: # doing DistributedDataParallel training
             rank = args.nr * args.gpus + gpu
@@ -97,7 +78,6 @@ class Experiment:
             self.rank = None
         self.model = model
         self.model_name = model_name
-        self.model_args = model_args
 
         if saved_optimizer is not None:
             self.optimizer_name = str(self.args.optimizer).split(' ')[0]
@@ -105,7 +85,6 @@ class Experiment:
             self.optimizer_name = args.optimizer
         self.lr_scheduler_name = args.lr_scheduler
 
-        self._collate_args()
         self.proposals_data = {}
         self.proposals_csv_filenames = defaultdict(str)
         for phase in ['train', 'valid', 'test']:
@@ -114,12 +93,10 @@ class Experiment:
                 self.proposals_data[phase] = pd.read_csv(self.root / self.proposals_csv_filenames[phase], index_col=None, dtype='str')
                 self.proposals_data[phase] = self.proposals_data[phase].drop(['orig_rxn_smi'], axis=1).values
 
-        if self.representation == 'fingerprint':
-            self._init_fp_dataloaders(
-                precomp_file_prefix=args.precomp_file_prefix,
-            )
+        if self.args.representation == 'fingerprint':
+            self._init_fp_dataloaders(precomp_rxnfp_prefix=args.precomp_rxnfp_prefix)
             self.maxk = self.train_loader.dataset.data.shape[-1] // self.train_loader.dataset.input_dim
-        elif self.representation in ["smiles", "graph"]:
+        elif self.args.representation in ["smiles", "graph"]:
             self._init_smi_dataloaders()
             self.maxk = len(self.train_loader.dataset._rxn_smiles_with_negatives[0])
         else:
@@ -129,54 +106,38 @@ class Experiment:
             # e.g. we can't calculate top-50 acc if we only have 1 positive + 10 negatives per minibatch
 
         if load_checkpoint:
-            self._load_checkpoint(saved_optimizer, saved_stats, begin_epoch)
+            self._load_checkpoint(saved_optimizer)
         else:
             self._init_optimizer_and_stats()
 
+        self.best_epoch = 0  # will be tracked during training
         self.train_losses = []
         self.val_losses = []
-        self.train_topk_accs = {}
-        self.val_topk_accs = {}
-        self.test_topk_accs = {}
-        self.k_to_calc = [1, 2, 3, 5, 10, 50]     # [1, 2, 3, 5, 10, 20, 50, 100] seems to slow down training...?
-        k_not_to_calc = []
-        for k in self.k_to_calc:
-            if k > self.maxk:
-                k_not_to_calc.append(k)
-            else:   # init empty lists; 1 value will be appended to each list per epoch
-                self.train_topk_accs[k] = []
-                self.val_topk_accs[k] = []
-                self.test_topk_accs[k] = None
-        for k in k_not_to_calc:
-            self.k_to_calc.remove(k)
+        self.train_topk_accs = defaultdict(lambda: [])
+        self.val_topk_accs = defaultdict(lambda: [])
+        self.test_topk_accs = defaultdict(lambda: np.nan)
+
+        self.k_to_calc = [1, 2, 3, 5, 10, 20, 50]
+        for i in reversed(range(len(self.k_to_calc))):
+            # reversed so that removing that k won't affect current i wrt future k
+            if self.k_to_calc[i] > self.maxk:
+                self.k_to_calc.pop(i)
+
+        self.k_to_test = [1, 2, 3, 5, 10, 20, 50]
+        for i in reversed(range(len(self.k_to_test))):
+            # reversed so that removing that k won't affect current i wrt future k
+            if self.k_to_test[i] > self.args.minibatch_eval:
+                self.k_to_test.pop(i)
         
         self.energies = {} # for self.get_topk_acc
-        self.true_ranks = {} # for self.get_topk_acc (finetuning)
+        self.true_ranks = {} # for self.get_topk_acc
 
     def __repr__(self):
-        return f"Experiment name: {self.expt_name}"
-
-    def _collate_args(self):
-        self.train_args = {
-            "epochs": self.epochs,
-            "batch_size": self.batch_size,
-            "learning_rate": self.learning_rate,
-            "lr_scheduler": self.lr_scheduler_name,
-            "early_stop": self.early_stop,
-            "early_stop_patience": self.early_stop_patience,
-            "random_seed": self.random_seed,
-            "expt_name": self.expt_name,
-            "device": self.device,
-            "model_name": self.model_name,
-            "optimizer": self.optimizer_name,
-            "args": self.args,
-        }
+        return f"Experiment name: {self.args.expt_name}"
 
     def _load_checkpoint(
         self,
         saved_optimizer: torch.optim.Optimizer,
-        saved_stats: dict,
-        begin_epoch: int,
     ):
         logging.info("Loading checkpoint...")
 
@@ -209,26 +170,9 @@ class Experiment:
         else:
             self.lr_scheduler = None
 
-        if saved_stats is None:
-            raise ValueError("load_checkpoint requires saved_stats!")
-        self.stats_filename = (
-            self.checkpoint_folder / f"{self.model_name}_{self.expt_name}_stats.pkl"
-        )
-        self.stats = {
-            "train_args": self.train_args, # new, provided as args
-            "model_args": self.model_args,
-            "train_time": 0, # reset to 0
-        }
-        if begin_epoch is None:
-            raise ValueError("load_checkpoint requires begin_epoch!")
-        self.begin_epoch = begin_epoch
-
     def _init_optimizer_and_stats(self): 
         logging.info("Initialising optimizer & stats...")
-        self.optimizer = model_utils.get_optimizer(self.optimizer_name)(
-                                self.model.parameters(), lr=self.learning_rate,
-                                weight_decay=self.args.weight_decay
-                            )
+        self.optimizer = model_utils.get_optimizer(self.optimizer_name)(self.model.parameters(), lr=self.args.learning_rate)
         if self.lr_scheduler_name == 'ReduceLROnPlateau':
             logging.info(f'Initialising {self.lr_scheduler_name}')
             if self.args.lr_scheduler_criteria == 'acc':
@@ -247,26 +191,16 @@ class Experiment:
                                         )
         else:
             logging.info('Not using any LR Scheduler!')
-            self.lr_scheduler = None 
-
-        self.begin_epoch = 0 
-        self.stats = {
-            "train_args": self.train_args,
-            "model_args": self.model_args,
-            "train_time": 0,
-        }
-        self.stats_filename = (
-            self.checkpoint_folder / f"{self.model_name}_{self.expt_name}_stats.pkl"
-        )
+            self.lr_scheduler = None
 
     def _init_fp_dataloaders(
         self,
-        precomp_file_prefix: str,
+        precomp_rxnfp_prefix: str,
     ):
         logging.info("Initialising dataloaders...")
         precomp_rxnfp_filenames = defaultdict(str) # precomputed rxn fp files (retro proposals)
         for phase in ["train", "valid", "test"]:
-            precomp_rxnfp_filenames[phase] = precomp_file_prefix + f"_{phase}.npz"
+            precomp_rxnfp_filenames[phase] = precomp_rxnfp_prefix + f"_{phase}.npz"
 
         if self.args.rxn_type == "sep":
             input_dim = self.args.rctfp_size + self.args.prodfp_size
@@ -292,7 +226,7 @@ class Experiment:
             self.train_sampler = None
         self.train_loader = DataLoader(
             train_dataset,
-            self.batch_size,
+            self.args.batch_size,
             shuffle=True if self.train_sampler is None else False,
             sampler=self.train_sampler
         )
@@ -349,7 +283,7 @@ class Experiment:
             root=self.root
         )
 
-        if self.representation == 'graph':
+        if self.args.representation == 'graph':
             collate_fn = dataset_utils.graph_collate_fn_builder(
                 self.device, debug=False)
         else:
@@ -368,7 +302,7 @@ class Experiment:
 
         _loader = DataLoader(
             _data,
-            batch_size=self.batch_size if phase == 'train' else self.args.batch_size_eval,
+            batch_size=self.args.batch_size if phase == 'train' else self.args.batch_size_eval,
             shuffle=shuffle,
             collate_fn=collate_fn,
             sampler=_sampler
@@ -386,15 +320,14 @@ class Experiment:
         self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
 
     def _check_earlystop(self, current_epoch):
-        if self.early_stop_criteria == 'loss': 
+        if self.args.early_stop_criteria == 'loss': 
             if self.min_val_loss - self.val_losses[-1] < 0:
-                if self.early_stop_patience <= self.wait:
+                if self.args.early_stop_patience <= self.wait:
                     logging.info(
                         f"\nEarly stopped at the end of epoch: {current_epoch}, \
                     train loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
                     \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}"
                     )
-                    self.stats["early_stop_epoch"] = current_epoch
                     self.to_break = 1  # will break loop
                 else:
                     self.wait += 1
@@ -404,12 +337,12 @@ class Experiment:
                 self.wait = 0
                 self.min_val_loss = min(self.min_val_loss, self.val_losses[-1])
 
-        elif self.early_stop_criteria.split('_')[-1] == 'acc':
-            k = int(self.early_stop_criteria.split('_')[0][-1:])
+        elif self.args.early_stop_criteria.split('_')[-1] == 'acc':
+            k = int(self.args.early_stop_criteria.split('_')[0][-1:])
             val_acc_to_compare = self.val_topk_accs[k][-1] 
 
             if self.max_val_acc - val_acc_to_compare > 0:
-                if self.early_stop_patience <= self.wait:
+                if self.args.early_stop_patience <= self.wait:
                     message = f"\nEarly stopped at the end of epoch: {current_epoch}, \
                     \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
                     \nval loss: {self.val_losses[-1]:.4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f} \
@@ -417,11 +350,10 @@ class Experiment:
                     logging.info(message)
                     if self.rank == 0 or self.rank is None:
                         try:
-                            message += f'{self.expt_name}'
+                            message += f'{self.args.expt_name}'
                             send_message(message)
                         except Exception as e:
                             pass
-                    self.stats["early_stop_epoch"] = current_epoch
                     self.to_break = 1  # will break loop
                 else:
                     self.wait += 1
@@ -433,23 +365,6 @@ class Experiment:
                 self.wait = 0
                 self.max_val_acc = max(self.max_val_acc, val_acc_to_compare)
 
-    def _update_stats(self):
-        self.stats["train_time"] = (
-            self.stats["train_time"] + (time.time() - self.start) / 60
-        )  # in minutes
-        self.start = time.time()
-        # a list with one value for each epoch
-        self.stats["train_losses"] = self.train_losses 
-        self.stats["train_topk_accs"] = self.train_topk_accs 
-
-        self.stats["val_losses"] = self.val_losses 
-        self.stats["val_topk_accs"] = self.val_topk_accs 
-
-        self.stats["min_val_loss"] = self.min_val_loss
-        self.stats["max_val_acc"] = self.max_val_acc
-        self.stats["best_epoch"] = self.best_epoch
-        torch.save(self.stats, self.stats_filename)
-
     def _checkpoint_model_and_opt(self, current_epoch: int):
         if self.gpu is not None:
             model_state_dict = self.model.module.state_dict()
@@ -457,20 +372,18 @@ class Experiment:
             model_state_dict = self.model.state_dict()
         checkpoint_dict = {
             "epoch": current_epoch,  # epochs are 0-indexed
-             "model_name": self.model_name,
+            "model_name": self.model_name,
             "state_dict": model_state_dict,
             "optimizer": self.optimizer.state_dict(),
-            "stats": self.stats,
         }
         checkpoint_filename = (
-            self.checkpoint_folder
-            / f"{self.model_name}_{self.expt_name}_checkpoint_{current_epoch:04d}.pth.tar"
+            self.args.checkpoint_folder
+            / f"{self.model_name}_{self.args.expt_name}_checkpoint.pth.tar"
         )
         torch.save(checkpoint_dict, checkpoint_filename)
 
     def _one_batch(
-        self, batch: Tensor, mask: Tensor,
-        probs: Optional[Tensor] = None, backprop: bool = True):
+        self, batch: Tensor, mask: Tensor, backprop: bool = True):
         """
         Passes one batch of samples through model to get energies & loss
         Does backprop if training 
@@ -479,7 +392,6 @@ class Experiment:
         energies = self.model(batch)  # size N x K
         # replace all-zero vectors with float('inf'), making those gradients 0 on backprop
         energies = torch.where(mask, energies, torch.tensor([float('inf')], device=mask.device))
-
         if backprop:
             # for training only: positives are the 0-th index of each minibatch (row)
             loss = (energies[:, 0] + torch.logsumexp(-energies, dim=1)).sum()
@@ -491,14 +403,16 @@ class Experiment:
             self.optimizer.step()
             return loss.item(), energies.cpu().detach()
         else:
-            # if fine-tuning: validation/testing, cannot calculate loss naively
+            # for validation/testing, cannot calculate loss naively
             # need the true_ranks of precursors from retrosynthesis models
             return energies.cpu().detach()
- 
+
     def train(self):
-        self.start = time.time()  # timeit.default_timer()
+        self.start = time.time()
         self.to_break = 0
-        for epoch in range(self.begin_epoch, self.epochs + self.begin_epoch):
+        running_topk_accs = defaultdict(lambda: np.nan)
+
+        for epoch in range(self.args.begin_epoch, self.args.epochs + self.args.begin_epoch):
             self.model.train()
             train_loss, train_correct_preds = 0, defaultdict(int)
             epoch_train_size = 0
@@ -514,11 +428,19 @@ class Experiment:
                     batch_data, batch_mask, backprop=True,
                 )
                 train_loss += batch_loss
-                train_batch_size = batch_energies.shape[0]
-                epoch_train_size += train_batch_size
 
                 if math.isnan(train_loss):
+                    msg = 'Training loss is nan and training diverged!'
+                    logging.info(msg)
+                    msg += f'\n{self.args.expt_name}'
+                    try:
+                        send_message(message)
+                    except Exception as e:
+                        logging.info(e)
                     raise ValueError('Training loss is nan')
+                    
+                train_batch_size = batch_energies.shape[0]
+                epoch_train_size += train_batch_size
                     
                 for k in self.k_to_calc: # various top-k accuracies
                     # index with lowest energy is what the model deems to be the most feasible rxn 
@@ -526,20 +448,12 @@ class Experiment:
                     # for training, true rxn is always at 0th-index 
                     batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0]
                     train_correct_preds[k] += batch_correct_preds
-                    if k == 1:
-                        running_top1_acc = train_correct_preds[k] / epoch_train_size
-                    elif k == 5:
-                        running_top5_acc = train_correct_preds[k] / epoch_train_size
-                    elif k == 10:
-                        running_top10_acc = train_correct_preds[k] / epoch_train_size
-                if 5 not in self.k_to_calc:
-                    running_top5_acc = np.nan 
-                if 10 not in self.k_to_calc:
-                    running_top10_acc = np.nan 
-                train_loader.set_description(f"training...loss={train_loss/epoch_train_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
+                    running_topk_accs[k] = train_correct_preds[k] / epoch_train_size
+                    
+                train_loader.set_description(f"training...loss={train_loss/epoch_train_size:.4f}, top-1 acc={running_topk_accs[1]:.4f}, top-5 acc={running_topk_accs[5]:.4f}, top-10 acc={running_topk_accs[10]:.4f}")
                 train_loader.refresh()
             
-            for k in self.k_to_calc:     
+            for k in self.k_to_calc:
                 self.train_topk_accs[k].append(train_correct_preds[k] / epoch_train_size) 
             self.train_losses.append(train_loss / epoch_train_size)
 
@@ -550,7 +464,6 @@ class Experiment:
                 val_loader = tqdm(self.val_loader, desc='validating...')
                 epoch_val_size = 0
                 for i, batch in enumerate(val_loader):
-                    # if i > 50: break
                     batch_data = batch[0]
                     if not isinstance(batch_data, tuple):
                         batch_data = batch_data.to(self.device)
@@ -568,7 +481,6 @@ class Experiment:
                     batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
                     batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
-                    
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
                     # (bcos nothing in the numerator, loss is undefined)
                     loss_numerator = batch_energies[
@@ -585,10 +497,233 @@ class Experiment:
                         batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
                         batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
                         val_correct_preds[k] += batch_correct_preds
+                        running_topk_accs[k] = val_correct_preds[k] / epoch_val_size
 
                         if k == 1:
-                            running_top1_acc = val_correct_preds[k] / epoch_val_size
                             # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                            try:
+                                for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
+                                    if j % (self.val_size // 5) == random.randint(0, 1) or j % (self.val_size // 8) == random.randint(0, 2):  # peek at a random sample of current batch to monitor training progress
+                                        rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                        rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                        rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                        rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                        rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+                                        rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+                                        rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+                                        rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
+
+                                        rxn_true_prod = self.proposals_data['valid'][batch_idx[rxn_idx], 0]
+                                        rxn_true_prec = self.proposals_data['valid'][batch_idx[rxn_idx], 1]
+                                        rxn_cand_precs = self.proposals_data['valid'][batch_idx[rxn_idx], 3:]
+                                        rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                        rxn_orig_prec = rxn_cand_precs[0]
+                                        rxn_orig_prec2 = rxn_cand_precs[1]
+                                        rxn_orig_prec3 = rxn_cand_precs[2]
+                                        logging.info(f'\ntrue product:                          \t\t\t\t{rxn_true_prod}')
+                                        logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+                                        if rxn_true_energy == 'NaN':
+                                            logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
+                                        else:
+                                            logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                        logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                        logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                        logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
+                                        break
+                            except Exception as e: # do nothing # https://stackoverflow.com/questions/11414894/extract-traceback-info-from-an-exception-object/14564261#14564261
+                                tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                                logging.info("".join(tb_str))
+                                logging.info('\nIndex out of range (last minibatch)')
+
+                    val_loss += batch_loss
+                    val_loader.set_description(f"validating...loss={val_loss/epoch_val_size:.4f}, top-1 acc={running_topk_accs[1]:.4f}, top-5 acc={running_topk_accs[5]:.4f}, top-10 acc={running_topk_accs[10]:.4f}")
+                    val_loader.refresh()
+                
+                for k in self.k_to_calc:
+                    self.val_topk_accs[k].append(val_correct_preds[k] / epoch_val_size)
+                self.val_losses.append(val_loss / epoch_val_size)
+
+            is_best = False
+            # track best_epoch to facilitate loading of best checkpoint
+            if self.args.early_stop_criteria == 'loss':
+                if self.val_losses[-1] < self.min_val_loss:
+                    self.best_epoch = epoch
+                    self.min_val_loss = self.val_losses[-1]
+                    is_best = True
+            elif self.args.early_stop_criteria.split('_')[-1] == 'acc':
+                k = int(self.args.early_stop_criteria.split('_')[0][-1:])
+                val_acc_to_compare = self.val_topk_accs[k][-1]
+                if val_acc_to_compare > self.max_val_acc:
+                    self.best_epoch = epoch
+                    self.max_val_acc = val_acc_to_compare
+                    is_best = True
+            
+            if (self.rank is None or self.rank == 0) and self.args.checkpoint and is_best:
+                self._checkpoint_model_and_opt(current_epoch=epoch)
+            if self.args.early_stop:
+                self._check_earlystop(current_epoch=epoch)
+                if self.to_break:  # is it time to early stop?
+                    break
+
+            if self.lr_scheduler_name == 'ReduceLROnPlateau': # update lr scheduler if we are using one 
+                if self.args.lr_scheduler_criteria == 'loss':
+                    self.lr_scheduler.step(self.val_losses[-1])
+                elif self.args.lr_scheduler_criteria == 'acc': # monitor top-1 acc for lr_scheduler 
+                    self.lr_scheduler.step(self.val_topk_accs[1][-1])
+                logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
+
+            epoch_train_accs = defaultdict(lambda: np.nan)
+            epoch_val_accs = defaultdict(lambda: np.nan)
+            for k in self.k_to_calc:
+                epoch_train_accs[k] = self.train_topk_accs[k][-1]
+            for k in self.k_to_test:
+                epoch_val_accs[k] = self.val_topk_accs[k][-1]
+                
+            message = f"\nEnd of epoch: {epoch}, \
+                \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {epoch_train_accs[1]:.4f}, \
+                \ntop-3 train acc: {epoch_train_accs[3]:.4f}, top-5 train acc: {epoch_train_accs[5]:.4f}, \
+                \ntop-10 train acc: {epoch_train_accs[10]:.4f}, top-20 train acc: {epoch_train_accs[20]:.4f}, \
+                \ntop-50 train acc: {epoch_train_accs[50]:.4f}, \
+                \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {epoch_val_accs[1]:.4f}, \
+                \ntop-3 val acc: {epoch_val_accs[3]:.4f}, top-5 val acc: {epoch_val_accs[5]:.4f} \
+                \ntop-10 val acc: {epoch_val_accs[10]:.4f}, top-20 train acc: {epoch_val_accs[20]:.4f}, \
+                \ntop-50 train acc: {epoch_val_accs[50]:.4f} \
+                \n"
+            logging.info(message)
+            try:
+                message += f'{self.args.expt_name}'
+                send_message(message)
+            except Exception as e:
+                logging.info(e)
+                logging.info("Don't worry about this - just a small hack to send messages to Telegram")
+            if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
+                logging.info('Stopping training as learning rate has dropped below 1e-6')
+                break
+
+        logging.info(f'Total training time: {(time.time() - self.start) / 60:.2f} mins')
+
+    def train_distributed(self):
+        torch.cuda.synchronize()
+        self.start = time.time()
+        self.to_break = 0
+        self.val_sampler.set_epoch(0) # no need to change this throughout training
+        running_topk_accs = defaultdict(lambda: np.nan)
+
+        for epoch in range(self.args.begin_epoch, self.args.epochs + self.args.begin_epoch):
+            self.train_sampler.set_epoch(epoch)
+            self.model.train()
+
+            train_loss, train_correct_preds = 0, defaultdict(int)
+            epoch_train_size = 0
+            if self.rank == 0: # or self.rank is None:
+                train_loader = tqdm(self.train_loader, desc='training...')
+            else:
+                train_loader = self.train_loader
+
+            for i, batch in enumerate(train_loader):
+                batch_data = batch[0]
+                if not isinstance(batch_data, tuple):
+                    batch_data = batch_data.cuda(non_blocking=True)
+                if self.model_name == 'TransformerEBM':
+                    batch_data = (batch_data, 'train')
+                batch_mask = batch[1].cuda(non_blocking=True)
+                batch_loss, batch_energies = self._one_batch(
+                    batch_data, batch_mask, backprop=True,
+                )
+                batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
+                dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
+                batch_loss = batch_loss.item()
+                train_loss += batch_loss
+
+                if math.isnan(train_loss):
+                    if self.rank == 0:
+                        msg = 'Training loss is nan and training diverged!'
+                        logging.info(msg)
+                        msg += f'\n{self.args.expt_name}'
+                        try:
+                            send_message(message)
+                        except Exception as e:
+                            logging.info(e)
+                    raise ValueError('Training loss is nan')
+
+                train_batch_size = batch_energies.shape[0]
+                train_batch_size = torch.tensor([train_batch_size]).cuda(self.gpu, non_blocking=True)
+                dist.all_reduce(train_batch_size, dist.ReduceOp.SUM)
+                train_batch_size = train_batch_size.item()
+                epoch_train_size += train_batch_size
+                    
+                for k in self.k_to_calc: # various top-k accuracies
+                    # index with lowest energy is what the model deems to be the most feasible rxn 
+                    batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
+                    # for training, true rxn is always at 0th-index 
+                    batch_correct_preds = torch.where(batch_preds == 0)[0].shape[0]
+                    batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
+                    dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+                    batch_correct_preds = batch_correct_preds.item()
+                    train_correct_preds[k] += batch_correct_preds                    
+                    running_topk_accs[k] = train_correct_preds[k] / epoch_train_size
+                
+                if self.rank == 0:
+                    train_loader.set_description(f"training (epoch {epoch}): loss={train_loss/epoch_train_size:.4f}, top-1 acc={running_topk_accs[1]:.4f}, top-5 acc={running_topk_accs[5]:.4f}, top-10 acc={running_topk_accs[10]:.4f}")
+                    train_loader.refresh()
+            
+            for k in self.k_to_calc:
+                self.train_topk_accs[k].append(train_correct_preds[k] / epoch_train_size)
+            self.train_losses.append(train_loss / epoch_train_size)
+
+            # validation
+            self.model.eval()
+            with torch.no_grad():
+                val_loss, val_correct_preds = 0, defaultdict(int)
+                if self.rank == 0:
+                    val_loader = tqdm(self.val_loader, desc='validating...')
+                else:
+                    val_loader = self.val_loader
+                epoch_val_size = 0
+                for i, batch in enumerate(val_loader):
+                    batch_data = batch[0]
+                    if not isinstance(batch_data, tuple):
+                        batch_data = batch_data.cuda(non_blocking=True)
+                    if self.model_name == 'TransformerEBM':
+                        batch_data = (batch_data, 'valid')
+                    batch_mask = batch[1].cuda(non_blocking=True)
+                    batch_energies = self._one_batch(
+                        batch_data, batch_mask, backprop=False
+                    )
+                    val_batch_size = batch_energies.shape[0]
+                    val_batch_size = torch.tensor([val_batch_size]).cuda(self.gpu, non_blocking=True)
+                    dist.all_reduce(val_batch_size, dist.ReduceOp.SUM)
+                    val_batch_size = val_batch_size.item()
+                    epoch_val_size += val_batch_size
+
+                    # for validation/test data, true rxn may not be present!
+                    batch_idx = batch[2] # List
+                    batch_true_ranks_array = self.proposals_data['valid'][batch_idx, 2].astype('int')
+                    batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
+                    batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                    # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
+                    # (bcos nothing in the numerator, loss is undefined)
+                    loss_numerator = batch_energies[
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                        batch_true_ranks_valid
+                    ]
+                    loss_denominator = batch_energies[
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                        :
+                    ]
+                    batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
+
+                    for k in self.k_to_test:
+                        # index with lowest energy is what the model deems to be the most feasible rxn
+                        batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]
+                        batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+                        batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
+                        dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+                        batch_correct_preds = batch_correct_preds.item()
+                        val_correct_preds[k] += batch_correct_preds
+                        running_topk_accs[k] = val_correct_preds[k] / epoch_val_size
+
+                        if k == 1 and self.rank == 0: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                             try:
                                 for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
                                     if j % (self.val_size // 5) == random.randint(0, 3) or j % (self.val_size // 8) == random.randint(0, 4):  # peek at a random sample of current batch to monitor training progress
@@ -608,7 +743,7 @@ class Experiment:
                                         rxn_orig_prec = rxn_cand_precs[0]
                                         rxn_orig_prec2 = rxn_cand_precs[1]
                                         rxn_orig_prec3 = rxn_cand_precs[2]
-                                        logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                        logging.info(f'\ntrue product:                          \t\t\t\t{rxn_true_prod}')
                                         logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
                                         if rxn_true_energy == 'NaN':
                                             logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
@@ -622,46 +757,41 @@ class Experiment:
                                 tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
                                 logging.info("".join(tb_str))
                                 logging.info('\nIndex out of range (last minibatch)')
-                        elif k == 5:
-                            running_top5_acc = val_correct_preds[k] / epoch_val_size
-                        elif k == 10:
-                            running_top10_acc = val_correct_preds[k] / epoch_val_size
-                    
-                    if 5 not in self.k_to_calc:
-                        running_top5_acc = np.nan
-                    if 10 not in self.k_to_calc:
-                        running_top10_acc = np.nan
+
+                    batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
+                    dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
+                    batch_loss = batch_loss.item()
                     val_loss += batch_loss
-                    val_loader.set_description(f"validating...loss={val_loss/epoch_val_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
-                    val_loader.refresh()
-                
-                for k in self.k_to_calc:
+
+                    if self.rank == 0:
+                        val_loader.set_description(f"validating (epoch {epoch}): loss={val_loss/epoch_val_size:.4f}, top-1 acc={running_topk_accs[1]:.4f}, top-5 acc={running_topk_accs[5]:.4f}, top-10 acc={running_topk_accs[10]:.4f}")
+                        val_loader.refresh()
+ 
+                for k in self.k_to_test:
                     self.val_topk_accs[k].append(val_correct_preds[k] / epoch_val_size)
                 self.val_losses.append(val_loss / epoch_val_size)
 
+            is_best = False
             # track best_epoch to facilitate loading of best checkpoint
-            if self.early_stop_criteria == 'loss':
+            if self.args.early_stop_criteria == 'loss':
                 if self.val_losses[-1] < self.min_val_loss:
                     self.best_epoch = epoch
                     self.min_val_loss = self.val_losses[-1]
                     is_best = True
-            elif self.early_stop_criteria.split('_')[-1] == 'acc':
-                k = int(self.early_stop_criteria.split('_')[0][-1:])
+            elif self.args.early_stop_criteria.split('_')[-1] == 'acc':
+                k = int(self.args.early_stop_criteria.split('_')[0][-1:])
                 val_acc_to_compare = self.val_topk_accs[k][-1]
                 if val_acc_to_compare > self.max_val_acc:
                     self.best_epoch = epoch
                     self.max_val_acc = val_acc_to_compare
                     is_best = True
             
-            if 'Feedforward' in self.model_name: # as FF-EBM weights are massive, only save if is_best
-                if (self.rank is None or self.rank == 0) and self.checkpoint and is_best:
-                    self._checkpoint_model_and_opt(current_epoch=epoch)
-            else: # for G2E/S2E, models are small, is ok to save regularly
-                if (self.rank is None or self.rank == 0) and self.checkpoint:
-                    self._checkpoint_model_and_opt(current_epoch=epoch)
+            if self.rank == 0 and self.args.checkpoint and is_best:
+                self._checkpoint_model_and_opt(current_epoch=epoch)
 
-            self._update_stats()
-            if self.early_stop:
+            dist.barrier() # wait for process 0 to save model checkpoint
+            torch.cuda.synchronize()
+            if self.args.early_stop:
                 self._check_earlystop(current_epoch=epoch)
                 if self.to_break:  # is it time to early stop?
                     break
@@ -673,45 +803,37 @@ class Experiment:
                     self.lr_scheduler.step(self.val_topk_accs[1][-1])
                 logging.info(f'\nCalled a step of ReduceLROnPlateau, current LR: {self.optimizer.param_groups[0]["lr"]}')
 
-            if 3 in self.train_topk_accs:
-                epoch_top3_train_acc = self.train_topk_accs[3][-1]
-                epoch_top3_val_acc = self.val_topk_accs[3][-1]
-            else:
-                epoch_top3_train_acc = np.nan
-                epoch_top3_val_acc = np.nan
-            if 5 in self.train_topk_accs:
-                epoch_top5_train_acc = self.train_topk_accs[5][-1]
-                epoch_top5_val_acc = self.val_topk_accs[5][-1]
-            else:
-                epoch_top5_train_acc = np.nan
-                epoch_top5_val_acc = np.nan
-            if 10 in self.train_topk_accs:
-                epoch_top10_train_acc = self.train_topk_accs[10][-1]
-                epoch_top10_val_acc = self.val_topk_accs[10][-1]
-            else:
-                epoch_top10_train_acc = np.nan
-                epoch_top10_val_acc = np.nan
+            epoch_train_accs = defaultdict(lambda: np.nan)
+            epoch_val_accs = defaultdict(lambda: np.nan)
+            for k in self.k_to_calc:
+                epoch_train_accs[k] = self.train_topk_accs[k][-1]
+            for k in self.k_to_test:
+                epoch_val_accs[k] = self.val_topk_accs[k][-1]
 
-            message = f"\nEnd of epoch: {epoch}, \
-                \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {self.train_topk_accs[1][-1]:.4f}, \
-                \ntop-3 train acc: {epoch_top3_train_acc:.4f}, top-5 train acc: {epoch_top5_train_acc:.4f}, \
-                \ntop-10 train acc: {epoch_top10_train_acc:.4f}, \
-                \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {self.val_topk_accs[1][-1]:.4f}, \
-                \ntop-3 val acc: {epoch_top3_val_acc:.4f}, top-5 val acc: {epoch_top5_val_acc:.4f} \
-                \ntop-10 val acc: {epoch_top10_val_acc:.4f} \
-                \n"
-            logging.info(message)
-            try:
-                message += f'{self.expt_name}'
-                send_message(message)
-            except Exception as e:
-                logging.info(e)
-                logging.info("Don't worry about this - just a small hack to send messages to Telegram")
-            if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
-                logging.info('Stopping training as learning rate has dropped below 1e-6')
-                break 
+            if self.rank == 0:
+                message = f"\nEnd of epoch: {epoch}, \
+                    \ntrain loss: {self.train_losses[-1]:.4f}, top-1 train acc: {epoch_train_accs[1]:.4f}, \
+                    \ntop-3 train acc: {epoch_train_accs[3]:.4f}, top-5 train acc: {epoch_train_accs[5]:.4f}, \
+                    \ntop-10 train acc: {epoch_train_accs[10]:.4f}, top-20 train acc: {epoch_train_accs[20]:.4f}, \
+                    \ntop-50 train acc: {epoch_train_accs[50]:.4f}, \
+                    \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {epoch_val_accs[1]:.4f}, \
+                    \ntop-3 val acc: {epoch_val_accs[3]:.4f}, top-5 val acc: {epoch_val_accs[5]:.4f} \
+                    \ntop-10 val acc: {epoch_val_accs[10]:.4f}, top-20 train acc: {epoch_val_accs[20]:.4f}, \
+                    \ntop-50 train acc: {epoch_val_accs[50]:.4f} \
+                    \n"
+                logging.info(message)
+                try:
+                    message += f'{self.args.expt_name}'
+                    send_message(message)
+                except Exception as e:
+                    logging.info(e)
+                    logging.info("Don't worry about this - just a small hack to send messages to Telegram")
+                if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
+                    logging.info('Stopping training as learning rate has dropped below 1e-6')
+                    break
 
-        logging.info(f'Total training time: {self.stats["train_time"]}')
+        if self.rank == 0:
+            logging.info(f'Total training time: {(time.time() - self.start) / 60:.2f} mins')
 
     def test(self):
         """
@@ -722,16 +844,13 @@ class Experiment:
         if self.test_loader is None: # running G2E
             self.test_loader, self.test_size, _ = self._get_smi_dl(phase="test", shuffle=False)
         test_loader = tqdm(self.test_loader, desc='testing...')
-        self.k_to_test = [1, 2, 3, 5, 10, 20, 50]
-        for i in reversed(range(len(self.k_to_test))):
-            # reversed so that removing that k won't affect current i wrt future k
-            if self.k_to_test[i] > self.args.minibatch_eval:
-                self.k_to_test.pop(i)
+
+        running_topk_accs = defaultdict(lambda: np.nan)
         with torch.no_grad():
             epoch_test_size = 0
             for i, batch in enumerate(test_loader):
                 batch_data = batch[0]
-                if not isinstance(batch_data, tuple): # not sure what's the purpose of this
+                if not isinstance(batch_data, tuple):
                     batch_data = batch_data.to(self.device)
                 if self.model_name == 'TransformerEBM':
                     batch_data = (batch_data, 'test')
@@ -763,9 +882,9 @@ class Experiment:
                     batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
                     batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
                     test_correct_preds[k] += batch_correct_preds
+                    running_topk_accs[k] = test_correct_preds[k] / epoch_test_size
 
                     if k == 1:
-                        running_top1_acc = test_correct_preds[k] / epoch_test_size
                         # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
                         try:
                             for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
@@ -786,7 +905,7 @@ class Experiment:
                                     rxn_orig_prec = rxn_cand_precs[0]
                                     rxn_orig_prec2 = rxn_cand_precs[1]
                                     rxn_orig_prec3 = rxn_cand_precs[2]
-                                    logging.info(f'\ntrue product:                          \t\t\t\t\t{rxn_true_prod}')
+                                    logging.info(f'\ntrue product:                          \t\t\t\t{rxn_true_prod}')
                                     logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
                                     if rxn_true_energy == 'NaN':
                                         logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
@@ -800,24 +919,16 @@ class Experiment:
                             tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
                             logging.info("".join(tb_str))
                             logging.info('\nIndex out of range (last minibatch)')
-                    elif k == 5:
-                        running_top5_acc = test_correct_preds[k] / epoch_test_size
-                    elif k == 10:
-                        running_top10_acc = test_correct_preds[k] / epoch_test_size
 
-                if 5 not in self.k_to_calc:
-                    running_top5_acc = np.nan
-                if 10 not in self.k_to_calc:
-                    running_top10_acc = np.nan
                 test_loss += batch_loss
-                test_loader.set_description(f"testing...loss={test_loss / epoch_test_size:.4f}, top-1 acc={running_top1_acc:.4f}, top-5 acc={running_top5_acc:.4f}, top-10 acc={running_top10_acc:.4f}")
+                test_loader.set_description(f"testing...loss={test_loss / epoch_test_size:.4f}, top-1 acc={running_topk_accs[1]:.4f}, top-5 acc={running_topk_accs[5]:.4f}, top-10 acc={running_topk_accs[10]:.4f}")
                 test_loader.refresh()
                 
             for k in self.k_to_test:
                 self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size # self.test_size
 
         logging.info(f'\nTest loss: {test_loss / epoch_test_size:.4f}')
-        message = f"{self.expt_name}\n"
+        message = f"{self.args.expt_name}\n"
         for k in self.k_to_test:
             this_topk_message = f'Test top-{k} accuracy: {100 * self.test_topk_accs[k]:.3f}%'
             logging.info(this_topk_message)
@@ -826,32 +937,133 @@ class Experiment:
             send_message(message)
         except Exception as e:
             pass
+
+    def test_distributed(self):
+        """
+        Evaluates the model on the test set
+        """
+        self.model.eval()
+        test_loss, test_correct_preds = 0, defaultdict(int)
+        if self.test_loader is None: # running G2E
+            self.test_loader, self.test_size, self.test_sampler = self._get_smi_dl(phase="test", shuffle=False)
+        self.test_sampler.set_epoch(0)
+        if self.rank == 0:
+            test_loader = tqdm(self.test_loader, desc='testing...')
+        else:
+            test_loader = self.test_loader
         
+        running_topk_accs = defaultdict(lambda: np.nan)
+        with torch.no_grad():
+            epoch_test_size = 0
+            for i, batch in enumerate(test_loader):
+                batch_data = batch[0]
+                if not isinstance(batch_data, tuple):
+                    batch_data = batch_data.cuda(non_blocking=True)
+                if self.model_name == 'TransformerEBM':
+                    batch_data = (batch_data, 'test')
+                batch_mask = batch[1].cuda(non_blocking=True)
+                batch_energies = self._one_batch(
+                    batch_data, batch_mask, backprop=False,
+                )
+                test_batch_size = batch_energies.shape[0]
+                test_batch_size = torch.tensor([test_batch_size]).cuda(self.gpu, non_blocking=True)
+                dist.all_reduce(test_batch_size, dist.ReduceOp.SUM)
+                test_batch_size = test_batch_size.item()
+                epoch_test_size += test_batch_size
+
+                # for validation/test data, true rxn may not be present!
+                batch_idx = batch[2]
+                batch_true_ranks_array = self.proposals_data['test'][batch_idx, 2].astype('int')
+                batch_true_ranks_valid = batch_true_ranks_array[batch_true_ranks_array < self.args.minibatch_eval]
+                batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
+                # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation
+                # (bcos nothing in the numerator, loss is undefined)
+                loss_numerator = batch_energies[
+                    np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                    batch_true_ranks_valid
+                ]
+                loss_denominator = batch_energies[
+                    np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval],
+                    :
+                ]
+                batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum().item()
+
+                for k in self.k_to_test:
+                    # index with lowest energy is what the model deems to be the most feasible rxn
+                    batch_preds = torch.topk(batch_energies, k=k, dim=1, largest=False)[1]  
+                    batch_correct_preds = torch.where(batch_preds == batch_true_ranks)[0].shape[0]
+                    batch_correct_preds = torch.tensor([batch_correct_preds]).cuda(self.gpu, non_blocking=True)
+                    dist.all_reduce(batch_correct_preds, dist.ReduceOp.SUM)
+                    batch_correct_preds = batch_correct_preds.item()
+                    test_correct_preds[k] += batch_correct_preds
+                    running_topk_accs[k] = test_correct_preds[k] / epoch_test_size
+
+                    if k == 1 and self.rank == 0: # overhead is only 5 ms, will check ~5 times each epoch (regardless of batch_size)
+                        try:
+                            for j in range(i * self.args.batch_size_eval, (i+1) * self.args.batch_size_eval):
+                                if j % (self.test_size // 5) == random.randint(0, 3) or j % (self.test_size // 8) == random.randint(0, 5):  # peek at a random sample of current batch to monitor training progress
+                                    rxn_idx = random.sample(list(range(self.args.batch_size_eval)), k=1)[0]
+                                    rxn_true_rank = batch_true_ranks_array[rxn_idx]
+                                    rxn_pred_rank = batch_preds[rxn_idx, 0].item()
+                                    rxn_pred_energy = batch_energies[rxn_idx, rxn_pred_rank].item()
+                                    rxn_true_energy = batch_energies[rxn_idx, rxn_true_rank].item() if rxn_true_rank != 9999 else 'NaN'
+                                    rxn_orig_energy = batch_energies[rxn_idx, 0].item()
+                                    rxn_orig_energy2 = batch_energies[rxn_idx, 1].item()
+                                    rxn_orig_energy3 = batch_energies[rxn_idx, 2].item()
+
+                                    rxn_true_prod = self.proposals_data['test'][batch_idx[rxn_idx], 0]
+                                    rxn_true_prec = self.proposals_data['test'][batch_idx[rxn_idx], 1]
+                                    rxn_cand_precs = self.proposals_data['test'][batch_idx[rxn_idx], 3:]
+                                    rxn_pred_prec = rxn_cand_precs[batch_preds[rxn_idx]]
+                                    rxn_orig_prec = rxn_cand_precs[0]
+                                    rxn_orig_prec2 = rxn_cand_precs[1]
+                                    rxn_orig_prec3 = rxn_cand_precs[2]
+                                    logging.info(f'\ntrue product:                          \t\t\t\t{rxn_true_prod}')
+                                    logging.info(f'pred precursor (rank {rxn_pred_rank}, energy = {rxn_pred_energy:+.4f}):\t\t\t{rxn_pred_prec}')
+                                    if rxn_true_energy == 'NaN':
+                                        logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy}):\t\t\t\t{rxn_true_prec}')
+                                    else:
+                                        logging.info(f'true precursor (rank {rxn_true_rank}, energy = {rxn_true_energy:+.4f}):\t\t\t{rxn_true_prec}')
+                                    logging.info(f'orig precursor (rank 0, energy = {rxn_orig_energy:+.4f}):\t\t\t{rxn_orig_prec}')
+                                    logging.info(f'orig precursor (rank 1, energy = {rxn_orig_energy2:+.4f}):\t\t\t{rxn_orig_prec2}')
+                                    logging.info(f'orig precursor (rank 2, energy = {rxn_orig_energy3:+.4f}):\t\t\t{rxn_orig_prec3}\n')
+                                    break
+                        except Exception as e:
+                            tb_str = traceback.format_exception(etype=type(e), value=e, tb=e.__traceback__)
+                            logging.info("".join(tb_str))
+                            logging.info('\nIndex out of range (last minibatch)')
+                
+                batch_loss = torch.tensor([batch_loss]).cuda(self.gpu, non_blocking=True)
+                dist.all_reduce(batch_loss, dist.ReduceOp.SUM)
+                batch_loss = batch_loss.item()
+                test_loss += batch_loss
+                if self.rank == 0:
+                    test_loader.set_description(f"testing...loss={test_loss / test_batch_size:.4f}, top-1 acc={running_topk_accs[1]:.4f}, top-5 acc={running_topk_accs[5]:.4f}, top-10 acc={running_topk_accs[10]:.4f}")
+                    test_loader.refresh()
+                
+            for k in self.k_to_test:
+                self.test_topk_accs[k] = test_correct_preds[k] / epoch_test_size
+        
+        dist.barrier()
+        message = f"{self.args.expt_name}\n"
+        if self.rank == 0:
+            logging.info(f'\nTest loss: {test_loss / epoch_test_size:.4f}')
+            for k in self.k_to_test:
+                this_topk_message = f'Test top-{k} accuracy: {100 * self.test_topk_accs[k]:.3f}%'
+                logging.info(this_topk_message)
+                message += this_topk_message + '\n'
+            try:
+                send_message(message)
+            except Exception as e:
+                pass
+
     def get_energies_and_loss(
         self,
         phase: str = "test",
-        save_energies: Optional[bool] = True,
-        path_to_energies: Optional[Union[str, bytes, os.PathLike]] = None,
+        save_energies: Optional[bool] = False,
     ) -> Tuple[Tensor, float]:
         """
-        Gets raw energy values from a trained model on a given dataloader 
-
-        Parameters
-        ----------
-        phase : str (Default = 'test') [train', 'test', 'valid']
-            whether to get energies from train/test/val phases
-        save_energies : Optional[bool] (Default = True)
-            whether to save the energy values to disk
-        path_to_energies : Optional[Union[str, bytes, os.PathLike]] (Default = None)
-            path to folder in which to save the energy outputs
-            if None, defaults to path/to/rxnebm/energies 
-
-        Returns
-        -------
-        energies : Tensor
-            energies of shape (# rxns, 1 + # neg rxns)
-        loss : float
-            the loss value on the provided dataset
+        Gets raw energy values from a trained model on a given dataloader
         """
         if phase == "test":
             dataloader = self.test_loader
@@ -885,8 +1097,8 @@ class Experiment:
                     batch_true_ranks = torch.as_tensor(batch_true_ranks_array).unsqueeze(dim=-1)
                     # slightly tricky as we have to ignore rxns with no 'positive' rxn for loss calculation (bcos nothing in the numerator)
                     loss_numerator = batch_energies[
-                    np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
-                    batch_true_ranks_valid
+                        np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], #!= 9999],
+                        batch_true_ranks_valid
                     ]
                     loss_denominator = batch_energies[np.arange(batch_energies.shape[0])[batch_true_ranks_array < self.args.minibatch_eval], :]
                     batch_loss = (loss_numerator + torch.logsumexp(-loss_denominator, dim=1)).sum()
@@ -898,7 +1110,6 @@ class Experiment:
                 loss /= epoch_data_size
                 energies_combined = torch.cat(energies_combined, dim=0).squeeze(dim=-1).cpu() 
                 true_ranks = torch.cat(true_ranks, dim=0).squeeze(dim=-1).cpu()
-
             else: # training data, the positive (published) reaction is always at the 0-th index
                 energies_combined = []
                 epoch_data_size = 0
@@ -921,17 +1132,12 @@ class Experiment:
                 loss /= epoch_data_size
             logging.info(f"\nLoss on {phase} : {loss:.4f}")
 
-        if path_to_energies is None:
-            path_to_energies = Path(__file__).resolve().parents[1] / "energies"
-        else:
-            path_to_energies = Path(path_to_energies)
-
-        name_energies = f"{self.model_name}_{self.expt_name}_energies_{phase}.pkl"
         if save_energies:
+            name_energies = f"{self.model_name}_{self.args.expt_name}_energies_{phase}.pkl"
+            path_to_energies = Path(__file__).resolve().parents[1] / "energies"
             logging.info(f"Saving energies at: {Path(path_to_energies / name_energies)}")
             torch.save(energies_combined, Path(path_to_energies / name_energies))
 
-        self.stats[f"{phase}_loss_best"] = loss
         self.energies[phase] = energies_combined
         if phase != 'train':
             self.true_ranks[phase] = true_ranks.unsqueeze(dim=-1)
@@ -956,12 +1162,9 @@ class Experiment:
         if phase != 'train':
             if phase not in self.energies:
                 energies, loss, true_ranks = self.get_energies_and_loss(phase=phase)
-            if self.energies[phase].shape[1] >= k: 
+            if self.energies[phase].shape[1] >= k:
                 pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
                 topk_accuracy = torch.where(pred_labels == self.true_ranks[phase])[0].shape[0] / pred_labels.shape[0]
-
-                self.stats[f"{phase}_top{k}_acc_best"] = topk_accuracy
-                torch.save(self.stats, self.stats_filename)
 
                 this_topk_message = f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%"
                 logging.info(this_topk_message)
@@ -973,14 +1176,10 @@ class Experiment:
             if phase not in self.energies:
                 energies, loss = self.get_energies_and_loss(phase=phase)
                 self.energies[phase] = energies
-                self.stats[f"{phase}_loss_best"] = loss
             
-            if self.energies[phase].shape[1] >= k: 
+            if self.energies[phase].shape[1] >= k:
                 pred_labels = torch.topk(self.energies[phase], k=k, dim=1, largest=False)[1]
-                topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0] 
-
-                self.stats[f"{phase}_top{k}_acc_best"] = topk_accuracy
-                torch.save(self.stats, self.stats_filename)
+                topk_accuracy = torch.where(pred_labels == 0)[0].shape[0] / pred_labels.shape[0]
 
                 this_topk_message = f"Top-{k} acc ({phase}): {100 * topk_accuracy:.3f}%"
                 logging.info(this_topk_message)
@@ -988,10 +1187,3 @@ class Experiment:
             else:
                 logging.info(f'{k} out of range for dimension 1 on ({phase})')
         return message
-
-
-    def train_distributed(self):
-        raise NotImplementedError
-
-    def test_distributed(self, saved_stats: Optional[dict] = None):
-        raise NotImplementedError

@@ -21,10 +21,10 @@ from typing import Dict, List, Optional, Union
 from rdkit import RDLogger
 
 from rxnebm.data import dataset
-from rxnebm.experiment import expt, expt_dist, expt_utils
+from rxnebm.experiment import expt, expt_utils
 from rxnebm.model import FF, G2E, S2E, model_utils
 
-torch.backends.cudnn.benchmark = False # turn off for G2E
+torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
 
 try:
@@ -40,17 +40,16 @@ def parse_args():
     parser.add_argument("--model_name", help="model name", type=str)
     parser.add_argument("--do_train", help="whether to train", action="store_true")
     parser.add_argument("--do_test", help="whether to evaluate on test data after training", action="store_true")
-    parser.add_argument("--do_get_energies_and_acc", help="whether to do full testing and generate energies on all 3 phases after training", action="store_true")
+    parser.add_argument("--do_get_energies_and_acc", help="whether to do full testing on all 3 phases after training", action="store_true")
     parser.add_argument("--load_checkpoint", help="whether to load from checkpoint", action="store_true")
     parser.add_argument("--test_on_train", help="whether to evaluate on the training data", action="store_true")
-    parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY)", type=str, default=date.today().strftime("%d_%m_%Y"))
-    parser.add_argument("--load_epoch", help="epoch to load from (optional, if not given, always loads best checkpoint based on validation top-1 accuracy", 
-                        type=int)
+    parser.add_argument("--date_trained", help="date trained (DD_MM_YYYY), for storing & reloading checkpoints", type=str, default=date.today().strftime("%d_%m_%Y"))
     parser.add_argument("--testing_best_ckpt", help="helper arg indicating if we are just testing best ckpt. You shouldn't need to touch this", action="store_true")
     parser.add_argument("--expt_name", help="experiment name", type=str)
     parser.add_argument("--old_expt_name", help="old experiment name", type=str)
     parser.add_argument("--checkpoint_root", help="optional, relative path of checkpoint root (it is a component of checkpoint_folder: checkpoint_folder = checkpoint_root / date_trained)", type=str)
     parser.add_argument("--root", help="input data folder, if None it will be set to default rxnebm/data/cleaned_data/", type=str)
+    parser.add_argument("--save_energies", help="whether to save energies assigned by EBM to every reaction in dataset", action="store_true")
     # distributed arguments
     parser.add_argument("--ddp", help="whether to do DDP training", action="store_true")
     parser.add_argument('-n', '--nodes', default=1, type=int)
@@ -58,7 +57,7 @@ def parse_args():
                         help='number of gpus per node')
     parser.add_argument('-nr', '--nr', default=0, type=int,
                         help='ranking within the nodes')
-    parser.add_argument("--port", help="please specify it yourself by just picking a random number between 0 and 65530", 
+    parser.add_argument("--port", help="please specify it yourself by just picking a random number between 0 and 65535", 
                         type=int, default=0)
     # file names
     parser.add_argument("--log_file", help="log_file", type=str, default="")
@@ -160,12 +159,9 @@ def main_dist(
         args,
         model,
         model_name,
-        model_args: dict,
         root: Optional[Union[str, bytes, os.PathLike]] = None,
         load_checkpoint: Optional[bool] = False,
         saved_optimizer: Optional[torch.optim.Optimizer] = None,
-        saved_stats: Optional[dict] = None,
-        begin_epoch: Optional[int] = None,
         vocab: Dict[str, int] = None,
     ):
     print('Initiating process group')
@@ -180,29 +176,20 @@ def main_dist(
     
     if gpu == 0:
         setup_logger(args)
-
         logging.info("Logging args")
         logging.info(vars(args))
-        
-        if args.load_checkpoint:
-            logging.info(f'Loading checkpoint of epoch {begin_epoch - 1}')
-
         logging.info("Logging model summary")
         logging.info(model)
         logging.info(f"\nModel #Params: {sum([x.nelement() for x in model.parameters()]) / 1000} k")
-        logging.info(f'{model_args}')
 
     logging.info("Setting up DDP experiment")
-    experiment = expt_dist.Experiment(
+    experiment = expt.Experiment(
         gpu=gpu,
         args=args,
         model=model,
         model_name=args.model_name,
-        model_args=model_args,
         load_checkpoint=args.load_checkpoint,
         saved_optimizer=saved_optimizer,
-        saved_stats=saved_stats,
-        begin_epoch=begin_epoch,
         vocab=vocab,
         root=root
     )
@@ -216,7 +203,6 @@ def main_dist(
         args.ddp = False
         args.old_expt_name = args.expt_name
         args.load_checkpoint = True
-        args.load_epoch = None # to load best checkpoint based on val top-1
         args.do_train = False
         args.testing_best_ckpt = True
 
@@ -224,17 +210,13 @@ def main_dist(
         main(args)
         
 def main(args):
+    vocab = {}
     model_utils.seed_everything(args.random_seed) # seed before even initializing model    
     if not args.ddp: # if ddp, we should only log from main process (0), not from all processes
         logging.info("Logging args")
         logging.info(vars(args))
-
-    # hard-coded
-    saved_model, saved_optimizer, saved_stats = None, None, None
-    begin_epoch = 0
-    vocab = {}
-    model_args = {}
-    if isinstance(args.encoder_hidden_size, list) and args.model_name.split('_')[0] == 'GraphEBM':
+    if isinstance(args.encoder_hidden_size, list) and 'GraphEBM' in args.model_name:
+        # args.encoder_hidden_size can be a list of multiple values for FeedforwardEBM, but not for GraphEBM
         assert len(args.encoder_hidden_size) == 1, 'MPN encoder_hidden_size must be a single integer!'
         args.encoder_hidden_size = args.encoder_hidden_size[0]
 
@@ -246,34 +228,26 @@ def main(args):
             # we DO require that checkpoints to be loaded are in the same root folder as checkpoints to be saved, for simplicity's sake
             load_trained=True, date_trained=args.date_trained, ckpt_root=args.checkpoint_root
         )
-        saved_stats_filename = f'{args.model_name}_{args.old_expt_name}_stats.pkl'
-        saved_model, saved_optimizer, saved_stats = expt_utils.load_model_opt_and_stats(
-            args, saved_stats_filename, old_checkpoint_folder, args.optimizer,
-            load_epoch=args.load_epoch 
+        model, saved_optimizer, args.begin_epoch = expt_utils.load_model_and_opt(
+            args, old_checkpoint_folder, args.optimizer
         )
         if not args.ddp:
             logging.info(f"Saved model {args.model_name} loaded")
-        model = saved_model
-        model_args = saved_stats["model_args"]
-        if args.load_epoch is not None:
-            begin_epoch = int(args.load_epoch) + 1
-        else:
-            begin_epoch = int(saved_stats["best_epoch"]) + 1
-
         if args.vocab_file is not None:
             vocab = expt_utils.load_or_create_vocab(args)
     else:
+        saved_optimizer = None
+        args.begin_epoch = 0
+        
         if not args.ddp:
             logging.info(f"Not loading from checkpoint, creating model {args.model_name}")
-        if args.model_name == "FeedforwardEBM" or args.model_name == "FeedforwardTriple3indiv3prod1cos":
+        if args.model_name == "FeedforwardEBM":
             model = FF.FeedforwardEBM(args)
-
         elif args.model_name == "GraphEBM_1MPN":                # GraphEBM, shared MPN for r and p atoms, separately project reactants & products w/ dot product output
             model = G2E.GraphEBM_1MPN(args)
         elif args.model_name == "GraphEBM_2MPN":                # GraphEBM, separate MPN for r vs p atoms, separately project reactants & products, feedforward output
             model = G2E.GraphEBM_2MPN(args)
-            
-        elif args.model_name == "TransformerEBM":               # Sequence to energy
+        elif args.model_name == "TransformerEBM":               
             assert args.vocab_file is not None, "Please provide precomputed --vocab_file!"
             vocab = expt_utils.load_or_create_vocab(args)
             model = S2E.TransformerEBM(args, vocab)
@@ -281,13 +255,12 @@ def main(args):
             raise ValueError(f"Model {args.model_name} not supported!")
 
         if not args.ddp:
-            logging.info(f"Model {args.model_name} created")    # model.model_repr wont work with DataParallel
+            logging.info(f"Model {args.model_name} created")
 
     if not args.ddp:
         logging.info("Logging model summary")
         logging.info(model)
         logging.info(f"\nModel #Params: {sum([x.nelement() for x in model.parameters()]) / 1000} k")
-        logging.info(f'Model args: {model_args}')
     
     if args.ddp:
         args.world_size = args.gpus * args.nodes
@@ -298,12 +271,9 @@ def main(args):
                 args,
                 model,
                 args.model_name,
-                model_args,
                 args.root,
                 args.load_checkpoint,
                 saved_optimizer,
-                saved_stats,
-                begin_epoch,
                 vocab
                 )
             )
@@ -312,7 +282,7 @@ def main(args):
             logging.info(f'Using only 1 GPU out of {torch.cuda.device_count()} GPUs! \
                 You should include --ddp for distributed data parallel training!')
         elif torch.cuda.is_available():
-            logging.info(f"Using 1 GPU out of 1 GPU! Where're the rest?")
+            logging.info(f"Using 1 GPU out of 1 GPU!")
         else:
             logging.info(f'Using CPU! Warning! Training will be slowwwwww')
 
@@ -321,11 +291,8 @@ def main(args):
             args=args,
             model=model,
             model_name=args.model_name,
-            model_args=model_args,
             load_checkpoint=args.load_checkpoint,
             saved_optimizer=saved_optimizer,
-            saved_stats=saved_stats,
-            begin_epoch=begin_epoch,
             vocab=vocab,
             gpu=None, # not doing DDP
             root=args.root
@@ -341,7 +308,6 @@ def main(args):
             if args.old_expt_name is None: # user did not provide, means we are training from scratch, not loading a checkpoint
                 args.old_expt_name = args.expt_name
             args.load_checkpoint = True
-            args.load_epoch = None # to load best checkpoint based on val top-1
             args.do_train = False
             args.testing_best_ckpt = True # turn flag on
 
@@ -360,7 +326,7 @@ def main(args):
             if args.testing_best_ckpt and args.do_get_energies_and_acc:
                 phases_to_eval = ['train', 'valid', 'test'] if args.test_on_train else ['valid', 'test']
                 for phase in phases_to_eval:
-                    experiment.get_energies_and_loss(phase=phase)
+                    experiment.get_energies_and_loss(phase=phase, save_energies=args.save_energies)
 
                 # just print accuracies to compare experiments
                 for phase in phases_to_eval:
