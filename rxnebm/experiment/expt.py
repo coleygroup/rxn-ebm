@@ -818,8 +818,8 @@ class Experiment:
                     \ntop-50 train acc: {epoch_train_accs[50]:.4f}, \
                     \nval loss: {self.val_losses[-1]: .4f}, top-1 val acc: {epoch_val_accs[1]:.4f}, \
                     \ntop-3 val acc: {epoch_val_accs[3]:.4f}, top-5 val acc: {epoch_val_accs[5]:.4f} \
-                    \ntop-10 val acc: {epoch_val_accs[10]:.4f}, top-20 train acc: {epoch_val_accs[20]:.4f}, \
-                    \ntop-50 train acc: {epoch_val_accs[50]:.4f} \
+                    \ntop-10 val acc: {epoch_val_accs[10]:.4f}, top-20 val acc: {epoch_val_accs[20]:.4f}, \
+                    \ntop-50 val acc: {epoch_val_accs[50]:.4f} \
                     \n"
                 logging.info(message)
                 try:
