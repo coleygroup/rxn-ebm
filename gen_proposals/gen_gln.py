@@ -48,7 +48,8 @@ def merge_chunks(
 
 def gen_proposals(
             topk: int = 200,
-            maxk: int = 200, 
+            maxk: int = 200,
+            model_path: Union[str, bytes, os.PathLike] = "./rxnebm/proposer/gln_openretro/checkpoints/gln_schneider50k_20210423/model-9.dump",
             beam_size: Optional[int] = 200,
             phases: Optional[List[str]] = ['train', 'valid', 'test'],
             start_idx : Optional[int] = 0,
@@ -57,7 +58,6 @@ def gen_proposals(
             input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped_canon',
             output_folder: Optional[Union[str, bytes, os.PathLike]] = None,
             checkpoint_every: Optional[int] = 4000,
-            model_path: Optional[Union[str, bytes, os.PathLike]] = "./rxnebm/proposer/GLN_original/dropbox/schneider50k.ckpt"
             ):
     '''
     Parameters
@@ -65,7 +65,9 @@ def gen_proposals(
     topk : int (Default = 50)
         for each product, how many proposals to put in train
     maxk : int (Default = 100)
-        for each product, how many proposals to put in valid/test 
+        for each product, how many proposals to put in valid/test
+    model_path :  Union[str, bytes, os.PathLike]
+        path to gln checkpoint folder (contains model.dump and args.pkl) with best val top-1
     beam_size : int (Default = 50)  
         beam size to use for ranking generated proposals
     phases : List[str] (Default = ['train', 'valid', 'test'])
@@ -88,7 +90,6 @@ def gen_proposals(
     gln_config["args"].model_path = model_path
     gln_config["args"].atom_file = gln_config["atom_file"]
     gln_config["args"].processed_data_path = gln_config["processed_data_path"]
-    gln_config["args"].model_name = gln_config["model_name"]
     logging.info(f"gln_config: \n{gln_config}\n")
 
     proposer = GLNProposer(gln_config)
