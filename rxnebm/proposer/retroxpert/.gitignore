@@ -1,0 +1,11 @@
+# data/USPTO_full/train.csv
+data/USPTO50K/before_leak
+data/USPTO50K/noncanonicalized_csv
+data/USPTO50K/test
+data/USPTO50K/train
+data/USPTO50K/valid
+checkpoints/*
+OpenNMT-py/script/USPTO50K-aug-untyped/before_leak
+tools/*.ipynb
+tools/*.zip
+logs/
