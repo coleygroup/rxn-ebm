@@ -89,8 +89,6 @@ def parse_args():
     parser.add_argument("--epochs", help="num. of epochs", type=int, default=80)
     parser.add_argument("--learning_rate", help="learning rate", type=float, default=1e-4)
     parser.add_argument("--weight_decay", help="weight decay", type=float, default=0)
-    parser.add_argument("--lr_floor_stop_training", help="whether to stop training once LR < --lr_floor", 
-                        action="store_true")
     parser.add_argument("--lr_floor", help="LR below which training will stop", type=float, default=1e-8)
     parser.add_argument("--new_lr", help="new learning rate after reloading checkpoint", 
                         type=float)
@@ -119,16 +117,16 @@ def parse_args():
     # model params, G2E/FF/S2E args
     parser.add_argument("--encoder_hidden_size", help="MPN/FFN/Transformer encoder_hidden_size(s)", 
                         type=int, nargs='+', default=300)
-    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size(s)", type=int, nargs='+', default=[320])
+    parser.add_argument("--encoder_inner_hidden_size", help="MPN W_o hidden_size(s)", type=int, default=320)
     parser.add_argument("--encoder_depth", help="MPN encoder_depth / Transformer num_layers", type=int, default=10)
     parser.add_argument("--encoder_num_heads", help="Transformer num_heads", type=int, default=4)
     parser.add_argument("--encoder_filter_size", help="Transformer filter_size", type=int, default=256)
     parser.add_argument("--encoder_embed_size", help="Transformer embedding size", type=int, default=64)
-    parser.add_argument("--encoder_dropout", help="MPN/FFN/Transformer encoder dropout", type=float, default=0.04)
+    parser.add_argument("--encoder_dropout", help="MPN/FFN/Transformer encoder dropout", type=float, default=0.08)
     parser.add_argument("--encoder_activation", help="MPN/FFN encoder activation", type=str, default="ReLU")
-    parser.add_argument("--out_hidden_sizes", help="Output layer hidden sizes", type=int, nargs='+', default=[600, 300])
+    parser.add_argument("--out_hidden_sizes", help="Output layer hidden sizes", type=int, nargs='+', default=[600,300])
     parser.add_argument("--out_activation", help="Output layer activation", type=str, default="PReLU")
-    parser.add_argument("--out_dropout", help="Output layer dropout", type=float, default=0.05)
+    parser.add_argument("--out_dropout", help="Output layer dropout", type=float, default=0.15)
     parser.add_argument("--encoder_rnn_type", help="RNN type for graph encoder (gru/lstm)", type=str, default="gru")
     parser.add_argument("--atom_pool_type", help="Atom pooling method (sum/mean/attention)",
                         type=str, default="attention")
@@ -138,8 +136,9 @@ def parse_args():
                         type=str, default="CLS")                  
     parser.add_argument("--proj_hidden_sizes", help="Projection head hidden sizes", type=int, nargs='+', default=[256,200])
     parser.add_argument("--proj_activation", help="Projection head activation", type=str, default="PReLU")
-    parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.05)
+    parser.add_argument("--proj_dropout", help="Projection head dropout", type=float, default=0.12)
     parser.add_argument("--attention_dropout", help="Attention dropout for Transformer", type=float, default=0.1)
+    parser.add_argument("--preembed_size", help="Preembedding layer hidden size(s) for MPN", type=int)
 
     return parser.parse_args()
 

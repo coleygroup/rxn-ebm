@@ -292,15 +292,16 @@ class MPNEncoder(nn.Module):
     and the final message is used to update atom embeddings."""
 
     def __init__(self,
-                 rnn_type: str,
-                 input_size: int,
-                 node_fdim: int,
-                 h_size: int,
-                 h_size_inner: Union[int, List[int]] = None, # minhtoo testing
-                 depth: int = 3,
-                 dropout: float = 0.1,
-                 encoder_activation = 'ReLU'
-                 ):
+                rnn_type: str,
+                input_size: int,
+                node_fdim: int,
+                h_size: int,
+                h_size_inner: int = None,
+                preembed_size: int = None,
+                depth: int = 3,
+                dropout: float = 0.1,
+                encoder_activation = 'ReLU'
+                ):
         """
         Parameters
         ----------
@@ -319,6 +320,7 @@ class MPNEncoder(nn.Module):
         self.h_size = h_size
         self.h_size_inner = h_size_inner
         self.encoder_activation = encoder_activation
+        self.preembed_size = preembed_size
         self.input_size = input_size
         self.rnn_type = rnn_type
         self.depth = depth
@@ -329,32 +331,19 @@ class MPNEncoder(nn.Module):
     def _build_layers(self) -> None:
         """Build layers associated with the MPNEncoder."""
         encoder_activation = model_utils.get_activation_function(self.encoder_activation)
-        rnn_input_size = self.input_size
+        if self.preembed_size is not None:
+            self.W_emb = nn.Sequential(
+                        nn.Linear(self.input_size, self.preembed_size),
+                    )
+            rnn_input_size = self.preembed_size
+        else:
+            rnn_input_size = self.input_size
 
-        if isinstance(self.h_size_inner, list) and len(self.h_size_inner) == 2: # 3 layers
-            self.W_o = nn.Sequential(
-                    nn.Linear(self.node_fdim + self.h_size, self.h_size_inner[0]), 
-                    encoder_activation,
-                    nn.Dropout(self.dropout),
-                    nn.Linear(self.h_size_inner[0], self.h_size_inner[1]), 
-                    encoder_activation,
-                    nn.Dropout(self.dropout),
-                    nn.Linear(self.h_size_inner[1], self.h_size),
-                    encoder_activation
-                )
-        elif isinstance(self.h_size_inner, list) and len(self.h_size_inner) == 1: # 2 layers
-            self.W_o = nn.Sequential(
-                    nn.Linear(self.node_fdim + self.h_size, self.h_size_inner[0]), 
-                    encoder_activation,
-                    nn.Dropout(self.dropout),
-                    nn.Linear(self.h_size_inner[0], self.h_size),
-                    encoder_activation
-                )
-        elif isinstance(self.h_size_inner, int): # 2 layers
+        if self.h_size_inner is not None: # 2 layers
             self.W_o = nn.Sequential(
                     nn.Linear(self.node_fdim + self.h_size, self.h_size_inner), 
                     encoder_activation,
-                    # nn.Dropout(self.dropout), # remove dropout
+                    nn.Dropout(self.dropout),
                     nn.Linear(self.h_size_inner, self.h_size),
                     encoder_activation
                 )
@@ -389,6 +378,8 @@ class MPNEncoder(nn.Module):
         mask: torch.Tensor,
             Masks on nodes
         """
+        if self.preembed_size is not None:
+            fmess = self.W_emb(fmess)
         h = self.rnn(fmess, bgraph)
         h = self.rnn.get_hidden_state(h)
         nei_message = index_select_ND(h, 0, agraph)
@@ -410,16 +401,17 @@ class GraphFeatEncoder(nn.Module):
     """
 
     def __init__(self,
-                 n_atom_feat: int,
-                 n_bond_feat: int,
-                 rnn_type: str,
-                 h_size: int,
-                 h_size_inner: Union[int, List[int]] = None,
-                 depth: int = 3,
-                 dropout: float = 0.1,
-                 atom_pool_type: str = "sum",
-                 encoder_activation: str = 'ReLU'
-                 ):
+                n_atom_feat: int,
+                n_bond_feat: int,
+                rnn_type: str,
+                h_size: int,
+                h_size_inner: int = None,
+                preembed_size: int = None,
+                depth: int = 3,
+                dropout: float = 0.1,
+                atom_pool_type: str = "sum",
+                encoder_activation: str = 'ReLU'
+                ):
         """
         Parameters
         ----------
@@ -441,6 +433,7 @@ class GraphFeatEncoder(nn.Module):
         self.atom_size = n_atom_feat
         self.h_size = h_size
         self.h_size_inner = h_size_inner
+        self.preembed_size = preembed_size
         self.encoder_activation = encoder_activation
         self.depth = depth
         self.dropout = dropout
@@ -455,6 +448,7 @@ class GraphFeatEncoder(nn.Module):
                                   node_fdim=self.atom_size,
                                   h_size=self.h_size,
                                   h_size_inner=self.h_size_inner,
+                                  preembed_size=self.preembed_size,
                                   depth=self.depth,
                                   dropout=self.dropout,
                                   encoder_activation=self.encoder_activation)
@@ -530,6 +524,7 @@ class GraphEBM_1MPN(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
+                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         encoder_activation=args.encoder_activation,
@@ -578,7 +573,7 @@ class GraphEBM_1MPN(nn.Module):
 
         nancount = 0
         if self.mol_pool_type == "sum":
-            hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]        # list of [n_molecules, h] => list of [1, h]
+            hmol = [torch.sum(h, dim=0, keepdim=True) for h in hmol]            # list of [n_molecules, h] => list of [1, h]
             for h in hmol:
                 if torch.isnan(torch.sum(h, (0, 1))):
                     nancount += 1
@@ -637,6 +632,7 @@ class GraphEBM_2MPN(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
+                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         encoder_activation=args.encoder_activation,
@@ -647,6 +643,7 @@ class GraphEBM_2MPN(nn.Module):
                                         rnn_type=args.encoder_rnn_type,
                                         h_size=args.encoder_hidden_size,
                                         h_size_inner=args.encoder_inner_hidden_size,
+                                        preembed_size=args.preembed_size,
                                         depth=args.encoder_depth,
                                         dropout=args.encoder_dropout,
                                         encoder_activation=args.encoder_activation,
@@ -765,15 +762,15 @@ class GraphEBM_2MPN(nn.Module):
         if self.projection_r and self.projection_p:
             proj_r_mols = self.projection_r(
                                         batch_pooled_r_mols
-                                    )                                               # [bsz, mini_bsz, h] => [bsz, mini_bsz, d]
+                                )                                               # [bsz, mini_bsz, h] => [bsz, mini_bsz, d]
             proj_p_mols = self.projection_p(
                                         batch_pooled_p_mols
-                                    )                                               # [bsz, mini_bsz, h] => [bsz, mini_bsz, d]
+                                )                                               # [bsz, mini_bsz, h] => [bsz, mini_bsz, d]
         else:
             proj_r_mols = batch_pooled_r_mols
             proj_p_mols = batch_pooled_p_mols
 
-        diff = proj_p_mols - proj_r_mols # torch.abs(proj_p_mols - proj_r_mols) # [bsz, mini_bsz, d]
+        diff = proj_p_mols - proj_r_mols                                        # [bsz, mini_bsz, d]
         prod = proj_p_mols * proj_r_mols                                        # [bsz, mini_bsz, d]
 
         concat = torch.cat([proj_r_mols, proj_p_mols, diff, prod], dim=-1)      # [bsz, mini_bsz, d*4]

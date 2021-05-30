@@ -26,17 +26,16 @@ from rxnebm.proposer import retrosim_model
 from utils import tqdm_joblib
 
 def parse_args():
-    parser = argparse.ArgumentParser("proc_proposals.py")
+    parser = argparse.ArgumentParser("gen_fps_from_proposals.py")
     # file names
-    parser.add_argument("--log_file", help="log_file", type=str, default="proc_proposals")
+    parser.add_argument("--log_file", help="log_file", type=str, default="gen_fps_from_proposals")
     parser.add_argument("--root", help="Path to cleaned_data folder (shouldn't need to change)", type=str,
                         default=None) 
-    parser.add_argument("--proposals_file_prefix", help='Prefix of 3 proposals CSV files', type=str, default=None)
-    parser.add_argument("--output_file_prefix", help="Prefix of 3 output files to be created through this script", type=str)
+    parser.add_argument("--proposals_file_prefix", help='Prefix of 3 proposals CSV files', type=str, required=True)
+    parser.add_argument("--output_file_prefix", help="Prefix of 3 output files to be created through this script", type=str, required=True)
 
     parser.add_argument("--split_every", help="Split train .npz every N steps to prevent out of memory error", 
                         type=int)
-    parser.add_argument("--proposer", help="Proposer ['retrosim', 'GLN']", type=str)
     parser.add_argument("--topk", help="No. of proposals per product SMILES for training data (not guaranteed)", type=int, default=50)
     parser.add_argument("--maxk", help="No. of proposals per product SMILES for evaluation data (not guaranteed)", type=int, default=200)
     # fingerprint arguments
@@ -48,9 +47,8 @@ def parse_args():
  
 def main(args):
     '''
-    1a. Check if proposals CSV files already exist
-    1b. If above files don't exist, and only for retrosim, generate proposals for all product SMILES in USPTO_50k, takes a while: about ~13 hours on an 8-core machine for retrosim
-    2. Process all proposed SMILES into fingerprints/smiles, also takes some time: about 40 min for train, 5 min each for valid & test, for 4096-dim count, diff fingerprints
+    1. Check if proposals CSV files already exist
+    2. Process all proposed SMILES into fingerprints
     '''
     # retrieve args
     topk = args.topk
@@ -62,43 +60,8 @@ def main(args):
     radius = args.radius
     fp_size = args.fp_size
     rxn_type = args.rxn_type
-    
-    if args.output_file_prefix is None:
-        output_file_prefix = f'{args.proposer}_rxn_fps_{topk}topk_{maxk}maxk_{fp_size}_{rxn_type}'
-    else:
-        output_file_prefix = args.output_file_prefix
-
-    if args.proposals_file_prefix:
-        proposals_file_prefix = args.proposals_file_prefix
-    else:
-        if args.proposer in ['GLN', 'retroxpert', 'retrosim', 'neuralsym', 'megan']:
-            proposals_file_prefix = f"{args.proposer}_{topk}topk_{maxk}maxk_noGT" # do not change
-        elif args.proposer == 'union':
-            raise ValueError('Please specify --proposals_file_prefix') # user should pass in 
-        else:
-            raise ValueError
-
-        if args.proposer in ['GLN', 'retroxpert', 'retrosim', 'neuralsym', 'megan']:
-            for phase in ['train', 'valid', 'test']:
-                files = os.listdir(root)
-                if proposals_file_prefix not in files:
-                    topk_pass, maxk_pass = False, False
-                    for filename in files:
-                        if args.proposer in filename and f'maxk_noGT' in filename and not '.csv.' in filename and filename.find('topk') == 1: # only 1x 'topk' in filename, to avoid union csv files
-                            for kwarg in filename.split('_'): # split into ['GLN', '200topk', '200maxk', 'valid.csv']
-                                if 'topk' in kwarg:
-                                    if int(kwarg.strip('topk')) >= topk: 
-                                        topk_pass = True  # as long as proposal file's topk >= requested topk, we can load it
-                                if 'maxk' in kwarg:
-                                    if int(kwarg.strip('maxk')) >= maxk: # same rule for maxk
-                                        maxk_pass = True
-                        if topk_pass and maxk_pass:
-                            proposals_file_prefix = filename.replace('_train.csv', '')
-                            break
-
-                logging.info(f"finding proposals CSV file at : {root / f'{proposals_file_prefix}_{phase}.csv'}")
-                if not (root / f'{proposals_file_prefix}_{phase}.csv').exists():
-                    raise RuntimeError(f'Could not find proposals CSV file by {args.proposer}! Please generate the proposals CSV file, for example by running gen_gln.py')
+    output_file_prefix = args.output_file_prefix
+    proposals_file_prefix = args.proposals_file_prefix
 
     # check if ALL 3 files to be computed already exist in root, if so, then just exit the function
     phases_to_compute = ['train', 'valid', 'test']
@@ -140,7 +103,6 @@ def main(args):
 
         phase_rxn_fps = [] # sparse.csr_matrix((len(proposals_file_prefix), fp_size)) # init big output sparse matrix
         if phase == 'train':
-            # if args.parallelize:
             def rxn_fp_helper_train(rxn, i):
                 pos_rxn_smi = rxn[0]
                 neg_rxn_smis = rxn[1:]
@@ -230,11 +192,6 @@ if __name__ == '__main__':
     else:
         args.root = Path(args.root)
 
-    if args.proposer == 'union' or args.output_file_prefix:
-        pass
-    else:
-        args.output_file_prefix = f"{args.proposer}_rxn_fps_{args.topk}topk_{args.maxk}maxk_{args.fp_size}_{args.rxn_type}"
-
-    logging.info(f'Processing {args.proposer} proposals into {args.fp_size}-dim {args.rxn_type} fingerprints\n')
+    logging.info(f'Processing proposals into {args.fp_size}-dim {args.rxn_type} fingerprints\n')
     main(args) # should take <2 min for 40k train rxn_smi w/ 200 top-k (tested on 32 cores), <20 sec for 10k valid+train
     logging.info('Processing finished successfully')

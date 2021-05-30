@@ -4,7 +4,7 @@ Energy-based modeling of chemical reactions
 ## Environmental setup
 ### Using conda
     # ensure conda is already initialized
-    bash -i setup.sh
+    bash setup.sh
     conda activate rxnebm
 
 ## Data preparation
@@ -16,16 +16,18 @@ See Appendix A for a full description of data preprocessing.
 **Note** we do not automatically download fingerprints and graph features as these files are much larger, but they are available on our Google Drive. See below in each proposer section for how to generate them yourself.
  
 ## Training
-Before training, ensure you have 1) the 3 CSV files 2) the 3 precomputed reaction data files (be it fingerprints, rxn_smi, graphs etc.). Refer to below for how we generate the reaction data files for a proposer. If you are reloading a trained checkpoint for whatever reason, you additionally need to provide ```--old_expt_name <name>```, ```--date_trained <DD_MM_YYYY>``` and ```--load_checkpoint```. <br><br>
+Before training, ensure you have 1) the 3 CSV files 2) the 3 precomputed reaction data files (be it fingerprints, rxn_smi, graphs etc.). Refer to below for how we generate the reaction data files for a proposer. Note that ```<ebm_seed>``` refers to the random seed to be used for training the EBM re-ranker, and ```<proposer_seed>``` refers to the random seed that was used to train the one-step model. As RetroSim is completely deterministic, it has no random seed, and you do not need to provide ```<proposer_seed>```.
+
+If you are reloading a trained checkpoint for whatever reason, you additionally need to provide ```--old_expt_name <name>```, ```--date_trained <DD_MM_YYYY>``` and ```--load_checkpoint```. <br><br>
 For FF-EBM
 
-    sh scripts/<proposer>/FeedforwardEBM.sh
+    bash scripts/<proposer>/FeedforwardEBM.sh <ebm_seed> <proposer_seed>
 For Graph-EBM
 
-    sh scripts/<proposer>/GraphEBM.sh
+    bash scripts/<proposer>/GraphEBM.sh <ebm_seed> <proposer_seed>
 For Transformer-EBM (note that this yields poor results and we only report results on RetroSim). To train this, you just need the 3 CSV files, e.g. ``` rxnebm/data/cleaned_data/retrosim_200topk_200maxk_noGT_<phase>.csv ```
 
-    sh scripts/<proposer>/TransformerEBM.sh
+    bash scripts/retrosim/TransformerEBM.sh <ebm_seed>
 
 ## Cleaner USPTO-50K dataset
 The data was obtained from [the dropbox folder](https://www.dropbox.com/sh/6ideflxcakrak10/AADN-TNZnuGjvwZYiLk7zvwra/schneider50k?dl=0&subfolder_nav_tracking=1) provided by the authors of [GLN](https://github.com/Hanjun-Dai/GLN). 
@@ -106,7 +108,7 @@ Once either the reaction fingerprints or the graphs have been generated, follow 
 - To preprocess training data: <br>
 ``` bash scripts/preprocess.sh ```
 - To train (takes ~2 hours on 1 RTX2080Ti). Note that you need to specify a training seed. <br>
-``` bash scripts/train.sh <seed> ```, e.g. ``` bash scripts/train.sh 0 ```
+``` bash scripts/train.sh <gln_seed> ```, e.g. ``` bash scripts/train.sh 0 ```
 
 - To test (takes ~4 hours on 1 RTX2080Ti, because it tests all 10 checkpoints). Testing is important because it tells you the best checkpoint (by validation top-1 accuracy) to use for proposing. For example, on seed```77777777```, this should be ```model-6.dump```. <br>
 ``` bash scripts/test.sh <seed> ```
@@ -118,7 +120,7 @@ Then run (takes ~12 hours on 1 RTX2080Ti): <br>
 ``` bash scripts/gln/propose_and_compile.sh <gln_seed> <best_ckpt> ``` <br>
 You need to provide ``` gln_seed ``` and ``` best_ckpt ``` arguments. For example, if your best checkpoint was ```model-6.dump``` trained on seed ```77777777```, then: <br>
 ``` bash scripts/gln/propose_and_compile.sh 77777777 6 ``` <br>
-which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the format ``` GLN_200topk_200maxk_noGT_<seed>_<phase>.csv ```
+which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the format ``` GLN_200topk_200maxk_noGT_<gln_seed>_<phase>.csv ```
 - The last step is to generate either the fingerprints or graphs. This step is very similar across all 4 proposers. 
     - Fingerprints: <br>
     ``` bash scripts/gln/make_fp.sh <gln_seed> ```
@@ -138,15 +140,15 @@ which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the
 
 - To preprocess training data. However, there is a slight RDKit bug in the template extraction step, where the same input data can generate different number of templates each time the script is run ``` python extract_semi_template_pattern.py --extract_pattern ```. <br> 
 If you are simply reproducing our results, you do not need to extract the templates again, as we already include it in ``` data/USPTO50K/product_patterns.txt ```, which has 527 templates. So, you just need to run: <br>
-``` bash scripts/preprocess.sh ```<br>, and use 527 as ```<num_templates>``` for later steps.
+``` bash scripts/preprocess.sh ```<br> and use 527 as ```<num_templates>``` for later steps. <br>
 However, if you are using your own dataset, then you must extract the templates, by including the ```--extract_pattern``` flag when running ```preprocess.sh```: <br>
  ```bash scripts/preprocess.sh --extract_pattern```, instead of running it without the flag, and afterwards note down the EXACT number of templates extracted ``` <num_templates ``` as you need to provide this to later scripts. <br>
 - To train EGAT (~6 hours on 1 RTX2080Ti). You need to specify a training seed and number of extracted templates. <br>
-``` bash scripts/train_EGAT.sh <seed> <num_templates> ```, e.g. ``` bash scripts/train_EGAT.sh 0 527 ```
+``` bash scripts/train_EGAT.sh <retroxpert_seed> <num_templates> ```, e.g. ``` bash scripts/train_EGAT.sh 0 527 ```
 - To train RGN (~30 hours on 2 RTX2080Ti). You need to specify a training seed. <br>
-``` bash scripts/train_RGN.sh <seed> ```
+``` bash scripts/train_RGN.sh <retroxpert_seed> ```
 - To translate using RGN and test the overall two-step performance (15 mins on 1 RTX2080Ti). We recommend running this step to double-check that the model is trained well without bugs. <br>
-``` bash scripts/translate_RGN.sh <seed> ```
+``` bash scripts/translate_RGN.sh <retroxpert_seed> ```
 - The proposal stage contains two sub-steps. In the first sub-step, we directly use the existing RetroXpert code, only with minor modifications, to generate reactant-set predictions and evaluate the top-200 predictions. This sub-step takes ~8.5 hours on 1 RTX2080Ti: <br>
 ``` bash scripts/propose.sh <seed> <num_templates> ``` <br>
 - In the second sub-step, because the output format from RetroXpert does not align with the input format we need for the EBM, we further process those top-200 proposals. This includes cleaning up invalid SMILES, de-duplicating proposals and ensuring there is only one ground-truth in each training reaction. This sub-step is much faster, ~10 mins on 8 cores (no GPU needed). <br>
@@ -154,7 +156,7 @@ First, go back to root: <br>
 ``` cd ../../../ ``` <br>
 And then run: <br>
 ``` bash scripts/retroxpert/compile.sh <retroxpert_seed> ``` <br>
-which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the format ``` retroxpert_200topk_200maxk_noGT_<seed>_<phase>.csv ```
+which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the format ``` retroxpert_200topk_200maxk_noGT_<retroxpert_seed>_<phase>.csv ```
 - The last step is to generate either the fingerprints or graphs using those 3 cleaned CSV files. This step is very similar across all 4 proposers. 
     - Fingerprints: <br>
     ``` bash scripts/retroxpert/make_fp.sh <retroxpert_seed> ```
@@ -174,10 +176,10 @@ which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the
 
 - To train (<5 mins on 1 RTX2080Ti, yep you read that correctly). Note that the accuracies used during training are template-matching accuracies, which are lower than reactant-matching accuracy (the actual metric for evaluating one-step retrosynthesis), because a particular reactant-set can be obtained from a given product through multiple templates. However, calculating template acucracy is faster (batchable) and more convenient, which is why we use it, given that our reactant-matching results are in agreement with literature values (in fact slightly better). <br>
 You need to specify a training seed. <br>
-``` bash scripts/train.sh <seed> ```, e.g. ``` bash scripts/train.sh 0 ```
+``` bash scripts/train.sh <neuralsym_seed> ```, e.g. ``` bash scripts/train.sh 0 ```
 - We combine the testing and proposing into a single step, and evaluate reactant-matching accuracy here. <br>
 ``` bash scripts/propose_and_eval.sh <neuralsym_seed> ``` <br>
-This will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the format ``` neuralsym_200topk_200maxk_noGT_<seed>_<phase>.csv ```
+This will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the format ``` neuralsym_200topk_200maxk_noGT_<neuralsym_seed>_<phase>.csv ```
 - Now, go back to root: <br>
 ``` cd ../../../ ``` <br>
 The last step is to generate either the fingerprints or graphs using those 3 cleaned CSV files. This step is very similar across all 4 proposers. 
@@ -186,3 +188,16 @@ The last step is to generate either the fingerprints or graphs using those 3 cle
     - Graphs: <br>
     ``` bash scripts/neuralsym/make_graphfeat.sh <neuralsym_seed> ```
 - Finally, we can train the EBMs to re-rank NeuralSym!
+
+### Union of GLN and RetroSim
+- First, ensure you have generated the 3x proposal CSV files for both GLN and RetroSim by following the instructions for their respective sections above. This means you need both ``` GLN_200topk_200maxk_noGT_<gln_seed>_<phase>.csv ``` and ``` retrosim_200topk_200maxk_noGT_<phase>.csv ``` in ```rxnebm/data/cleaned_data```.
+- To compile the union of proposals into a single CSV file for each phase, run: <br>
+``` bash scripts/gln_sim/compile.sh <gln_seed> ``` <br>
+which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the format ```GLN_50topk_200maxk_<gln_seed>_retrosim_50topk_200maxk_noGT_<phase>.csv ```.
+- The last step is to generate either the fingerprints or graphs using those 3 cleaned CSV files. This step is very similar across all 4 proposers. 
+    - Fingerprints: <br>
+    ``` bash scripts/gln_sim/make_fp.sh <gln_seed> ```
+    - Graphs: <br>
+    ``` bash scripts/gln_sim/make_graphfeat.sh <gln_seed> ```
+- Finally, we can train the Graph-EBM to re-rank the union of GLN and RetroSim! <br>
+``` bash scripts/gln_sim/GraphEBM.sh <ebm_seed> <gln_seed> ```

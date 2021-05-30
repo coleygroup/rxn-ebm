@@ -596,7 +596,7 @@ class Experiment:
             except Exception as e:
                 logging.info(e)
                 logging.info("Don't worry about this - just a small hack to send messages to Telegram")
-            if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
+            if self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
                 logging.info('Stopping training as learning rate has dropped below 1e-6')
                 break
 
@@ -828,7 +828,7 @@ class Experiment:
                 except Exception as e:
                     logging.info(e)
                     logging.info("Don't worry about this - just a small hack to send messages to Telegram")
-                if self.args.lr_floor_stop_training and self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
+                if self.optimizer.param_groups[0]['lr'] < self.args.lr_floor:
                     logging.info('Stopping training as learning rate has dropped below 1e-6')
                     break
 
