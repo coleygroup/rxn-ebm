@@ -7,15 +7,20 @@ Energy-based modeling of chemical reactions
     bash setup.sh
     conda activate rxnebm
 
-## Data preparation
-### Download pre-cleaned data
-    python download_data.py
+## Data preparation / experimental setup
+To get the results for our paper, we train each of the 4 one-step models on 3 seeds. Specifically, we used the following:
+- GLN: 19260817, 20210423, 77777777
+- RetroXpert: 11111111, 20210423, 77777777
+- NeuralSym: 0, 20210423, 77777777
+- RetroSim: no random seed needed
 
-The downloaded data is automatically checked and will throw an error if any required file is missing.
-**Note** we do not automatically download fingerprints and graph features as these files are much larger. The graph features for train + val + test can take up as much as 30 GB, so please watch your storage space. See below in each proposer section for how to generate them yourself.
+Thus, we have 3 sets of CSV files (train + valid + test) per one-step model. We then train one EBM re-ranker with a specified random seed (``ebm_seed``) on one set of CSV file, for a total of 3 repeats per one-step model. e.g. Graph-EBM (seed 0) on NeuralSym seed 0, Graph-EBM (seed 20210423) on NeuralSym seed 20210423, and Graph-EBM (seed 77777777) on NeuralSym seed 77777777. For GLN seed 19260817 and RetroXpert seed 11111111, we use ``ebm_seed = 0``. For RetroSim, we use ebm_seed of 0, 20210423, 77777777. We provide all 12 proposal CSV files on both figshare and Google Drive ([here](https://drive.google.com/drive/u/1/folders/12tz9FX86zfOxwab0LYPILtJr5btqMwhu)). <br>
+
+The training proposal CSV files are quite large (~200 MB), so please ensure you do have enough storage space (4.4 GB total). **Note** we have not uploaded fingerprints and graph features as these files are much larger. The graph features (train + val + test) can take up as much as 30 GB, while for fingerprints it is ~1 GB. See below in each proposer section for how to generate them yourself. If there is enough demand for us to upload these (very big) files, we may consider doing so.
  
 ## Training
-Before training, ensure you have 1) the 3 CSV files 2) the 3 precomputed reaction data files (be it fingerprints, rxn_smi, graphs etc.). Refer to below for how we generate the reaction data files for a proposer. Note that ```<ebm_seed>``` refers to the random seed to be used for training the EBM re-ranker, and ```<proposer_seed>``` refers to the random seed that was used to train the one-step model. As RetroSim is completely deterministic, it has no random seed, and you do not need to provide ```<proposer_seed>```.
+Before training, ensure you have 1) the 3 CSV files 2) the 3 precomputed reaction data files (be it fingerprints, rxn_smi, graphs etc.). Refer to below for how we generate the reaction data files for a proposer. Note that ```<ebm_seed>``` refers to the random seed to be used for training the EBM re-ranker, and ```<proposer_seed>``` refers to the random seed that was used to train the one-step model. <br>
+**Note:** As RetroSim has no random seed, you do not need to provide ```<proposer_seed>```.
 
 If you are reloading a trained checkpoint for whatever reason, you additionally need to provide ```--old_expt_name <name>```, ```--date_trained <DD_MM_YYYY>``` and ```--load_checkpoint```. <br><br>
 For FF-EBM
@@ -198,3 +203,9 @@ which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the
     ``` bash scripts/gln_sim/make_graphfeat.sh <gln_seed> ```
 - Finally, we can train the Graph-EBM to re-rank the union of GLN and RetroSim! <br>
 ``` bash scripts/gln_sim/GraphEBM.sh <ebm_seed> <gln_seed> ```
+
+### Citation
+If you have used our code or referred to our paper, we would appreciate it if you could cite our work:
+```
+to be updated
+```
