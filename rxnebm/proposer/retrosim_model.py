@@ -15,11 +15,9 @@ import rdkit.Chem.AllChem as AllChem
 from joblib import Parallel, delayed
 from rdchiral.main import rdchiralReactants, rdchiralReaction, rdchiralRun
 from rdkit import DataStructs
-from rxnebm.proposer.Retrosim_modified.retrosim.data.get_data import (
+from rxnebm.proposer.RetroSim.retrosim.data.get_data import (
     get_data_df, split_data_df)
-from rxnebm.proposer.Retrosim_modified.retrosim.utils.draw import (
-    ReactionStringToImage, TransformStringToImage)
-from rxnebm.proposer.Retrosim_modified.retrosim.utils.generate_retro_templates import \
+from rxnebm.proposer.RetroSim.retrosim.utils.generate_retro_templates import \
     process_an_example
 from tqdm import tqdm
 
@@ -66,7 +64,7 @@ def rdchiralrun_dist(rxn, rct, combine_enantiomers):
     return rdchiralRun(rxn, rct, combine_enantiomers=combine_enantiomers)
 
 class Retrosim:
-    ''' TODO: test & valid files should be passed in as arguments into self.propose_all(), not initialised with Retrosim object! 
+    '''
     Wrapper over retrosim for preparing training corpus + fingerprints, 
     and generating one-step precursor proposals for EBM re-ranking task
     Called by rxnebm.proposer.retrosim_proposer (self.build_model & self.propose methods)

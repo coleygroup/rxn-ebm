@@ -4,7 +4,7 @@
 # ensure you are on a machine with CUDA, on a compute cluser you may need to load the modules as shown below
 # module load gcc/8.3.0
 # module load cuda/10.1
-conda activate openretro
+conda activate gln_openretro
 
 # input gln_seed accordingly, and also, best_ckpt to your best validation GLN checkpoint
 gln_seed=$1
@@ -34,7 +34,7 @@ cd rxnebm/data/cleaned_data/gln_${gln_seed}/
     rm gln_${gln_seed}/ -r
 } && {
     cd ../../../
-    python3 gen_proposals/gen_union_or_clean_proposals.py \
+    python gen_proposals/gen_union_or_clean_proposals.py \
         --train \
         --valid \
         --test \

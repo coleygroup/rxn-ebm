@@ -1,8 +1,8 @@
 # ensure conda is properly initialised, such as by using the line below
 # source /cm/shared/engaging/anaconda/2018.12/etc/profile.d/conda.sh
-conda activate rxnebm_g2e
+conda activate rxnebm
 
-gln_seed=20210423
+gln_seed=$1
 python gen_proposals/gen_union_or_clean_proposals.py \
     --log_file gln_50_${gln_seed}_retrosim_50 \
     --proposed_smi_file_prefixes GLN_200topk_200maxk_noGT_${gln_seed},retrosim_200topk_200maxk_noGT \

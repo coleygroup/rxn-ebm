@@ -29,84 +29,22 @@ Mol = rdkit.Chem.rdchem.Mol
 def parse_args():
     parser = argparse.ArgumentParser("clean_smiles")
     # file paths
-    parser.add_argument(
-        "--raw_smi_pre",
-        help="File prefix of original raw rxn_smi csv",
-        type=str,
-        default="schneider50k_raw",
-    )
-    parser.add_argument(
-        "--clean_smi_pre",
-        help="File prefix of cleaned rxn_smi pickle",
-        type=str,
-        default="50k_clean_rxnsmi_noreagent",
-    )
-    parser.add_argument(
-        "--raw_smi_root",
-        help="Full path to folder containing raw rxn_smi csv",
-        type=str,
-    )
-    parser.add_argument(
-        "--clean_smi_root",
-        help="Full path to folder that will contain cleaned rxn_smi pickle",
-        type=str,
-    )
+    parser.add_argument("--raw_smi_pre", help="File prefix of original raw rxn_smi csv", type=str, default="schneider50k")
+    parser.add_argument("--clean_smi_pre", help="File prefix of cleaned rxn_smi pickle", type=str, default="50k_clean_rxnsmi_noreagent_allmapped")
+    parser.add_argument("--raw_smi_root", help="Full path to folder containing raw rxn_smi csv", type=str)
+    parser.add_argument("--clean_smi_root", help="Full path to folder that will contain cleaned rxn_smi pickle", type=str)
 
     # args for clean_rxn_smis_50k_all_phases
-    parser.add_argument(
-        "--split_mode",
-        help='Whether to keep rxn_smi with multiple products: "single" or "multi"',
-        type=str,
-        default="multi",
-    )
-    parser.add_argument(
-        "--lines_to_skip", help="Number of lines to skip", type=int, default=1
-    )
-    parser.add_argument(
-        "--keep_reag",
-        help="Whether to keep reagents in output SMILES string",
-        type=bool,
-        default=False,
-    )
-    parser.add_argument(
-        "--keep_all_rcts",
-        help="Whether to keep all rcts even if they don't contribute atoms to product",
-        type=bool,
-        default=False,
-    )
-    parser.add_argument(
-        "--remove_dup_rxns",
-        help="Whether to remove duplicate rxn_smi",
-        type=bool,
-        default=True,
-    )
-    parser.add_argument(
-        "--remove_rct_mapping",
-        help="Whether to remove atom map if atom in rct is not in product",
-        type=bool,
-        default=True,
-    )
-    parser.add_argument(
-        "--remove_all_mapping",
-        help="Whether to remove all atom map",
-        type=bool,
-        default=False,
-    )
-    parser.add_argument(
-        "--save_idxs",
-        help="Whether to save all bad indices to a file in same dir as clean_smi",
-        type=bool,
-        default=True,
-    )
-    parser.add_argument(
-        "--parallelize",
-        help="Whether to parallelize computation across all available cpus",
-        type=bool,
-        default=True,
-    )
-
+    parser.add_argument("--split_mode", help='Whether to keep rxn_smi with multiple products: "single" or "multi"', type=str, default="multi")
+    parser.add_argument("--lines_to_skip", help="Number of lines to skip", type=int, default=1)
+    parser.add_argument("--keep_reag", help="Whether to keep reagents in output SMILES string", type=bool, default=False)
+    parser.add_argument("--keep_all_rcts", help="Whether to keep all rcts even if they don't contribute atoms to product", type=bool, default=False)
+    parser.add_argument("--remove_dup_rxns", help="Whether to remove duplicate rxn_smi", type=bool, default=True)
+    parser.add_argument("--remove_rct_mapping", help="Whether to remove atom map if atom in rct is not in product", type=bool, default=True)
+    parser.add_argument("--remove_all_mapping", help="Whether to remove all atom map", type=bool, default=False)
+    parser.add_argument("--save_idxs", help="Whether to save all bad indices to a file in same dir as clean_smi", type=bool, default=False)
+    parser.add_argument("--parallelize", help="Whether to parallelize computation across all available cpus", type=bool, default=True)
     return parser.parse_args()
-
 
 def remove_mapping(rxn_smi: str, keep_reagents: bool = False) -> str:
     """
@@ -396,7 +334,7 @@ def clean_rxn_smis_50k_one_phase(
 
 def clean_rxn_smis_50k_all_phases(
     input_file_prefix: str = "schneider50k",
-    output_file_prefix: str = "50k_clean_rxnsmi_noreagent",
+    output_file_prefix: str = "50k_clean_rxnsmi_noreagent_allmapped",
     input_root: Optional[Union[str, bytes, os.PathLike]] = None,
     output_root: Optional[Union[str, bytes, os.PathLike]] = None, 
     lines_to_skip: Optional[int] = 1,
@@ -405,7 +343,7 @@ def clean_rxn_smis_50k_all_phases(
     remove_dup_rxns: bool = True,
     remove_rct_mapping: bool = True,
     remove_all_mapping: bool = False,
-    save_idxs: bool = True,
+    save_idxs: bool = False,
     parallelize: bool = True,
     **kwargs 
 ):
@@ -413,10 +351,10 @@ def clean_rxn_smis_50k_all_phases(
 
     Parameters
     ----------
-    input_file_prefix : str (Default = 'schneider50k_raw')
+    input_file_prefix : str (Default = 'schneider50k')
         file prefix of the original raw, unclean, reaction SMILES csv file for USPTO_50k
         this function appends phase = ['train', 'valid', 'test'] --> {raw_data_file_prefix}_{phase}.csv
-    output_file_prefix : str (Default = '50k_clean_rxnsmi_noreagent')
+    output_file_prefix : str (Default = '50k_clean_rxnsmi_noreagent_allmapped')
         file prefix of the output, cleaned reaction SMILES pickle file
         recommended format: '{dataset_name}_clean_rxnsmi_{any_tags}' example tags include 'noreagent', 'nostereo'
     input_root : Optional[Union[str, bytes, os.PathLike]] (Default = None)
@@ -519,7 +457,7 @@ def clean_rxn_smis_50k_all_phases(
 ######### HELPER FUNCTIONS ########
 ###################################
 def remove_overlapping_rxn_smis(
-    rxn_smi_file_prefix: str = "50k_clean_rxnsmi_noreagent",
+    rxn_smi_file_prefix: str = "50k_clean_rxnsmi_noreagent_allmapped",
     root: Optional[Union[str, bytes, os.PathLike]] = None,
     save_idxs: bool = False,
 ):
@@ -579,7 +517,6 @@ if __name__ == "__main__":
         print(f"Making dir {args.clean_smi_root}")
         os.makedirs(args.clean_smi_root, exist_ok=True)
 
-    # TODO: add all arguments
     clean_rxn_smis_50k_all_phases(
         args.raw_smi_pre,
         args.clean_smi_pre, # '50k_clean_rxnsmi_noreagent_allmapped',   

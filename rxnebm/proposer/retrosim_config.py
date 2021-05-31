@@ -7,5 +7,5 @@ retrosim_config = {
     "input_data_folder": "./rxnebm/data/cleaned_data",
     "input_data_file_prefix": "50k_clean_rxnsmi_noreagent_allmapped", 
     "output_folder": None,
-    "parallelize": False,
+    "parallelize": True,
 }

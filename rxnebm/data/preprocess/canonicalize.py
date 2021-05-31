@@ -11,12 +11,47 @@ from rdkit import Chem
 from rdkit.Chem import rdChemReactions
 from tqdm import tqdm
 
-# TODO: merge this w/ script to generate clean_csv for training GLN from scratch
-# i.e. save output as both .pickle & .csv files
+def canonicalize_products(rxn_smi: str) -> str:
+    '''
+    Adapted from RetroXpert's latest repo to re-order atom mapping in product & reactants according to canonical atom order
+    to remove any potential information leak
+    '''
+    product = rxn_smi.split('>>')[1]
+    reactant = rxn_smi.split('>>')[0]
+
+    mol = Chem.MolFromSmiles(product)
+    index2mapnums = {}
+    for atom in mol.GetAtoms():
+        index2mapnums[atom.GetIdx()] = atom.GetAtomMapNum()
+
+    # canonicalize the product smiles
+    mol_cano = Chem.RWMol(mol)
+    [atom.SetAtomMapNum(0) for atom in mol_cano.GetAtoms()]
+    smi_cano = Chem.MolToSmiles(mol_cano)
+    mol_cano = Chem.MolFromSmiles(smi_cano)
+
+    matches = mol.GetSubstructMatches(mol_cano)
+    if matches:
+        mapnums_old2new = {}
+        for atom, mat in zip(mol_cano.GetAtoms(), matches[0]):
+            mapnums_old2new[index2mapnums[mat]] = 1 + atom.GetIdx()
+            # update product mapping numbers according to canonical atom order
+            # to completely remove potential information leak
+            atom.SetAtomMapNum(1 + atom.GetIdx())
+        product = Chem.MolToSmiles(mol_cano)
+        # update reactant mapping numbers accordingly
+        mol_react = Chem.MolFromSmiles(reactant)
+        for atom in mol_react.GetAtoms():
+            if atom.GetAtomMapNum() > 0:
+                atom.SetAtomMapNum(mapnums_old2new[atom.GetAtomMapNum()])
+        reactant = Chem.MolToSmiles(mol_react)
+
+    return reactant + '>>' + product
+
 def canonicalize_rxn_smi(
     rxn_smi: str, 
     remove_mapping: bool = False
-    ):
+    ) -> Tuple[str, int, int]:
     prod_smi = rxn_smi.split('>>')[-1]
     prod_mol = Chem.MolFromSmiles(prod_smi)
 
@@ -108,9 +143,9 @@ if __name__ == '__main__':
 
     input_prefixes = [
         '50k_clean_rxnsmi_noreagent_allmapped',
-        '50k_clean_rxnsmi_noreagent'
+        # '50k_clean_rxnsmi_noreagent' # without
     ]
-    remove_mapping = [False, True]
+    remove_mapping = [False] # True
     for prefix, remove in zip(input_prefixes, remove_mapping):
         canonicalize_phases(input_data_file_prefix=prefix, remove_mapping=remove)
         clean_smiles.remove_overlapping_rxn_smis(rxn_smi_file_prefix=f'{prefix}_canon')

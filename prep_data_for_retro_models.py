@@ -27,14 +27,12 @@ def prep_canon_gln():
             writer.writerow(['id', 'class', 'reactants>reagents>production'])
             
             for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
-                # rxn_smi_canon, _, _ = canonicalize.canonicalize_rxn_smi(rxn_smi, remove_mapping=False)
-                writer.writerow([i, rxn_class, rxn_smi_canon])
+                writer.writerow([i, rxn_class, rxn_smi])
             
     print(f'Finished all phases! Elapsed: {time.time() - start:.2f} secs')
     # very fast, ~60 sec for USPTO-50k
 
 def prep_canon_retroxpert():
-    # TODO: add canonicalze_products.py into rxnebm.data.preprocess.canonicalize & call it here
     start = time.time()
     rxn_class = "UNK"
     for phase in ['train', 'valid', 'test']:
@@ -47,7 +45,7 @@ def prep_canon_retroxpert():
             writer.writerow(['class', 'id', 'rxn_smiles'])
             
             for i, rxn_smi in enumerate(tqdm(rxn_smis, desc=f'Writing rxn_smi in {phase}')):
-                # rxn_smi_canon, _, _ = canonicalize.canonicalize_rxn_smi(rxn_smi, remove_mapping=False)
+                rxn_smi_canon = canonicalize.canonicalize_products(rxn_smi)
                 writer.writerow([rxn_class, i, rxn_smi_canon])
             
     print(f'Finished all phases! Elapsed: {time.time() - start:.2f} secs')

@@ -22,7 +22,6 @@ class RetrosimProposer(Proposer):
                 max_prec: int = 200, 
                 # rxn_types: List[str] = None, 
                 **kwargs) -> List[Dict[str, List]]:
-        # TODO: add support for proposal when rxn_type is known (need to modify retrosim_model.py)
 
         results = []
         # for smi, rxn_type in zip(input_smiles, rxn_types):
