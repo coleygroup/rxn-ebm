@@ -186,10 +186,10 @@ def compile_into_csv(args):
             proposed_precs_phase.append(seen)
             proposed_precs_phase_withdups.append(precursors)
 
-        with open(DATA_FOLDER / f'precs_{args.seed}_{phase}.pickle', 'wb') as f:
-            pickle.dump(proposed_precs_phase_withdups, f)
-        with open(DATA_FOLDER / f'seen_{args.seed}_{phase}.pickle', 'wb') as f:
-            pickle.dump(proposed_precs_phase, f)
+        # with open(DATA_FOLDER / f'precs_{args.seed}_{phase}.pickle', 'wb') as f:
+        #     pickle.dump(proposed_precs_phase_withdups, f)
+        # with open(DATA_FOLDER / f'seen_{args.seed}_{phase}.pickle', 'wb') as f:
+        #     pickle.dump(proposed_precs_phase, f)
         
         dup_count /= len(clean_rxnsmi_phase)
         logging.info(f'Avg # dups per product: {dup_count}')
@@ -201,6 +201,7 @@ def compile_into_csv(args):
             clean_rxnsmi_phase,
             rcts_smiles_phase,
             proposed_precs_phase_withdups,
+            args.print_accs
         ) # just to calculate accuracy
 
         logging.info('\nCalculating ranks after removing duplicates')
@@ -208,7 +209,8 @@ def compile_into_csv(args):
                     [phase],
                     clean_rxnsmi_phase,
                     rcts_smiles_phase,
-                    proposed_precs_phase
+                    proposed_precs_phase,
+                    args.print_accs
                 )
         ranks_phase = ranks_dict[phase]
         if phase == 'train':
@@ -217,7 +219,8 @@ def compile_into_csv(args):
                     [phase],
                     clean_rxnsmi_phase,
                     rcts_smiles_phase,
-                    proposed_precs_phase
+                    proposed_precs_phase,
+                    args.print_accs
                 )
         
         analyse_proposed(
@@ -271,6 +274,7 @@ def calc_accs(
             clean_rxnsmi_phase : List[str],
             rcts_smiles_phase : List[str],
             proposed_precs_phase : List[str],
+            print_accs : bool
             ) -> Dict[str, List[int]]:
     ranks = {}
     for phase in phases:
@@ -309,12 +313,13 @@ def calc_accs(
                     phase_ranks.append(9999) 
         ranks[phase] = phase_ranks
 
-        logging.info('\n')
-        for n in [1, 3, 5, 10, 20, 50, 100, 200]:
-            total = float(len(ranks[phase]))
-            acc = sum([r+1 <= n for r in ranks[phase]]) / total
-            logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
-        logging.info('\n')
+        if print_accs:
+            logging.info('\n')
+            for n in [1, 3, 5, 10, 20, 50, 100, 200]:
+                total = float(len(ranks[phase]))
+                acc = sum([r+1 <= n for r in ranks[phase]]) / total
+                logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
+            logging.info('\n')
 
     return ranks # dictionary 
 
@@ -353,9 +358,9 @@ def analyse_proposed(
     return
 
 def parse_args():
-    parser = argparse.ArgumentParser("inference.py")
+    parser = argparse.ArgumentParser("infer_all.py")
     # file names
-    parser.add_argument("--log_file", help="log_file", type=str, default="inference")
+    parser.add_argument("--log_file", help="log_file", type=str, default="infer_all")
     parser.add_argument("--expt_name", help="name of expt to load model from", type=str)
     parser.add_argument("--rxn_smi_prefix", help="rxn_smi file", 
                         type=str, default="50k_clean_rxnsmi_noreagent_allmapped_canon")
@@ -383,6 +388,8 @@ def parse_args():
                         type=int, default=200)
     parser.add_argument("--maxk", help="How many top-k proposals to generate and put in valid/test (not guaranteed)", 
                         type=int, default=200)
+    parser.add_argument("--print_accs", 
+                        help="Whether to print accuracies of the output CSV; this can be higher than the original proposer top-N accuracies as we remove duplicates and RDKit-invalid suggestions", action="store_true")
     # model params
     parser.add_argument("--hidden_size", help="hidden size", type=int, default=300)
     parser.add_argument("--depth", help="depth", type=int, default=0)

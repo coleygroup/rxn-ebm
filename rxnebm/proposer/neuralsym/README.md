@@ -1,5 +1,5 @@
 # Template Relevance Network for Retrosynthesis
-A faithful (to the best of my ability) re-implementation (because the authors did not release the source code) of the expansion network in Segler's seminal [Nature paper](https://www.nature.com/articles/nature25978): **"Planning chemical syntheses with deep nueral networks and symbolic AI"**, which they [first published here](https://chemistry-europe.onlinelibrary.wiley.com/doi/abs/10.1002/chem.201605499) in **"Neural-Symbolic Machine Learning for Retrosynthesis and Reaction Prediction"**. In essence, NeuralSym is a feedforward network using Highway-ELU blocks, taking as input a product fingerprint (ECFP4), and producing as output an array of logits, one value for each template extracted from the training dataset. A softmax classification can be done across these logits to determine the most promising reaction template, which can be passed through RDChiral to generate the predicted precursors for this product. 
+A faithful (to the best of my ability) re-implementation (because the authors did not release the source code) of the expansion network in Segler's seminal [Nature paper](https://www.nature.com/articles/nature25978): **"Planning chemical syntheses with deep neural networks and symbolic AI"**, which they [first published here](https://chemistry-europe.onlinelibrary.wiley.com/doi/abs/10.1002/chem.201605499) in **"Neural-Symbolic Machine Learning for Retrosynthesis and Reaction Prediction"**. In essence, NeuralSym is a feedforward network using Highway-ELU blocks, taking as input a product fingerprint (ECFP4), and producing as output an array of logits, one value for each template extracted from the training dataset. A softmax classification can be done across these logits to determine the most promising reaction template, which can be passed through RDChiral to generate the predicted precursors for this product. 
 
 ## Data files
 This model has been re-trained on USPTO-50K dataset, which has ~50,000 atom-mapped reactions from US Patent data.
@@ -12,7 +12,7 @@ to extract templates from training data, get the labels & so on. I have signific
 ## Training
 I have provided a sample ```train.sh``` file with sensible hyperparameters that achieved ~40% top-1 valid/test  in terms of template-matching accuracy. For reactant matching accuracy (this is what we ultimately care about), I can get ~45.5% top-1 and 87.4% top-50 accuracy, calculated using ```infer_all.py```. Just do
 ```
-    bash -i train.sh
+    bash -i train.sh 0
 ```
 On 1x RTX2080 one epoch takes 8 seconds, and the whole training finishes in <5 minutes. 
 The training arguments can be found in ```train.py``` & should be self-explanatory. I plan to do a quick bayesian optimization using Optuna, but don't expect any fancy improvements (<1% probably).
@@ -69,9 +69,10 @@ Tested on Python 3.6
     conda install -y rdkit -c rdkit
 
     pip install -e "git://github.com/connorcoley/rdchiral.git#egg=rdchiral"
-    
+```
+
 ## Citation
-Please cite Segler's original paper
+Please cite Segler et al.'s original paper
 ```
 @article{segler2017neural,
   title={Neural-symbolic machine learning for retrosynthesis and reaction prediction},

@@ -30,6 +30,8 @@ def parse_args():
                         type=str, nargs='+', default=['train', 'valid', 'test'])
     parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=200)
     parser.add_argument("--maxk", help="How many top-k proposals to generate and put in valid/test (not guaranteed)", type=int, default=200)
+    parser.add_argument("--print_accs", 
+                        help="Whether to print accuracies of the output CSV; this can be higher than the original proposer top-N accuracies as we remove duplicates and RDKit-invalid suggestions", action="store_true")
     return parser.parse_args()
 
 def process_train_helper(row, phase_topk):
@@ -165,7 +167,8 @@ def process_csv(
     input_csv_prefix: str = 'retroxpert_raw_200topk_200maxk_200beam',
     output_csv_prefix: str = 'retroxpert_200topk_200maxk_200beam',
     phases: Optional[List[str]] = ['train', 'valid', 'test'],
-    data_folder: Optional[os.PathLike] = Path('../rxnebm/data/cleaned_data/')
+    data_folder: Optional[os.PathLike] = Path('../rxnebm/data/cleaned_data/'),
+    print_accs: Optional[bool] = False
 ):
     for phase in phases:
         logging.info(f'Processing {phase} of {phases}')
@@ -205,12 +208,13 @@ def process_csv(
         dup_count /= len(phase_rows)
         logging.info(f'Avg # dups per rxn_smi: {dup_count}')
 
-        logging.info('\n')
-        for n in [1, 3, 5, 10, 20, 50, 100, 200]:
-            total = float(len(phase_ranks))
-            acc = sum([r+1 <= n for r in phase_ranks]) / total
-            logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
-        logging.info('\n')
+        if print_accs:
+            logging.info('\n')
+            for n in [1, 3, 5, 10, 20, 50, 100, 200]:
+                total = float(len(phase_ranks))
+                acc = sum([r+1 <= n for r in phase_ranks]) / total
+                logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
+            logging.info('\n')
 
         if phase == 'train': # true precursor has been removed from the proposals, so whatever is left are negatives
             proposed_col_names = [f'neg_precursor_{i}' for i in range(1, phase_topk + 1)]
@@ -299,5 +303,6 @@ if __name__ == '__main__':
         data_folder=args.data_folder,
         input_csv_prefix=args.input_csv_prefix,
         output_csv_prefix=args.output_csv_prefix,
+        print_accs=args.print_accs
     )
     logging.info('Finished compiling all CSVs')

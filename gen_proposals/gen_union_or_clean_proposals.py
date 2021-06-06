@@ -20,16 +20,17 @@ from tqdm import tqdm
 from utils import tqdm_joblib
 
 def merge_proposers(
-        proposers : List[str],
-        proposed_smi_file_prefixes : List[str],
-        topks : List[int],
-        maxks : List[int],
+        proposers: List[str],
+        proposed_smi_file_prefixes: List[str],
+        topks: List[int],
+        maxks: List[int],
         phases: Optional[List[str]] = ['train', 'valid', 'test'],
         rxnsmi_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped_canon',
         input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
         output_file_prefix: Optional[Union[str, bytes, os.PathLike]] = None,
         output_folder: Optional[Union[str, bytes, os.PathLike]] = None,
         seed: Optional[int] = None,
+        print_accs: Optional[bool] = False
     ):
     for phase in phases:
         logging.info(f'Processing {phase} of {phases}')
@@ -171,6 +172,7 @@ def merge_proposers(
             clean_rxnsmi_phase,
             rcts_smiles_phase,
             proposed_precs_phase_withdups,
+            print_accs
         ) # just to calculate accuracy
 
         logging.info('\nCalculating ranks after removing duplicates')
@@ -179,7 +181,8 @@ def merge_proposers(
                     clean_rxnsmi_phase,
                     rcts_smiles_phase,
                     proposed_precs_phase,
-                    maxk
+                    maxk,
+                    print_accs
                 )
 
         if phase == 'train':
@@ -189,7 +192,8 @@ def merge_proposers(
                     clean_rxnsmi_phase,
                     rcts_smiles_phase,
                     processed_precs_phase, # proposed_precs_phase
-                    maxk
+                    maxk,
+                    print_accs
                 )
 
         analyse_proposed(
@@ -259,11 +263,12 @@ def merge_proposers(
     return
 
 def calc_accs( 
-        phase : str,
-        clean_rxnsmi_phase : List[str],
-        rcts_smiles_phase : List[str],
-        proposed_precs_phase : List[str],
-        maxk : int = 400,
+        phase: str,
+        clean_rxnsmi_phase: List[str],
+        rcts_smiles_phase: List[str],
+        proposed_precs_phase: List[str],
+        maxk: int = 400,
+        print_accs: bool = False
     ) -> Dict[str, List[int]]:
     phase_ranks = []
     processed_precs = []
@@ -304,19 +309,20 @@ def calc_accs(
 
             processed_precs.append(all_proposed_precursors)
 
-    logging.info('\n')
-    for n in [1, 2, 3, 5, 10, 20, 50, 100, 150, 200, 225, 250, 300, maxk]:
-        total = float(len(phase_ranks))
-        acc = sum([r+1 <= n for r in phase_ranks]) / total
-        logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
-    logging.info('\n')
+    if print_accs:
+        logging.info('\n')
+        for n in [1, 2, 3, 5, 10, 20, 50, 100, 150, 200, 225, 250, 300, maxk]:
+            total = float(len(phase_ranks))
+            acc = sum([r+1 <= n for r in phase_ranks]) / total
+            logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
+        logging.info('\n')
 
-    # more detailed, for debugging
-    for n in [1] + list(range(5, 301, 5)) + [maxk]:
-        total = float(len(phase_ranks))
-        acc = sum([r+1 <= n for r in phase_ranks]) / total
-        logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
-    logging.info('\n')
+        # more detailed, for debugging
+        for n in [1] + list(range(5, 301, 5)) + [maxk]:
+            total = float(len(phase_ranks))
+            acc = sum([r+1 <= n for r in phase_ranks]) / total
+            logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
+        logging.info('\n')
 
     return phase_ranks, processed_precs
 
@@ -391,6 +397,8 @@ def parse_args():
                         type=str, default='GLN,retrosim,retroxpert')
     parser.add_argument("--topks", help="List of topk's (comma separated) in same order as --proposers", type=str)
     parser.add_argument("--maxks", help="List of maxk's (comma separated) in same order as --proposers", type=str)
+    parser.add_argument("--print_accs", 
+                        help="Whether to print accuracies of the output CSV; this can be higher than the original proposer top-N accuracies as we remove duplicates and RDKit-invalid suggestions", action="store_true")
     return parser.parse_args()
 
 
@@ -432,5 +440,6 @@ if __name__ == "__main__":
         rxnsmi_file_prefix=args.rxnsmi_file_prefix,
         output_folder=output_folder,
         output_file_prefix=args.output_file_prefix,
-        seed=args.seed
+        seed=args.seed,
+        print_accs=args.print_accs
     ) 

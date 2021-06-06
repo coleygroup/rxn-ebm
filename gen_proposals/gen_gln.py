@@ -141,7 +141,8 @@ def compile_into_csv(
                 phases: Optional[List[str]] = ['train', 'valid', 'test'],
                 input_folder: Optional[Union[str, bytes, os.PathLike]] = None,
                 input_file_prefix: Optional[str] = '50k_clean_rxnsmi_noreagent_allmapped_canon',
-                output_folder: Optional[Union[str, bytes, os.PathLike]] = None
+                output_folder: Optional[Union[str, bytes, os.PathLike]] = None,
+                print_accs: Optional[bool] = False
                 ):
     for phase in phases:
         logging.info(f'Processing {phase} of {phases}')
@@ -209,6 +210,7 @@ def compile_into_csv(
             clean_rxnsmi_phase,
             rcts_smiles_phase,
             proposed_precs_phase_withdups,
+            print_accs
         ) # just to calculate accuracy
 
         logging.info('\nCalculating ranks after removing duplicates')
@@ -216,7 +218,8 @@ def compile_into_csv(
                     [phase],
                     clean_rxnsmi_phase,
                     rcts_smiles_phase,
-                    proposed_precs_phase
+                    proposed_precs_phase,
+                    print_accs
                 )
         ranks_phase = ranks_dict[phase]
         # if training data: remove ground truth prediction from proposals
@@ -226,7 +229,8 @@ def compile_into_csv(
                     [phase],
                     clean_rxnsmi_phase,
                     rcts_smiles_phase,
-                    proposed_precs_phase
+                    proposed_precs_phase,
+                    print_accs
                 )
 
         analyse_proposed(
@@ -284,10 +288,11 @@ def compile_into_csv(
     return
 
 def calc_accs( 
-            phases : List[str],
-            clean_rxnsmi_phase : List[str],
-            rcts_smiles_phase : List[str],
-            proposed_precs_phase : List[str],
+            phases: List[str],
+            clean_rxnsmi_phase: List[str],
+            rcts_smiles_phase: List[str],
+            proposed_precs_phase: List[str],
+            print_accs: bool
             ) -> Dict[str, List[int]]:
     ranks = {} 
     for phase in phases: 
@@ -326,12 +331,13 @@ def calc_accs(
                     phase_ranks.append(9999) 
         ranks[phase] = phase_ranks
 
-        logging.info('\n')
-        for n in [1, 3, 5, 10, 20, 50, 100, 200]:
-            total = float(len(ranks[phase]))
-            acc = sum([r+1 <= n for r in ranks[phase]]) / total
-            logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
-        logging.info('\n')
+        if print_accs:
+            logging.info('\n')
+            for n in [1, 3, 5, 10, 20, 50, 100, 200]:
+                total = float(len(ranks[phase]))
+                acc = sum([r+1 <= n for r in ranks[phase]]) / total
+                logging.info(f'{phase.title()} Top-{n} accuracy: {acc * 100 : .3f}%')
+            logging.info('\n')
 
     return ranks # dictionary 
 
@@ -401,6 +407,9 @@ def parse_args():
     parser.add_argument("--beam_size", help="Beam size", type=int, default=200)
     parser.add_argument("--topk", help="How many top-k proposals to put in train (not guaranteed)", type=int, default=200)
     parser.add_argument("--maxk", help="How many top-k proposals to generate and put in valid/test (not guaranteed)", type=int, default=200)
+
+    parser.add_argument("--print_accs", 
+                        help="Whether to print accuracies of the output CSV; this can be higher than the original proposer top-N accuracies as we remove duplicates and RDKit-invalid suggestions", action="store_true")
     return parser.parse_args()
 
 
@@ -468,6 +477,7 @@ if __name__ == "__main__":
             phases=args.phases,
             input_folder=input_folder,
             input_file_prefix=args.input_file_prefix,
-            output_folder=output_folder
+            output_folder=output_folder,
+            print_accs=args.print_accs
         )
     
