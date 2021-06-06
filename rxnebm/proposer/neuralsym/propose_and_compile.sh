@@ -17,7 +17,8 @@ sym_seed=$1
         --maxk 200 \
         --model Highway \
         --expt_name "Highway_${sym_seed}_depth0_dim300_lr1e3_stop2_fac30_pat1" \
-        --seed ${sym_seed}
+        --seed ${sym_seed} \
+        --print_accs
 } && {
     mv data/neuralsym_200topk_200maxk_noGT_${sym_seed}_train.csv ../../data/cleaned_data/
     mv data/neuralsym_200topk_200maxk_noGT_${sym_seed}_valid.csv ../../data/cleaned_data/
