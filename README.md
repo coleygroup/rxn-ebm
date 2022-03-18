@@ -1,5 +1,5 @@
 # rxnebm
-Energy-based modeling of chemical reactions
+Improving the performance of models for one-step retrosynthesis through re-ranking
 
 ## Environmental setup
 ### Using conda
