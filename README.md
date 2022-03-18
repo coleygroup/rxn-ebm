@@ -207,5 +207,5 @@ which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the
 ### Citation
 If you have used our code or referred to our paper, we would appreciate it if you could cite our work:
 ```
-to be updated
+Lin, M.H., Tu, Z. & Coley, C.W. Improving the performance of models for one-step retrosynthesis through re-ranking. J Cheminform 14, 15 (2022).
 ```
