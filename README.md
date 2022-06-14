@@ -1,5 +1,5 @@
 # rxnebm
-Improving the performance of models for one-step retrosynthesis through re-ranking
+[Improving the performance of models for one-step retrosynthesis through re-ranking](https://jcheminf.biomedcentral.com/articles/10.1186/s13321-022-00594-8)
 
 ## Environmental setup
 ### Using conda
