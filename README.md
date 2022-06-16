@@ -1,6 +1,8 @@
 # rxnebm
 [Improving the performance of models for one-step retrosynthesis through re-ranking](https://jcheminf.biomedcentral.com/articles/10.1186/s13321-022-00594-8)
 
+![Summary figure](./tocentry.PNG)
+
 ## Environmental setup
 ### Using conda
     # ensure conda is already initialized
