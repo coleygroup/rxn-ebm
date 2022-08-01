@@ -5,6 +5,18 @@ Retrosynthesis is at the core of organic chemistry. Recently, the rapid growth o
 
 ### Citation
 If you have used our code or referred to our paper, we would appreciate it if you could cite our work:
+```bibtex
+@article{lin2022improving,
+  title={Improving the performance of models for one-step retrosynthesis through re-ranking},
+  author={Lin, Min Htoo and Tu, Zhengkai and Coley, Connor W},
+  journal={Journal of cheminformatics},
+  volume={14},
+  number={1},
+  pages={1--13},
+  year={2022},
+  publisher={Springer}
+}
+```
 ```
 Lin, M.H., Tu, Z. & Coley, C.W. Improving the performance of models for one-step retrosynthesis through re-ranking. J Cheminform 14, 15 (2022).
 ```
