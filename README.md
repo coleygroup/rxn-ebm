@@ -190,6 +190,7 @@ which will output 3 cleaned CSV files in ``` rxnebm/data/cleaned_data ``` of the
 - To train NeuralSym, we simply use the 3 .pickle files ``` 50k_clean_rxnsmi_noreagent_allmapped_canon_<phase>.pickle ``` generated using ```clean_smiles.py``` above, which contain the extra-cleaned USPTO-50K reactions. They've also been placed in NeuralSym's input data folder ``` rxnebm/proposer/neuralsym/data/ ```.
 - As the original authors did not open-source NeuralSym, we re-implemented it from scratch following their paper and the repo is placed at: <br>
 ``` cd rxnebm/proposer/neuralsym ``` <br>
+For reference, our re-implementation can also be found at: https://github.com/linminhtoo/neuralsym
 - To setup the environment for NeuralSym: once you're in ``` neuralsym ```, run: <br> ``` bash setup.sh ``` <br> This creates a conda environment called ```neuralsym```, which you need to activate to train/test/propose with NeuralSym.
 
 - To preprocess training data into 32681-dim fingerprints. As we've heavily optimized this step, it takes only ~10 mins on 16 cores, and probably ~15-20 mins on 8 cores.  <br>
