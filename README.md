@@ -109,7 +109,7 @@ Specifically, we perform these steps:
     
     Since RetroSim will not generate the full 50/200 proposals for every product, we pad the reaction fingerprints with all-zero vectors for batching and mask these during training & testing.
 
-- 3 sets of graph features (1 for each phase). Each set consists of: ```cache_feat_index.npz```,        ```cache_feat.npz```, ```cache_mask.pkl```, ```cache_smi.pkl```. Note that these 3 sets in total take up between 20 to 30 GBs, so ensure you have sufficient disk space. We again provide them in our Drive, but you can also generate them yourself using:
+- 3 sets of graph features (1 for each phase). Each set consists of: ```cache_feat_index.npz```,        ```cache_feat.npz```, ```cache_mask.pkl```, ```cache_smi.pkl```. Note that these 3 sets in total take up between 20 to 30 GBs, so ensure you have sufficient disk space. We did not upload these due to the sheer size of the files; please generate them yourself using:
 
     ``` bash scripts/retrosim/make_graphfeat.sh ```
 
